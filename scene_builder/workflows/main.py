@@ -7,56 +7,9 @@ from rich.console import Console
 from rich.panel import Panel
 
 from scene_builder.tools.object_database import query_object_database
-
-# import pkl
-# # Load the Pkl scene definitions
-# # Note: This assumes the .pkl files will be compiled to Python modules.
-# # We will need to set up a build step for this later.
-# # from scene_builder.definitions import scene
+from scene_builder.definitions.scene import Scene, Room, Object, Vector3
 
 console = Console()
-
-# --- Placeholder Definitions (to be replaced by Pkl-generated code) ---
-class Vector3:
-    def __init__(self, x, y, z):
-        self.x = x
-        self.y = y
-        self.z = z
-    def __repr__(self):
-        return f"Vector3(x={self.x}, y={self.y}, z={self.z})"
-
-class Object:
-    def __init__(self, id, name, source, sourceId, position, rotation, scale):
-        self.id = id
-        self.name = name
-        self.source = source
-        self.sourceId = sourceId
-        self.position = position
-        self.rotation = rotation
-        self.scale = scale
-    def __repr__(self):
-        return f"Object(id='{self.id}', name='{self.name}')"
-
-class Room:
-    def __init__(self, id, category, tags, objects):
-        self.id = id
-        self.category = category
-        self.tags = tags
-        self.objects = objects
-
-    def __repr__(self):
-        return f"Room(id='{self.id}', category='{self.category}', tags={self.tags}, objects={self.objects})"
-
-class Scene:
-    def __init__(self, category, tags, floorType, rooms):
-        self.category = category
-        self.tags = tags
-        self.floorType = floorType
-        self.rooms = rooms
-
-    def __repr__(self):
-        return f"Scene(category='{self.category}', tags={self.tags}, floorType='{self.floorType}', rooms={self.rooms})"
-
 
 # --- State Definitions ---
 class MainState(TypedDict):
@@ -88,6 +41,7 @@ def room_design_agent_node(state: RoomDesignState) -> RoomDesignState:
     new_object = Object(
         id=sofa_data["id"],
         name=sofa_data["name"],
+        description=sofa_data["description"],
         source=sofa_data["source"],
         sourceId=sofa_data["id"],
         position=Vector3(0, 0, 0),
@@ -121,7 +75,7 @@ room_design_subgraph = room_design_builder.compile()
 # --- Main Graph Nodes ---
 def metadata_agent(state: MainState) -> MainState:
     console.print("[bold cyan]Executing Agent:[/] Metadata Agent")
-    initial_scene = Scene("residential", ["modern", "minimalist"], "single", [])
+    initial_scene = Scene(category="residential", tags=["modern", "minimalist"], floorType="single", rooms=[])
     return {"scene_definition": initial_scene, "messages": [("assistant", "Scene metadata created.")]}
 
 def scene_planning_agent(state: MainState) -> MainState:
@@ -131,7 +85,7 @@ def scene_planning_agent(state: MainState) -> MainState:
 
 def floor_plan_agent(state: MainState) -> MainState:
     console.print("[bold cyan]Executing Agent:[/] Floor Plan Agent")
-    living_room = Room("living_room_1", "living_room", ["main"], [])
+    living_room = Room(id="living_room_1", category="living_room", tags=["main"], objects=[])
     state["scene_definition"].rooms.append(living_room)
     return {"scene_definition": state["scene_definition"], "messages": [("assistant", "Floor plan created.")]}
 
