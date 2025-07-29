@@ -19,6 +19,7 @@ classifiers = [
 dependencies = [
     "langgraph",
     "pkl-python",
+    "rich",
 ]
 
 [project.urls]

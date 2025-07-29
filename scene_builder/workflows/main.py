@@ -1,6 +1,9 @@
 from typing import TypedDict, List, Annotated
-from langgraph.graph import StateGraph, START, END, Send
+from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
+from langgraph.types import Send
+from rich.console import Console
+from rich.panel import Panel
 
 # import pkl
 # # Load the Pkl scene definitions
@@ -8,6 +11,7 @@ from langgraph.graph.message import add_messages
 # # We will need to set up a build step for this later.
 # # from scene_builder.definitions import scene
 
+console = Console()
 
 # --- Placeholder Definitions (to be replaced by Pkl-generated code) ---
 class Vector3:
@@ -65,7 +69,7 @@ class RoomDesignState(TypedDict):
 # --- Room Design Subgraph ---
 def add_object_node(state: RoomDesignState) -> RoomDesignState:
     """Adds a placeholder object to the room."""
-    print("Executing Node: add_object")
+    console.print("[bold cyan]Executing Node:[/] add_object")
     new_object = Object("sofa_1", "Sofa", Vector3(0, 0, 0), Vector3(0, 0, 0), Vector3(1, 1, 1))
     state["room"].objects.append(new_object)
     return {"room": state["room"], "messages": [("assistant", f"Added object {new_object.name} to room.")]}
@@ -74,50 +78,50 @@ room_design_builder = StateGraph(RoomDesignState)
 room_design_builder.add_node("add_object", add_object_node)
 room_design_builder.add_edge(START, "add_object")
 room_design_builder.add_edge("add_object", END)
-# The subgraph is now a runnable that accepts RoomDesignState and outputs the final RoomDesignState
 room_design_subgraph = room_design_builder.compile()
 
 
 # --- Main Graph Nodes ---
 def metadata_agent(state: MainState) -> MainState:
-    print("Executing Metadata Agent...")
+    console.print("[bold cyan]Executing Agent:[/] Metadata Agent")
     initial_scene = Scene("residential", ["modern", "minimalist"], "single", [])
     return {"scene_definition": initial_scene, "messages": [("assistant", "Scene metadata created.")]}
 
 def scene_planning_agent(state: MainState) -> MainState:
-    print("Executing Scene Planning Agent...")
+    console.print("[bold cyan]Executing Agent:[/] Scene Planning Agent")
     plan = "1. Create a living room.\n2. Add a sofa."
     return {"plan": plan, "messages": [("assistant", "Scene plan created.")]}
 
 def floor_plan_agent(state: MainState) -> MainState:
-    print("Executing Floor Plan Agent...")
+    console.print("[bold cyan]Executing Agent:[/] Floor Plan Agent")
     living_room = Room("living_room_1", "living_room", ["main"], [])
     state["scene_definition"].rooms.append(living_room)
     return {"scene_definition": state["scene_definition"], "messages": [("assistant", "Floor plan created.")]}
 
 def update_main_state_after_design(state: MainState) -> MainState:
     """Merges the result from the room design subgraph back into the main state."""
-    print("Executing update_main_state_after_design...")
-    # The output of the subgraph is automatically merged into the state.
-    # We need to take the designed room and update our scene_definition.
-    designed_room = state.pop("room", None) # Use .pop to get and remove the key
+    console.print("[bold cyan]Executing Node:[/] update_main_state_after_design")
+    designed_room = state.pop("room", None)
     if designed_room:
         state["scene_definition"].rooms[state["current_room_index"]] = designed_room
     state["current_room_index"] += 1
     return state
 
+def design_loop_entry(state: MainState) -> MainState:
+    """A pass-through node to act as the entry point for the room design loop."""
+    console.print("[bold yellow]Entering room design loop...[/]")
+    return state
+
 # --- Router ---
 def room_design_router(state: MainState):
     """Routes to the room design subgraph or ends the workflow."""
-    print("Executing Router: room_design_router")
+    console.print("[bold magenta]Executing Router:[/] room_design_router")
     if state["current_room_index"] < len(state["scene_definition"].rooms):
-        print("Decision: Design next room.")
+        console.print("[magenta]Decision:[/] Design next room.")
         room_to_design = state["scene_definition"].rooms[state["current_room_index"]]
-        # This Send object directs the workflow to the subgraph
-        # and provides the specific input it needs.
         return Send("room_design_agent", {"room": room_to_design, "messages": []})
     else:
-        print("Decision: Finish.")
+        console.print("[magenta]Decision:[/] Finish.")
         return END
 
 
@@ -127,34 +131,31 @@ workflow_builder = StateGraph(MainState)
 workflow_builder.add_node("metadata_agent", metadata_agent)
 workflow_builder.add_node("scene_planning_agent", scene_planning_agent)
 workflow_builder.add_node("floor_plan_agent", floor_plan_agent)
-# The subgraph is a node in the main graph
+workflow_builder.add_node("design_loop_entry", design_loop_entry)
 workflow_builder.add_node("room_design_agent", room_design_subgraph)
-# This node updates the main state after the subgraph is done
 workflow_builder.add_node("update_state", update_main_state_after_design)
 
 workflow_builder.set_entry_point("metadata_agent")
 workflow_builder.add_edge("metadata_agent", "scene_planning_agent")
 workflow_builder.add_edge("scene_planning_agent", "floor_plan_agent")
+workflow_builder.add_edge("floor_plan_agent", "design_loop_entry")
 
-# After the floor plan, the router decides what to do next.
-workflow_builder.add_conditional_edges("floor_plan_agent", room_design_router)
+workflow_builder.add_conditional_edges("design_loop_entry", room_design_router)
 
-# After the subgraph runs, we update the main state.
 workflow_builder.add_edge("room_design_agent", "update_state")
-# After updating the state, we loop back to the router to check for more rooms.
-workflow_builder.add_edge("update_state", "floor_plan_agent")
+workflow_builder.add_edge("update_state", "design_loop_entry")
 
 app = workflow_builder.compile()
 
 
 # --- Main Execution ---
 if __name__ == "__main__":
-    print("Running SceneBuilder workflow...")
+    console.print(Panel("[bold green]Running SceneBuilder Workflow[/]", expand=False))
     initial_state = {
         "user_input": "Create a modern, minimalist living room.",
         "messages": [("user", "Create a modern, minimalist living room.")],
         "current_room_index": 0
     }
-    for event in app.stream(initial_state, stream_mode="values"):
-        print("\n--- Workflow Step ---")
-        print(event)
+    for i, event in enumerate(app.stream(initial_state, stream_mode="values")):
+        console.print(Panel(f"[bold yellow]Workflow Step {i+1}[/]", expand=False))
+        console.print(event)
