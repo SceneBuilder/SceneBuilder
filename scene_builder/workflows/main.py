@@ -2,8 +2,11 @@ from typing import TypedDict, List, Annotated
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
 from langgraph.types import Send
+from langgraph.prebuilt import ToolNode
 from rich.console import Console
 from rich.panel import Panel
+
+from scene_builder.tools.object_database import query_object_database
 
 # import pkl
 # # Load the Pkl scene definitions
@@ -23,9 +26,11 @@ class Vector3:
         return f"Vector3(x={self.x}, y={self.y}, z={self.z})"
 
 class Object:
-    def __init__(self, id, name, position, rotation, scale):
+    def __init__(self, id, name, source, sourceId, position, rotation, scale):
         self.id = id
         self.name = name
+        self.source = source
+        self.sourceId = sourceId
         self.position = position
         self.rotation = rotation
         self.scale = scale
@@ -67,17 +72,49 @@ class RoomDesignState(TypedDict):
 
 
 # --- Room Design Subgraph ---
-def add_object_node(state: RoomDesignState) -> RoomDesignState:
-    """Adds a placeholder object to the room."""
-    console.print("[bold cyan]Executing Node:[/] add_object")
-    new_object = Object("sofa_1", "Sofa", Vector3(0, 0, 0), Vector3(0, 0, 0), Vector3(1, 1, 1))
+tools = [query_object_database]
+tool_node = ToolNode(tools)
+
+def room_design_agent_node(state: RoomDesignState) -> RoomDesignState:
+    """This node simulates an LLM call that can use tools."""
+    console.print("[bold cyan]Executing Node:[/] room_design_agent_node")
+    
+    # In a real implementation, this would be an LLM call.
+    # For now, we'll just hardcode a tool call.
+    tool_call_message = ("tool_code", "query_object_database('a modern sofa')")
+    
+    # Simulate finding a sofa and adding it to the room
+    sofa_data = query_object_database("a modern sofa")[0]
+    new_object = Object(
+        id=sofa_data["id"],
+        name=sofa_data["name"],
+        source=sofa_data["source"],
+        sourceId=sofa_data["id"],
+        position=Vector3(0, 0, 0),
+        rotation=Vector3(0, 0, 0),
+        scale=Vector3(1, 1, 1)
+    )
     state["room"].objects.append(new_object)
-    return {"room": state["room"], "messages": [("assistant", f"Added object {new_object.name} to room.")]}
+    
+    return {
+        "room": state["room"],
+        "messages": [("assistant", f"Added object {new_object.name} to room.")]
+    }
+
 
 room_design_builder = StateGraph(RoomDesignState)
-room_design_builder.add_node("add_object", add_object_node)
-room_design_builder.add_edge(START, "add_object")
-room_design_builder.add_edge("add_object", END)
+room_design_builder.add_node("agent", room_design_agent_node)
+room_design_builder.add_node("tools", tool_node)
+
+room_design_builder.add_edge(START, "agent")
+room_design_builder.add_conditional_edges(
+    "agent",
+    # This simple router always calls the tool node if there are tool calls,
+    # and otherwise finishes.
+    lambda x: "tools" if x.get("messages", [])[-1].tool_calls else END,
+)
+room_design_builder.add_edge("tools", "agent")
+
 room_design_subgraph = room_design_builder.compile()
 
 
