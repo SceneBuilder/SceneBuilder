@@ -20,8 +20,12 @@ dependencies = [
     "langgraph",
     "pkl-python",
     "rich",
+    "objaverse",
 ]
 
 [project.urls]
 "Homepage" = "https://github.com/example/SceneBuilder"
 "Bug Tracker" = "https://github.com/example/SceneBuilder/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["scene_builder"]
