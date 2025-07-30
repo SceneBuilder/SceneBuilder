@@ -19,7 +19,7 @@ def import_object(object_uid: str) -> str:
     download_dir = tempfile.mkdtemp()
 
     # Load the object from Objaverse, which will also download it
-    objects = objaverse.load_objects(uids=[object_uid], download_path=download_dir)
+    objects = objaverse.load_objects(uids=[object_uid])
 
     # Get the path to the downloaded object
     object_path = objects.get(object_uid)
