@@ -1,5 +1,6 @@
 import bpy
 from typing import Dict, Any
+from . import objaverse_importer
 
 # This script is intended to be run within the Blender Python environment.
 # It will not run in a standard Python interpreter because it depends on the `bpy` module.
@@ -38,11 +39,21 @@ def _create_object(obj_data: Dict[str, Any]):
     For now, this creates a simple cube as a placeholder for the actual 3D model.
     """
     print(f"Creating object: {obj_data.get('name')}")
-    
-    # Create a placeholder cube
-    bpy.ops.mesh.primitive_cube_add()
-    blender_obj = bpy.context.object
-    blender_obj.name = obj_data.get("name", "Unnamed Object")
+
+    if obj_data.get("source") == "objaverse":
+        # Import the object from Objaverse
+        object_data = objaverse_importer.import_object(obj_data.get("sourceId"))
+        
+        # TODO: Actually load the 3D model into Blender
+        # For now, we'll just create a placeholder cube
+        bpy.ops.mesh.primitive_cube_add()
+        blender_obj = bpy.context.object
+        blender_obj.name = obj_data.get("name", "Unnamed Object")
+    else:
+        # Create a placeholder cube
+        bpy.ops.mesh.primitive_cube_add()
+        blender_obj = bpy.context.object
+        blender_obj.name = obj_data.get("name", "Unnamed Object")
     
     # Set position, rotation, and scale from the object data
     pos = obj_data.get("position", {"x": 0, "y": 0, "z": 0})
