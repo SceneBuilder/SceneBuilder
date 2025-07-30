@@ -1,4 +1,5 @@
 import bpy
+import yaml
 from typing import Dict, Any
 from . import objaverse_importer
 
@@ -12,7 +13,7 @@ def parse_scene_definition(scene_data: Dict[str, Any]):
     Parses the scene definition dictionary and creates the scene in Blender.
 
     Args:
-        scene_data: A dictionary representing the scene, loaded from the Pkl file.
+        scene_data: A dictionary representing the scene, loaded from the YAML file.
     """
     print("Parsing scene definition and creating scene in Blender...")
 
@@ -83,40 +84,27 @@ def save_scene(filepath: str):
     print(f"Scene saved to {filepath}")
 
 
+def load_scene_from_yaml(filepath: str) -> Dict[str, Any]:
+    """
+    Loads a scene definition from a YAML file.
+
+    Args:
+        filepath: The path to the YAML file.
+
+    Returns:
+        A dictionary representing the scene.
+    """
+    with open(filepath, "r") as f:
+        return yaml.safe_load(f)
+
+
 if __name__ == "__main__":
     # This is an example of how you might use this script.
     # You would first need to load your scene definition into a dictionary.
 
-    # Example mock scene data:
-    mock_scene = {
-        "category": "residential",
-        "tags": ["modern"],
-        "floorType": "single",
-        "rooms": [
-            {
-                "id": "living_room_1",
-                "category": "living_room",
-                "tags": ["main"],
-                "objects": [
-                    {
-                        "id": "objaverse-sofa-123",
-                        "name": "Modern Red Sofa",
-                        "source": "objaverse",
-                        "sourceId": "objaverse-sofa-123",
-                        "position": {"x": 0, "y": 0, "z": 0},
-                        "rotation": {
-                            "x": 0,
-                            "y": 0,
-                            "z": 1.57,
-                        },  # 90 degrees rotation on Z
-                        "scale": {"x": 2, "y": 1, "z": 1},
-                    }
-                ],
-            }
-        ],
-    }
-
-    parse_scene_definition(mock_scene)
+    # Example of loading from a YAML file:
+    scene_data = load_scene_from_yaml("../definitions/scene.yaml")
+    parse_scene_definition(scene_data)
     save_scene("output.blend")
 
-    print("\nBlender scene created successfully from mock data.")
+    print("\nBlender scene created successfully from YAML data.")

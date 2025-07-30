@@ -5,23 +5,16 @@ build-backend = "hatchling.build"
 [project]
 name = "scene_builder"
 version = "0.0.1"
-authors = [
-  { name="SceneBuilder AI", email="contact@example.com" },
-]
+authors = [{ name = "SceneBuilder AI", email = "contact@example.com" }]
 description = "A system for creating 3D scenes using vision-language models and agentic AI workflows."
 readme = "README.md"
 requires-python = ">=3.8"
 classifiers = [
-    "Programming Language :: Python :: 3",
-    "License :: OSI Approved :: MIT License",
-    "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
 ]
-dependencies = [
-    "langgraph",
-    "pkl-python",
-    "rich",
-    "objaverse",
-]
+dependencies = ["langgraph", "pyyaml", "rich", "objaverse"]
 
 [project.urls]
 "Homepage" = "https://github.com/example/SceneBuilder"

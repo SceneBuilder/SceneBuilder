@@ -11,7 +11,7 @@ The system is built around a `langgraph`-based agentic workflow that progressive
 3. **Floor Plan Agent:** Creates the layout of rooms in the scene.
 4. **Room Design Agent:** A subgraph that designs each room, using tools to query for and place objects.
 
-The scene definition is based on a schema defined in Apple's Pkl format, which is then translated into Python dataclasses for use in the workflow.
+The scene definition is based on a schema defined in YAML format, which is then translated into Python dataclasses for use in the workflow.
 
 ## Getting Started
 
@@ -41,7 +41,7 @@ The generated scene definition can be imported into Blender by running the `blen
 
 * Replace placeholder logic in the agents with real LLM calls.
 * Connect to a real 3D object database (e.g., Objaverse).
-* Implement a Pkl-to-Python compilation step to automatically generate the data classes.
+* Implement a YAML-to-Python compilation step to automatically generate the data classes.
 * Expand the capabilities of the Blender importer to handle real 3D models.
 * Add validation logic to the workflow.
 * Write unit tests for the agent tools.

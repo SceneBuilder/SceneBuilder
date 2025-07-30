@@ -1,4 +1,4 @@
-from typing import TypedDict, List, Annotated
+from dataclasses import is_dataclass, asdict
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
 from langgraph.types import Send
@@ -161,6 +161,17 @@ workflow_builder.add_edge("update_state", "design_loop_entry")
 app = workflow_builder.compile()
 
 
+def dataclass_to_dict(obj):
+    if is_dataclass(obj):
+        return asdict(obj)
+    elif isinstance(obj, list):
+        return [dataclass_to_dict(i) for i in obj]
+    elif isinstance(obj, dict):
+        return {k: dataclass_to_dict(v) for k, v in obj.items()}
+    else:
+        return obj
+
+
 # --- Main Execution ---
 if __name__ == "__main__":
     console.print(Panel("[bold green]Running SceneBuilder Workflow[/]", expand=False))
@@ -176,7 +187,8 @@ if __name__ == "__main__":
 
     if final_scene:
         console.print(Panel("[bold green]Exporting to Blender[/]", expand=False))
-        blender_importer.parse_scene_definition(final_scene.dict())
+        scene_dict = dataclass_to_dict(final_scene)
+        blender_importer.parse_scene_definition(scene_dict)
         blender_importer.save_scene("output.blend")
         console.print(
             "[bold green]Blender file 'output.blend' created successfully.[/]"

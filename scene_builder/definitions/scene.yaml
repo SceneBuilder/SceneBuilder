@@ -1,0 +1,70 @@
+# Global configuration for the scene generation process.
+GlobalConfig:
+  # Toggles whether to generate a visual preview after each design action.
+  previewAfterAction: false
+
+# Represents a 3D vector.
+Vector3:
+  x: float
+  y: float
+  z: float
+
+# Represents a 3D object in the scene.
+Object:
+  # A unique identifier for the object.
+  id: str
+
+  # The name of the object.
+  name: str
+
+  # A description of the object.
+  description: str
+
+  # The source of the 3D model (e.g., "objaverse", "generated").
+  source: str
+
+  # The identifier for the model in its source database.
+  sourceId: str
+
+  # The position of the object in the room.
+  position: Vector3
+
+  # The rotation of the object (in Euler angles).
+  rotation: Vector3
+
+  # The scale of the object.
+  scale: Vector3
+
+# Represents a single room in the scene.
+Room:
+  # A unique identifier for the room.
+  id: str
+
+  # The category of the room (e.g., "living_room", "kitchen").
+  category: str
+
+  # Descriptive tags for the room.
+  tags:
+    - str
+
+  # The objects contained within the room.
+  objects:
+    - Object
+
+# Represents the entire 3D scene.
+Scene:
+  # The category of the scene (e.g., "residential", "commercial").
+  category: str
+
+  # Descriptive tags for the scene.
+  tags:
+    - str
+
+  # Utility field to distinguish single vs. multi-floor scenes.
+  floorType:
+    - "single"
+    - "multi"
+
+  # The rooms contained within the scene.
+  rooms:
+    - Room
