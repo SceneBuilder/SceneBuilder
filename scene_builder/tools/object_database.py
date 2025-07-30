@@ -1,5 +1,6 @@
 from typing import List, Dict, Any
 
+
 def query_object_database(query: str) -> List[Dict[str, Any]]:
     """
     Simulates querying a 3D object database (e.g., Objaverse).
@@ -14,7 +15,7 @@ def query_object_database(query: str) -> List[Dict[str, Any]]:
         A list of dictionaries, where each dictionary represents a found object.
     """
     print(f"Simulating database query for: '{query}'")
-    
+
     if "sofa" in query:
         return [
             {

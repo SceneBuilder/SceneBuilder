@@ -8,8 +8,10 @@ from rich.panel import Panel
 
 from scene_builder.tools.object_database import query_object_database
 from scene_builder.definitions.scene import Scene, Room, Object, Vector3
+from scene_builder.importers import blender_importer
 
 console = Console()
+
 
 # --- State Definitions ---
 class MainState(TypedDict):
@@ -18,6 +20,7 @@ class MainState(TypedDict):
     plan: str
     messages: Annotated[list, add_messages]
     current_room_index: int
+
 
 class RoomDesignState(TypedDict):
     room: Room
@@ -28,14 +31,15 @@ class RoomDesignState(TypedDict):
 tools = [query_object_database]
 tool_node = ToolNode(tools)
 
+
 def room_design_agent_node(state: RoomDesignState) -> RoomDesignState:
     """This node simulates an LLM call that can use tools."""
     console.print("[bold cyan]Executing Node:[/] room_design_agent_node")
-    
+
     # In a real implementation, this would be an LLM call.
     # For now, we'll just hardcode a tool call.
     tool_call_message = ("tool_code", "query_object_database('a modern sofa')")
-    
+
     # Simulate finding a sofa and adding it to the room
     sofa_data = query_object_database("a modern sofa")[0]
     new_object = Object(
@@ -46,13 +50,13 @@ def room_design_agent_node(state: RoomDesignState) -> RoomDesignState:
         sourceId=sofa_data["id"],
         position=Vector3(0, 0, 0),
         rotation=Vector3(0, 0, 0),
-        scale=Vector3(1, 1, 1)
+        scale=Vector3(1, 1, 1),
     )
     state["room"].objects.append(new_object)
-    
+
     return {
         "room": state["room"],
-        "messages": [("assistant", f"Added object {new_object.name} to room.")]
+        "messages": [("assistant", f"Added object {new_object.name} to room.")],
     }
 
 
@@ -75,19 +79,35 @@ room_design_subgraph = room_design_builder.compile()
 # --- Main Graph Nodes ---
 def metadata_agent(state: MainState) -> MainState:
     console.print("[bold cyan]Executing Agent:[/] Metadata Agent")
-    initial_scene = Scene(category="residential", tags=["modern", "minimalist"], floorType="single", rooms=[])
-    return {"scene_definition": initial_scene, "messages": [("assistant", "Scene metadata created.")]}
+    initial_scene = Scene(
+        category="residential",
+        tags=["modern", "minimalist"],
+        floorType="single",
+        rooms=[],
+    )
+    return {
+        "scene_definition": initial_scene,
+        "messages": [("assistant", "Scene metadata created.")],
+    }
+
 
 def scene_planning_agent(state: MainState) -> MainState:
     console.print("[bold cyan]Executing Agent:[/] Scene Planning Agent")
     plan = "1. Create a living room.\n2. Add a sofa."
     return {"plan": plan, "messages": [("assistant", "Scene plan created.")]}
 
+
 def floor_plan_agent(state: MainState) -> MainState:
     console.print("[bold cyan]Executing Agent:[/] Floor Plan Agent")
-    living_room = Room(id="living_room_1", category="living_room", tags=["main"], objects=[])
+    living_room = Room(
+        id="living_room_1", category="living_room", tags=["main"], objects=[]
+    )
     state["scene_definition"].rooms.append(living_room)
-    return {"scene_definition": state["scene_definition"], "messages": [("assistant", "Floor plan created.")]}
+    return {
+        "scene_definition": state["scene_definition"],
+        "messages": [("assistant", "Floor plan created.")],
+    }
+
 
 def update_main_state_after_design(state: MainState) -> MainState:
     """Merges the result from the room design subgraph back into the main state."""
@@ -98,10 +118,12 @@ def update_main_state_after_design(state: MainState) -> MainState:
     state["current_room_index"] += 1
     return state
 
+
 def design_loop_entry(state: MainState) -> MainState:
     """A pass-through node to act as the entry point for the room design loop."""
     console.print("[bold yellow]Entering room design loop...[/]")
     return state
+
 
 # --- Router ---
 def room_design_router(state: MainState):
@@ -145,8 +167,17 @@ if __name__ == "__main__":
     initial_state = {
         "user_input": "Create a modern, minimalist living room.",
         "messages": [("user", "Create a modern, minimalist living room.")],
-        "current_room_index": 0
+        "current_room_index": 0,
     }
     for i, event in enumerate(app.stream(initial_state, stream_mode="values")):
-        console.print(Panel(f"[bold yellow]Workflow Step {i+1}[/]", expand=False))
+        console.print(Panel(f"[bold yellow]Workflow Step {i + 1}[/]", expand=False))
         console.print(event)
+        final_scene = event.get("scene_definition")
+
+    if final_scene:
+        console.print(Panel("[bold green]Exporting to Blender[/]", expand=False))
+        blender_importer.parse_scene_definition(final_scene.dict())
+        blender_importer.save_scene("output.blend")
+        console.print(
+            "[bold green]Blender file 'output.blend' created successfully.[/]"
+        )
