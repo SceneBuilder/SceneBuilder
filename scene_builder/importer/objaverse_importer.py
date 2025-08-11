@@ -1,42 +1,6 @@
 import objaverse
 import tempfile
-from typing import Dict, Any, List
-
-
-def search_and_import_object(query: str, count: int = 1) -> List[str]:
-    """
-    Searches for and imports 3D objects from the Objaverse dataset based on a semantic query.
-
-    Args:
-        query: The semantic query to search for (e.g., "a red sofa").
-        count: The number of objects to import.
-
-    Returns:
-        A list of paths to the downloaded 3D model files.
-    """
-    print(f"Searching for {count} object(s) matching: {query}")
-
-    # Load LVIS annotations for all objects
-    annotations = objaverse.load_lvis_annotations()
-
-    # Find objects that match the query
-    matching_uids = []
-    for category, uids in annotations.items():
-        if query in category:
-            matching_uids.extend(uids)
-
-    if not matching_uids:
-        print(f"No objects found matching the query: {query}")
-        return []
-
-    # Import the first `count` matching objects
-    imported_object_paths = []
-    for uid in matching_uids[:count]:
-        object_path = import_object(uid)
-        if object_path:
-            imported_object_paths.append(object_path)
-
-    return imported_object_paths
+import os
 
 
 def import_object(object_uid: str) -> str:
@@ -47,32 +11,39 @@ def import_object(object_uid: str) -> str:
         object_uid: The unique identifier of the object to import.
 
     Returns:
-        The path to the downloaded 3D model file.
+        The path to the downloaded 3D model file, or None if download fails.
     """
-    print(f"Importing object: {object_uid}")
+    print(f"Importing objaverse object: {object_uid}")
 
-    # Create a temporary directory to store the downloaded object
-    download_dir = tempfile.mkdtemp()
+    # Use a consistent temporary directory for caching
+    download_dir = os.path.join(tempfile.gettempdir(), "scene_builder_objaverse")
+    os.makedirs(download_dir, exist_ok=True)
 
-    # Load the object from Objaverse, which will also download it
-    objects = objaverse.load_objects(uids=[object_uid])
+    # Check if the object is already downloaded
+    object_path = os.path.join(download_dir, f"{object_uid}.glb")
+    if os.path.exists(object_path):
+        print(f"Found cached object at: {object_path}")
+        return object_path
 
-    # Get the path to the downloaded object
-    object_path = objects.get(object_uid)
+    print(f"Downloading object {object_uid} from Objaverse...")
+    # load_objects downloads the object to a specific path
+    # and returns a dictionary mapping the UID to the path.
+    downloaded_objects = objaverse.load_objects(
+        uids=[object_uid], download_processes=1
+    )
 
-    # Return the object path
-    return object_path
+    # The path from the download
+    original_path = downloaded_objects.get(object_uid)
 
-
-if __name__ == "__main__":
-    # This is an example of how you might use this script.
-
-    # Example semantic query:
-    search_query = "sofa"
-
-    # Search for and import the object
-    object_paths = search_and_import_object(search_query, count=1)
-
-    if object_paths:
-        for object_path in object_paths:
-            print(f"\nObject downloaded successfully to: {object_path}")
+    if original_path:
+        # Move the file to our consistent cache directory
+        try:
+            os.rename(original_path, object_path)
+            print(f"Object cached successfully to: {object_path}")
+            return object_path
+        except OSError as e:
+            print(f"Error moving object to cache: {e}. Using original path.")
+            return original_path
+    else:
+        print(f"Failed to download object: {object_uid}")
+        return None
