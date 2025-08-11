@@ -1,7 +1,9 @@
+from typing import Dict, Any
+
 import bpy
 import yaml
-from typing import Dict, Any
-from . import objaverse_importer
+
+from scene_builder.importer import objaverse_importer
 
 # This script uses the `bpy` module to create a Blender scene.
 # It can be run with a standalone `bpy` installation (e.g., from pip)

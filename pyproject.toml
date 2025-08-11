@@ -16,6 +16,10 @@ classifiers = [
 ]
 dependencies = ["langgraph", "pyyaml", "rich", "objaverse"]
 
+[project.optional-dependencies]
+dev = ["pytest"]
+
+
 [project.urls]
 "Homepage" = "https://github.com/example/SceneBuilder"
 "Bug Tracker" = "https://github.com/example/SceneBuilder/issues"

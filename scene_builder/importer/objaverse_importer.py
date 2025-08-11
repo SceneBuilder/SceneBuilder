@@ -1,6 +1,6 @@
-import objaverse
 import tempfile
-from typing import Dict, Any
+
+import objaverse
 
 
 def import_object(object_uid: str) -> str:

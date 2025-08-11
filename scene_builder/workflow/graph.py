@@ -1,14 +1,13 @@
-from dataclasses import is_dataclass, asdict
+from typing import Annotated, TypedDict
+
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
 from langgraph.types import Send
 from langgraph.prebuilt import ToolNode
 from rich.console import Console
-from rich.panel import Panel
 
 from scene_builder.tools.object_database import query_object_database
-from scene_builder.definitions.scene import Scene, Room, Object, Vector3
-from scene_builder.importers import blender_importer
+from scene_builder.definition.scene import Scene, Room, Object, Vector3
 
 console = Console()
 
@@ -159,37 +158,3 @@ workflow_builder.add_edge("room_design_agent", "update_state")
 workflow_builder.add_edge("update_state", "design_loop_entry")
 
 app = workflow_builder.compile()
-
-
-def dataclass_to_dict(obj):
-    if is_dataclass(obj):
-        return asdict(obj)
-    elif isinstance(obj, list):
-        return [dataclass_to_dict(i) for i in obj]
-    elif isinstance(obj, dict):
-        return {k: dataclass_to_dict(v) for k, v in obj.items()}
-    else:
-        return obj
-
-
-# --- Main Execution ---
-if __name__ == "__main__":
-    console.print(Panel("[bold green]Running SceneBuilder Workflow[/]", expand=False))
-    initial_state = {
-        "user_input": "Create a modern, minimalist living room.",
-        "messages": [("user", "Create a modern, minimalist living room.")],
-        "current_room_index": 0,
-    }
-    for i, event in enumerate(app.stream(initial_state, stream_mode="values")):
-        console.print(Panel(f"[bold yellow]Workflow Step {i + 1}[/]", expand=False))
-        console.print(event)
-        final_scene = event.get("scene_definition")
-
-    if final_scene:
-        console.print(Panel("[bold green]Exporting to Blender[/]", expand=False))
-        scene_dict = dataclass_to_dict(final_scene)
-        blender_importer.parse_scene_definition(scene_dict)
-        blender_importer.save_scene("output.blend")
-        console.print(
-            "[bold green]Blender file 'output.blend' created successfully.[/]"
-        )
