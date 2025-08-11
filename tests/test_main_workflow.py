@@ -1,7 +1,7 @@
 from rich.console import Console
 from rich.panel import Panel
 
-from scene_builder.decoder import blender_importer
+from scene_builder.decoder import blender_decoder
 from scene_builder.workflow.graph import app
 from scene_builder.utils.conversions import dataclass_to_dict
 
@@ -23,8 +23,8 @@ def test_main_workflow():
     if final_scene:
         console.print(Panel("[bold green]Exporting to Blender[/]", expand=False))
         scene_dict = dataclass_to_dict(final_scene)
-        blender_importer.parse_scene_definition(scene_dict)
-        blender_importer.save_scene("output.blend")
+        blender_decoder.parse_scene_definition(scene_dict)
+        blender_decoder.save_scene("output.blend")
         console.print(
             "[bold green]Blender file 'output.blend' created successfully.[/]"
         )
