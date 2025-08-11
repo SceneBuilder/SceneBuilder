@@ -19,7 +19,7 @@ def query_object_database(query: str) -> List[Dict[str, Any]]:
     if "sofa" in query:
         return [
             {
-                "id": "objaverse-sofa-123",
+                "id": "000074a334c541878360457c672b6c2e",
                 "name": "Modern Red Sofa",
                 "description": "A comfortable red sofa with a modern design.",
                 "source": "objaverse",
