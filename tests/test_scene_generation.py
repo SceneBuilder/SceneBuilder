@@ -1,14 +1,13 @@
+import yaml
 from pathlib import Path
-
 from rich.console import Console
 from rich.panel import Panel
 
-from scene_builder.decoder import blender_decoder
 from scene_builder.workflow.graph import app
 from scene_builder.utils.conversions import dataclass_to_dict
 
 
-def test_main_workflow():
+def test_scene_generation():
     console = Console()
     console.print(Panel("[bold green]Running SceneBuilder Workflow[/]", expand=False))
     initial_state = {
@@ -23,13 +22,17 @@ def test_main_workflow():
         if "scene_definition" in event:
             final_scene = event["scene_definition"]
 
-    if final_scene:  # TEMPDEAC
-        console.print(Panel("[bold green]Exporting to Blender[/]", expand=False))
+    if final_scene:
+        console.print(Panel("[bold green]Exporting Scene[/]", expand=False))
         scene_dict = dataclass_to_dict(final_scene)
 
+        # Save the scene as a YAML file
         output_dir = Path("scenes")
         output_dir.mkdir(exist_ok=True)
-        blender_decoder.parse_scene_definition(scene_dict)
-        blender_decoder.save_scene(output_dir / "output.blend")
+        output_path = output_dir / "generated_scene.yaml"
+        with open(output_path, "w") as f:
+            yaml.dump(scene_dict, f, default_flow_style=False, sort_keys=False)
 
-        console.print("[bold green]Blender file created successfully.[/]")
+        console.print(f"[bold green]Scene saved to {output_path}[/bold green]")
+
+
