@@ -1,40 +1,91 @@
-from typing import List, Dict, Any
+import objaverse
+from typing import Any
 
 
-def query_object_database(query: str) -> List[Dict[str, Any]]:
+class ObjectDatabase:
     """
-    Simulates querying a 3D object database (e.g., Objaverse).
-
-    In a real implementation, this function would connect to the database
-    and perform a search based on the query. For now, it returns mock data.
-
-    Args:
-        query: The search query (e.g., "a red sofa").
-
-    Returns:
-        A list of dictionaries, where each dictionary represents a found object.
+    A wrapper for a 3D object database (e.g., Objaverse) that can
+    operate in either debug (mock data) or production (real data) mode.
     """
-    print(f"Simulating database query for: '{query}'")
 
-    if "sofa" in query:
-        return [
-            {
-                "id": "000074a334c541878360457c672b6c2e",
-                "name": "Modern Red Sofa",
-                "description": "A comfortable red sofa with a modern design.",
-                "source": "objaverse",
-                "tags": ["sofa", "red", "modern"],
-            }
-        ]
-    elif "table" in query:
-        return [
-            {
-                "id": "objaverse-table-456",
-                "name": "Wooden Coffee Table",
-                "description": "A rustic wooden coffee table.",
-                "source": "objaverse",
-                "tags": ["table", "wood", "rustic"],
-            }
-        ]
-    else:
-        return []
+    def __init__(self, debug: bool = False):
+        """
+        Initializes the ObjectDatabase.
+        Args:
+            debug: If True, the database will return mock data.
+        """
+        self.debug = debug
+        self._lvis_annotations = None
+        if not self.debug:
+            print("Initializing ObjectDatabase in production mode...")
+            self._lvis_annotations = objaverse.load_lvis_annotations()
+            print("LVIS annotations loaded.")
+
+    def query(self, query: str) -> list[dict[str, Any]]:
+        """
+        Queries the 3D object database.
+
+        Args:
+            query: The search query (e.g., "a red sofa").
+
+        Returns:
+            A list of dictionaries, where each dictionary represents a found object.
+        """
+        if self.debug:
+            return self._query_mock(query)
+        else:
+            return self._query_real(query)
+
+    def _query_mock(self, query: str) -> list[dict[str, Any]]:
+        """
+        Simulates querying a 3D object database and returns mock data.
+        """
+        print(f"Simulating database query for: '{query}'")
+        if "sofa" in query:
+            return [
+                {
+                    "id": "000074a334c541878360457c672b6c2e",
+                    "name": "Modern Red Sofa",
+                    "description": "A comfortable red sofa with a modern design.",
+                    "source": "objaverse",
+                    "tags": ["sofa", "red", "modern"],
+                }
+            ]
+        elif "table" in query:
+            return [
+                {
+                    "id": "objaverse-table-456",
+                    "name": "Wooden Coffee Table",
+                    "description": "A rustic wooden coffee table.",
+                    "source": "objaverse",
+                    "tags": ["table", "wood", "rustic"],
+                }
+            ]
+        else:
+            return []
+
+    def _query_real(self, query: str) -> list[dict[str, Any]]:
+        """
+        Performs a real query to the Objaverse database.
+        """
+        print(f"Performing real database query for: '{query}'")
+        matching_uids = []
+        for category, uids in self._lvis_annotations.items():
+            if query in category:
+                matching_uids.extend(uids)
+
+        # Limit the number of results to avoid overwhelming the user
+        matching_uids = matching_uids[:5]
+
+        results = []
+        for uid in matching_uids:
+            results.append(
+                {
+                    "id": uid,
+                    "name": f"Object: {uid}",
+                    "description": "Description not available in LVIS annotations.",
+                    "source": "objaverse",
+                    "tags": [query],
+                }
+            )
+        return results

@@ -1,6 +1,5 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import Annotated
 
 from pydantic_graph import BaseNode, End, Graph, GraphRunContext
 from pydantic_ai import Agent
@@ -8,7 +7,7 @@ from pydantic_ai.messages import ModelMessage
 
 from rich.console import Console
 
-from scene_builder.tools.object_database import query_object_database
+from scene_builder.tools.object_database import ObjectDatabase
 from scene_builder.definition.scene import Scene, Room, Object, Vector3, Config
 
 console = Console()
@@ -25,14 +24,6 @@ class MainState:
     config: Config | None = None
 
 
-# --- Room Design Agent ---
-room_design_agent = Agent(
-    "openai:gpt-4o",
-    system_prompt="You are a room designer. Your goal is to add objects to the room based on the user's request.",
-    tools=[query_object_database],
-)
-
-
 # --- Main Graph Nodes ---
 @dataclass
 class MetadataAgent(BaseNode[MainState]):
@@ -45,7 +36,6 @@ class MetadataAgent(BaseNode[MainState]):
             rooms=[],
         )
         ctx.state.scene_definition = initial_scene
-        # ctx.state.messages.append(("assistant", "Scene metadata created."))
         return ScenePlanningAgent()
 
 
@@ -53,8 +43,21 @@ class MetadataAgent(BaseNode[MainState]):
 class ScenePlanningAgent(BaseNode[MainState]):
     async def run(self, ctx: GraphRunContext[MainState]) -> FloorPlanAgent:
         console.print("[bold cyan]Executing Agent:[/] Scene Planning Agent")
-        ctx.state.plan = "1. Create a living room.\n2. Add a sofa."
-        # ctx.state.messages.append(("assistant", "Scene plan created."))
+        is_debug = ctx.state.config and ctx.state.config.debug
+
+        if is_debug:
+            console.print("[bold yellow]Debug mode: Using hardcoded scene plan.[/]")
+            ctx.state.plan = "1. Create a living room.\n2. Add a sofa."
+        else:
+            console.print("[bold green]Production mode: Generating scene plan via LLM.[/]")
+            planning_agent = Agent(
+                "openai:gpt-4o",
+                system_prompt="You are a scene planner. Your goal is to create a plan to build a 3D scene based on the user's request. The plan should be a short, numbered list of steps.",
+            )
+            response = await planning_agent.run(ctx.state.user_input)
+            ctx.state.plan = response.content
+            console.print(f"[bold cyan]Generated Plan:[/] {ctx.state.plan}")
+
         return FloorPlanAgent()
 
 
@@ -62,18 +65,39 @@ class ScenePlanningAgent(BaseNode[MainState]):
 class FloorPlanAgent(BaseNode[MainState]):
     async def run(self, ctx: GraphRunContext[MainState]) -> DesignLoopEntry:
         console.print("[bold cyan]Executing Agent:[/] Floor Plan Agent")
-        living_room = Room(
-            id="living_room_1", category="living_room", tags=["main"], objects=[]
-        )
-        ctx.state.scene_definition.rooms.append(living_room)
-        # ctx.state.messages.append(("assistant", "Floor plan created."))
+        is_debug = ctx.state.config and ctx.state.config.debug
+
+        if is_debug:
+            console.print("[bold yellow]Debug mode: Using hardcoded floor plan.[/]")
+            living_room = Room(
+                id="living_room_1", category="living_room", tags=["main"], objects=[]
+            )
+            ctx.state.scene_definition.rooms.append(living_room)
+        else:
+            console.print(
+                "[bold green]Production mode: Generating floor plan via LLM.[/]"
+            )
+            floor_plan_agent = Agent(
+                "openai:gpt-4o",
+                system_prompt="You are a floor plan designer. Your goal is to define the rooms for a scene based on a plan. You should return a list of Room objects.",
+                response_model=list[Room],
+            )
+            generated_rooms = await floor_plan_agent.run(
+                f"Create rooms for the following plan: {ctx.state.plan}"
+            )
+            ctx.state.scene_definition.rooms.extend(generated_rooms)
+            console.print(
+                f"[bold cyan]Generated Rooms:[/] {[room.id for room in generated_rooms]}"
+            )
+
         return DesignLoopEntry()
 
 
 @dataclass
 class DesignLoopEntry(BaseNode[MainState]):
     async def run(
-        self, ctx: GraphRunContext[MainState]
+        self,
+        ctx: GraphRunContext[MainState]
     ) -> RoomDesignAgent | End[Scene]:
         console.print("[bold yellow]Entering room design loop...[/]")
         if ctx.state.current_room_index < len(ctx.state.scene_definition.rooms):
@@ -91,10 +115,12 @@ class RoomDesignAgent(BaseNode[MainState]):
         room_to_design = ctx.state.scene_definition.rooms[
             ctx.state.current_room_index
         ]
+        is_debug = ctx.state.config and ctx.state.config.debug
+        db = ObjectDatabase(debug=is_debug)
 
-        if ctx.state.config and ctx.state.config.debug:
-            # In debug mode, use hardcoded data
-            sofa_data = query_object_database("a modern sofa")[0]
+        if is_debug:
+            console.print("[bold yellow]Debug mode: Using hardcoded object data.[/]")
+            sofa_data = db.query("a modern sofa")[0]
             new_object = Object(
                 id=sofa_data["id"],
                 name=sofa_data["name"],
@@ -106,12 +132,22 @@ class RoomDesignAgent(BaseNode[MainState]):
                 scale=Vector3(1, 1, 1),
             )
             room_to_design.objects.append(new_object)
-            # messages = [("assistant", f"Added object {new_object.name} to room.")]
         else:
-            # In a real implementation, this would be an LLM call.
-            # For now, we'll just return an empty response.
-            console.print("[bold yellow]Non-debug mode: LLM call not implemented.[/]")
-            # messages = [("assistant", "LLM call not implemented.")]
+            console.print(
+                "[bold green]Production mode: Designing room via LLM and real data.[/]"
+            )
+            room_design_agent = Agent(
+                "openai:gpt-4o",
+                system_prompt="You are a room designer. Your goal is to add objects to the room based on the user's request. Use the provided tools to find appropriate objects.",
+                tools=[db.query],
+                response_model=list[Object],
+            )
+            prompt = f"Design the room '{room_to_design.category}' with id '{room_to_design.id}'. The overall user request is: '{ctx.state.user_input}'. The scene plan is: {ctx.state.plan}"
+            new_objects = await room_design_agent.run(prompt)
+            room_to_design.objects.extend(new_objects)
+            console.print(
+                f"[bold cyan]Added Objects:[/] {[obj.name for obj in new_objects]}"
+            )
 
         return UpdateMainStateAfterDesign(room_to_design)
 

@@ -1,4 +1,4 @@
-from typing import Dict, Any
+from typing import Any
 
 import bpy
 import yaml
@@ -10,7 +10,7 @@ from scene_builder.importer import objaverse_importer
 # or within the Blender Python environment.
 
 
-def parse_scene_definition(scene_data: Dict[str, Any]):
+def parse_scene_definition(scene_data: dict[str, Any]):
     """
     Parses the scene definition dictionary and creates the scene in Blender.
 
@@ -33,40 +33,52 @@ def _clear_scene():
     print("Cleared existing scene.")
 
 
-def _create_room(room_data: Dict[str, Any]):
+def _create_room(room_data: dict[str, Any]):
     """Creates a representation of a room (for now, just its objects)."""
     print(f"Creating room: {room_data.get('id')}")
     for obj_data in room_data.get("objects", []):
         _create_object(obj_data)
 
 
-def _create_object(obj_data: Dict[str, Any]):
+def _create_object(obj_data: dict[str, Any]):
     """
     Creates a single object in the Blender scene.
-
-    For now, this creates a simple cube as a placeholder for the actual 3D model.
+    Raises an IOError if the object cannot be imported.
     """
-    print(f"Creating object: {obj_data.get('name')}")
+    object_name = obj_data.get("name", "Unnamed Object")
+    print(f"Creating object: {object_name}")
+
+    blender_obj = None
 
     if obj_data.get("source") == "objaverse":
+        source_id = obj_data.get("sourceId")
+        if not source_id:
+            raise ValueError(f"Object '{object_name}' has source 'objaverse' but no 'sourceId'.")
+
         # Import the object from Objaverse
-        object_path = objaverse_importer.import_object(obj_data.get("sourceId"))
+        object_path = objaverse_importer.import_object(source_id)
 
         # Import the .glb file
         if object_path and object_path.endswith(".glb"):
-            bpy.ops.import_scene.gltf(filepath=object_path)
-            blender_obj = bpy.context.selected_objects[0]
-            blender_obj.name = obj_data.get("name", "Unnamed Object")
+            try:
+                bpy.ops.import_scene.gltf(filepath=object_path)
+                # The imported object is the newly selected one
+                blender_obj = bpy.context.selected_objects[0]
+                blender_obj.name = object_name
+            except Exception as e:
+                raise IOError(f"Failed to import GLB file for '{object_name}' from '{object_path}'. Blender error: {e}")
         else:
-            # Fallback to a placeholder cube if the import fails
-            bpy.ops.mesh.primitive_cube_add()
-            blender_obj = bpy.context.object
-            blender_obj.name = obj_data.get("name", "Unnamed Object")
+            raise IOError(
+                f"Failed to import object '{object_name}' (sourceId: {source_id}). "
+                f"The file path was not found or was not a .glb file. Path: '{object_path}'"
+            )
     else:
-        # Create a placeholder cube
-        bpy.ops.mesh.primitive_cube_add()
-        blender_obj = bpy.context.object
-        blender_obj.name = obj_data.get("name", "Unnamed Object")
+        # For other sources, we don't have an importer yet.
+        # We can either raise an error or create a placeholder.
+        # Raising an error is more explicit about what's happening.
+        source = obj_data.get('source', 'unknown')
+        raise NotImplementedError(f"Object source '{source}' is not yet supported for '{object_name}'.")
+
 
     # Set position, rotation, and scale from the object data
     pos = obj_data.get("position", {"x": 0, "y": 0, "z": 0})
@@ -86,7 +98,7 @@ def save_scene(filepath: str):
     print(f"Scene saved to {filepath}")
 
 
-def load_scene_from_yaml(filepath: str) -> Dict[str, Any]:
+def load_scene_from_yaml(filepath: str) -> dict[str, Any]:
     """
     Loads a scene definition from a YAML file.
 
@@ -105,8 +117,12 @@ if __name__ == "__main__":
     # You would first need to load your scene definition into a dictionary.
 
     # Example of loading from a YAML file:
-    scene_data = load_scene_from_yaml("../definitions/scene.yaml")
-    parse_scene_definition(scene_data)
-    save_scene("output.blend")
-
-    print("\nBlender scene created successfully from YAML data.")
+    # Note: This will likely fail if the sourceIds in the yaml are not valid
+    # or if the required importers are not available.
+    try:
+        scene_data = load_scene_from_yaml("scenes/generated_scene.yaml")
+        parse_scene_definition(scene_data)
+        save_scene("output.blend")
+        print("\nBlender scene created successfully from YAML data.")
+    except (IOError, NotImplementedError, ValueError, FileNotFoundError) as e:
+        print(f"\n[ERROR] Could not create Blender scene: {e}")

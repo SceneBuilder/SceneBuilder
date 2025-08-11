@@ -323,3 +323,40 @@ I will now create a detailed, step-by-step plan to build this system.
   search_and_import_object and objaverse.load_lvis_annotations() to find and download objects by query. The script now
   successfully searches and downloads based on a semantic query. Can I help with anything else?
 ```
+
+---
+
+╭──────────────────────────────────────────────────────────────────╮
+│  > @scene_builder/ What parts of my code are still preliminary?  │
+╰──────────────────────────────────────────────────────────────────╯
+
+✦ Based on the code you've provided, here are the parts of your project that appear to be preliminary or not yet fully implemented:
+
+  1. Object Creation in blender_decoder.py
+
+  The _create_object function currently has a fallback to creating a simple cube as a placeholder if the object import from Objaverse fails. This is a good temporary measure, but a more robust implementation would handle this more gracefully, perhaps
+  with more sophisticated placeholders or better error handling.
+
+  2. test_importer.py
+
+  This file seems to be a work in progress. The search_and_import_object function is missing a definition for the annotations variable, which would cause an error if run as is. It appears to be an incomplete copy or alternative version of
+  objaverse_importer.py.
+
+  3. Mock Data in object_database.py
+
+  The query_object_database function is a simulation. It returns hardcoded mock data for "sofa" and "table" queries. A full implementation would require connecting to and querying a real database like Objaverse.
+
+  4. Non-Debug Mode in RoomDesignAgent
+
+  In scene_builder/workflow/graph.py, the RoomDesignAgent has a placeholder for non-debug mode. Currently, it prints a message saying "LLM call not implemented" and doesn't actually add any objects to the room. This is a key area for future
+  development.
+
+  5. Hardcoded Scene Plan and Floor Plan
+
+  In scene_builder/workflow/graph.py:
+   - ScenePlanningAgent uses a hardcoded plan: "1. Create a living room.\n2. Add a sofa.".
+   - FloorPlanAgent creates a single, hardcoded "living_room_1".
+
+  A more advanced version would generate these dynamically based on user input or more complex logic.
+
+  In summary, the core workflow graph is in place, but the key agents and data sources are using placeholders and mock data. The next steps for this project would likely involve replacing these preliminary parts with fully functional implementations.
