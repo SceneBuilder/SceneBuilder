@@ -3,8 +3,9 @@ from pathlib import Path
 from rich.console import Console
 from rich.panel import Panel
 
-from scene_builder.workflow.graph import app
+from scene_builder.definition.scene import Config
 from scene_builder.utils.conversions import dataclass_to_dict
+from scene_builder.workflow.graph import app
 
 
 def test_scene_generation():
@@ -14,6 +15,7 @@ def test_scene_generation():
         "user_input": "Create a modern, minimalist living room.",
         "messages": [("user", "Create a modern, minimalist living room.")],
         "current_room_index": 0,
+        "config": Config(debug=True),
     }
     final_scene = None
     for i, event in enumerate(app.stream(initial_state, stream_mode="values")):
@@ -36,3 +38,5 @@ def test_scene_generation():
         console.print(f"[bold green]Scene saved to {output_path}[/bold green]")
 
 
+if __name__ == "__main__":
+    test_scene_generation()

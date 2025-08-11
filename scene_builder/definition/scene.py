@@ -3,9 +3,10 @@ from typing import List, Literal
 
 
 @dataclass
-class GlobalConfig:
-    """Global configuration for the scene generation process."""
+class Config:
+    """Global configuration for the generation process."""
 
+    debug: bool = False
     previewAfterAction: bool = False
 
 

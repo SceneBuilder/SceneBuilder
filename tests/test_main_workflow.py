@@ -4,8 +4,9 @@ from rich.console import Console
 from rich.panel import Panel
 
 from scene_builder.decoder import blender_decoder
-from scene_builder.workflow.graph import app
+from scene_builder.definition.scene import Config
 from scene_builder.utils.conversions import dataclass_to_dict
+from scene_builder.workflow.graph import app
 
 
 def test_main_workflow():
@@ -15,6 +16,7 @@ def test_main_workflow():
         "user_input": "Create a modern, minimalist living room.",
         "messages": [("user", "Create a modern, minimalist living room.")],
         "current_room_index": 0,
+        "config": Config(debug=True),
     }
     final_scene = None
     for i, event in enumerate(app.stream(initial_state, stream_mode="values")):

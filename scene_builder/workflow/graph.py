@@ -7,7 +7,7 @@ from langgraph.prebuilt import ToolNode
 from rich.console import Console
 
 from scene_builder.tools.object_database import query_object_database
-from scene_builder.definition.scene import Scene, Room, Object, Vector3
+from scene_builder.definition.scene import Scene, Room, Object, Vector3, Config
 
 console = Console()
 
@@ -19,11 +19,13 @@ class MainState(TypedDict):
     plan: str
     messages: Annotated[list, add_messages]
     current_room_index: int
+    config: Config
 
 
 class RoomDesignState(TypedDict):
     room: Room
     messages: Annotated[list, add_messages]
+    config: Config
 
 
 # --- Room Design Subgraph ---
@@ -35,27 +37,31 @@ def room_design_agent_node(state: RoomDesignState) -> RoomDesignState:
     """This node simulates an LLM call that can use tools."""
     console.print("[bold cyan]Executing Node:[/] room_design_agent_node")
 
-    # In a real implementation, this would be an LLM call.
-    # For now, we'll just hardcode a tool call.
-    tool_call_message = ("tool_code", "query_object_database('a modern sofa')")
-
-    # Simulate finding a sofa and adding it to the room
-    sofa_data = query_object_database("a modern sofa")[0]
-    new_object = Object(
-        id=sofa_data["id"],
-        name=sofa_data["name"],
-        description=sofa_data["description"],
-        source=sofa_data["source"],
-        sourceId=sofa_data["id"],
-        position=Vector3(0, 0, 0),
-        rotation=Vector3(0, 0, 0),
-        scale=Vector3(1, 1, 1),
-    )
-    state["room"].objects.append(new_object)
+    if state["config"].debug:
+        # In debug mode, use hardcoded data
+        tool_call_message = ("tool_code", "query_object_database('a modern sofa')")
+        sofa_data = query_object_database("a modern sofa")[0]
+        new_object = Object(
+            id=sofa_data["id"],
+            name=sofa_data["name"],
+            description=sofa_data["description"],
+            source=sofa_data["source"],
+            sourceId=sofa_data["id"],
+            position=Vector3(0, 0, 0),
+            rotation=Vector3(0, 0, 0),
+            scale=Vector3(1, 1, 1),
+        )
+        state["room"].objects.append(new_object)
+        messages = [("assistant", f"Added object {new_object.name} to room.")]
+    else:
+        # In a real implementation, this would be an LLM call.
+        # For now, we'll just return an empty response.
+        console.print("[bold yellow]Non-debug mode: LLM call not implemented.[/]")
+        messages = [("assistant", "LLM call not implemented.")]
 
     return {
         "room": state["room"],
-        "messages": [("assistant", f"Added object {new_object.name} to room.")],
+        "messages": messages,
     }
 
 
@@ -131,7 +137,10 @@ def room_design_router(state: MainState):
     if state["current_room_index"] < len(state["scene_definition"].rooms):
         console.print("[magenta]Decision:[/] Design next room.")
         room_to_design = state["scene_definition"].rooms[state["current_room_index"]]
-        return Send("room_design_agent", {"room": room_to_design, "messages": []})
+        return Send(
+            "room_design_agent",
+            {"room": room_to_design, "messages": [], "config": state["config"]},
+        )
     else:
         console.print("[magenta]Decision:[/] Finish.")
         return END
