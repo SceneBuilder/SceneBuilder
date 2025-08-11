@@ -14,7 +14,13 @@ classifiers = [
   "License :: OSI Approved :: MIT License",
   "Operating System :: OS Independent",
 ]
-dependencies = ["langgraph", "pyyaml", "rich", "objaverse"]
+dependencies = [
+  "pyyaml",
+  "rich",
+  "objaverse",
+  "pydantic-ai",
+  "pydantic-graph",
+]
 
 [project.optional-dependencies]
 dev = ["pytest"]

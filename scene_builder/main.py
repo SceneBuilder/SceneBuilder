@@ -7,6 +7,3 @@ from scene_builder.utils.conversions import dataclass_to_dict
 
 
 console = Console()
-
-
-

@@ -1,3 +1,4 @@
+import asyncio
 import yaml
 from pathlib import Path
 from rich.console import Console
@@ -5,26 +6,24 @@ from rich.panel import Panel
 
 from scene_builder.definition.scene import Config
 from scene_builder.utils.conversions import dataclass_to_dict
-from scene_builder.workflow.graph import app
+from scene_builder.workflow.graph import app, MainState, MetadataAgent
 
 
 def test_scene_generation():
     console = Console()
     console.print(Panel("[bold green]Running SceneBuilder Workflow[/]", expand=False))
-    initial_state = {
-        "user_input": "Create a modern, minimalist living room.",
-        "messages": [("user", "Create a modern, minimalist living room.")],
-        "current_room_index": 0,
-        "config": Config(debug=True),
-    }
-    final_scene = None
-    for i, event in enumerate(app.stream(initial_state, stream_mode="values")):
-        console.print(Panel(f"[bold yellow]Workflow Step {i + 1}[/]", expand=False))
-        console.print(event)
-        if "scene_definition" in event:
-            final_scene = event["scene_definition"]
+    initial_state = MainState(
+        user_input="Create a modern, minimalist living room.",
+        config=Config(debug=True),
+    )
 
-    if final_scene:
+    async def run_graph():
+        return await app.run(MetadataAgent(), state=initial_state)
+
+    result = asyncio.run(run_graph())
+
+    if result:
+        final_scene = result.output
         console.print(Panel("[bold green]Exporting Scene[/]", expand=False))
         scene_dict = dataclass_to_dict(final_scene)
 
