@@ -82,7 +82,6 @@ graph TD
 
 I will now create a detailed, step-by-step plan to build this system.
 
-
 ---
 ---
 
@@ -354,8 +353,9 @@ I will now create a detailed, step-by-step plan to build this system.
   5. Hardcoded Scene Plan and Floor Plan
 
   In scene_builder/workflow/graph.py:
-   - ScenePlanningAgent uses a hardcoded plan: "1. Create a living room.\n2. Add a sofa.".
-   - FloorPlanAgent creates a single, hardcoded "living_room_1".
+
+* BuildingPlanAgent uses a hardcoded plan: "1. Create a living room.\n2. Add a sofa.".
+* FloorPlanAgent creates a single, hardcoded "living_room_1".
 
   A more advanced version would generate these dynamically based on user input or more complex logic.
 
@@ -391,7 +391,6 @@ I will now create a detailed, step-by-step plan to build this system.
 
   Summary Table
 
-
   ┌──────────────┬────────────────────────────────────────┬──────────────────────────────────────┐
   │ Aspect       │ ObjectDatabase                         │ objaverse_importer                   │
   ├──────────────┼────────────────────────────────────────┼──────────────────────────────────────┤
@@ -401,7 +400,6 @@ I will now create a detailed, step-by-step plan to build this system.
   │ Output       │ List of object descriptions (metadata) │ Local filepath to a .glb file        │
   │ Key Function │ query()                                │ import_object()                      │
   └──────────────┴────────────────────────────────────────┴──────────────────────────────────────┘
-
 
   This separation makes your system more efficient. You don't waste time and bandwidth downloading objects until you are sure you need them for the final scene.
 
@@ -417,7 +415,7 @@ I will now create a detailed, step-by-step plan to build this system.
 
   Here’s the reasoning:
 
-   1. Agent-Centric Design: Your workflow is built around LLM agents (RoomDesignAgent, ScenePlanningAgent). In the context of agentic AI, a "tool" is a specific function or capability that the agent can decide to use to interact with the outside world.
+   1. Agent-Centric Design: Your workflow is built around LLM agents (RoomDesignAgent, BuildingPlanAgent). In the context of agentic AI, a "tool" is a specific function or capability that the agent can decide to use to interact with the outside world.
       Your ObjectDatabase.query() function is exactly that—it's a tool the RoomDesignAgent uses to get information it needs to complete its task.
    2. Clear Intent: The name tools immediately signals to anyone reading the code that the modules inside are meant to be used by the agents in the workflow directory. It clearly separates the "thinkers" (agents) from the "doers" (tools).
 
@@ -425,18 +423,18 @@ I will now create a detailed, step-by-step plan to build this system.
 
   While tools is a good choice now, as a project grows, other naming conventions might become more appropriate. Here are some common alternatives and their philosophies:
 
-   * `services/`: This is a very strong alternative. In this pattern, ObjectDatabase would be considered an ObjectQueryService. A "service" provides a distinct business capability (like querying objects, handling payments, etc.). This name is more
+* `services/`: This is a very strong alternative. In this pattern, ObjectDatabase would be considered an ObjectQueryService. A "service" provides a distinct business capability (like querying objects, handling payments, etc.). This name is more
      generic than tools and is an excellent choice if you imagine other, non-agent parts of your application needing to access the object database in the future.
 
-   * `adapters/` or `connectors/`: This comes from patterns like Hexagonal Architecture (Ports and Adapters). An "adapter" is a piece of code that connects your application's core logic to an external system. ObjectDatabase is a perfect example of an
+* `adapters/` or `connectors/`: This comes from patterns like Hexagonal Architecture (Ports and Adapters). An "adapter" is a piece of code that connects your application's core logic to an external system. ObjectDatabase is a perfect example of an
      adapter, as it connects your scene builder to the Objaverse API. This name emphasizes that the module is a "boundary" object that talks to the outside world.
 
-   * `data/`: This is another possibility, often used to house data access layers (Data Access Objects, repositories, etc.). It's a good, generic name for anything related to data persistence or retrieval.
+* `data/`: This is another possibility, often used to house data access layers (Data Access Objects, repositories, etc.). It's a good, generic name for anything related to data persistence or retrieval.
 
   Verdict and Recommendation
 
-   * For Now: Stick with tools. It accurately reflects the current architecture where the database query is a tool for an LLM agent. It's idiomatic and clear.
-   * For the Future: If you find that more and more non-agent components start using ObjectDatabase, or if you add more modules that provide core business logic, consider renaming the tools folder to services. This would be a logical refactoring step as
+* For Now: Stick with tools. It accurately reflects the current architecture where the database query is a tool for an LLM agent. It's idiomatic and clear.
+* For the Future: If you find that more and more non-agent components start using ObjectDatabase, or if you add more modules that provide core business logic, consider renaming the tools folder to services. This would be a logical refactoring step as
      the application's architecture evolves.
 
   You've correctly identified a key architectural component. For now, the name is well-chosen, but it's smart to keep these alternatives in mind.

@@ -1,6 +1,8 @@
 import objaverse
 from typing import Any
 
+from scene_builder.importer.test_asset_importer import TEST_ASSETS
+
 
 class ObjectDatabase:
     """
@@ -41,28 +43,10 @@ class ObjectDatabase:
         Simulates querying a 3D object database and returns mock data.
         """
         print(f"Simulating database query for: '{query}'")
-        if "sofa" in query:
-            return [
-                {
-                    "id": "000074a334c541878360457c672b6c2e",
-                    "name": "Modern Red Sofa",
-                    "description": "A comfortable red sofa with a modern design.",
-                    "source": "objaverse",
-                    "tags": ["sofa", "red", "modern"],
-                }
-            ]
-        elif "table" in query:
-            return [
-                {
-                    "id": "objaverse-table-456",
-                    "name": "Wooden Coffee Table",
-                    "description": "A rustic wooden coffee table.",
-                    "source": "objaverse",
-                    "tags": ["table", "wood", "rustic"],
-                }
-            ]
-        else:
-            return []
+        for key, results in TEST_ASSETS.items():
+            if key in query:
+                return results
+        return []
 
     def _query_real(self, query: str) -> list[dict[str, Any]]:
         """

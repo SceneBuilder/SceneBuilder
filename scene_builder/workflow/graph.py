@@ -9,6 +9,10 @@ from rich.console import Console
 
 from scene_builder.database.object import ObjectDatabase
 from scene_builder.definition.scene import Scene, Room, Object, Vector3, Config
+from scene_builder.workflow.prompt import (
+    FLOOR_PLAN_AGENT_PROMPT,
+    BUILDING_PLAN_AGENT_PROMPT,
+)
 
 console = Console()
 
@@ -27,7 +31,7 @@ class MainState:
 # --- Main Graph Nodes ---
 @dataclass
 class MetadataAgent(BaseNode[MainState]):
-    async def run(self, ctx: GraphRunContext[MainState]) -> ScenePlanningAgent:
+    async def run(self, ctx: GraphRunContext[MainState]) -> BuildingPlanAgent:
         console.print("[bold cyan]Executing Agent:[/] Metadata Agent")
         initial_scene = Scene(
             category="residential",
@@ -36,11 +40,11 @@ class MetadataAgent(BaseNode[MainState]):
             rooms=[],
         )
         ctx.state.scene_definition = initial_scene
-        return ScenePlanningAgent()
+        return BuildingPlanAgent()
 
 
 @dataclass
-class ScenePlanningAgent(BaseNode[MainState]):
+class BuildingPlanAgent(BaseNode[MainState]):
     async def run(self, ctx: GraphRunContext[MainState]) -> FloorPlanAgent:
         console.print("[bold cyan]Executing Agent:[/] Scene Planning Agent")
         is_debug = ctx.state.config and ctx.state.config.debug
@@ -49,10 +53,12 @@ class ScenePlanningAgent(BaseNode[MainState]):
             console.print("[bold yellow]Debug mode: Using hardcoded scene plan.[/]")
             ctx.state.plan = "1. Create a living room.\n2. Add a sofa."
         else:
-            console.print("[bold green]Production mode: Generating scene plan via LLM.[/]")
+            console.print(
+                "[bold green]Production mode: Generating scene plan via LLM.[/]"
+            )
             planning_agent = Agent(
                 "openai:gpt-4o",
-                system_prompt="You are a scene planner. Your goal is to create a plan to build a 3D scene based on the user's request. The plan should be a short, numbered list of steps.",
+                system_prompt=BUILDING_PLAN_AGENT_PROMPT,
             )
             response = await planning_agent.run(ctx.state.user_input)
             ctx.state.plan = response.content
@@ -79,7 +85,7 @@ class FloorPlanAgent(BaseNode[MainState]):
             )
             floor_plan_agent = Agent(
                 "openai:gpt-4o",
-                system_prompt="You are a floor plan designer. Your goal is to define the rooms for a scene based on a plan. You should return a list of Room objects.",
+                system_prompt=FLOOR_PLAN_AGENT_PROMPT,
                 response_model=list[Room],
             )
             generated_rooms = await floor_plan_agent.run(
@@ -96,8 +102,7 @@ class FloorPlanAgent(BaseNode[MainState]):
 @dataclass
 class DesignLoopEntry(BaseNode[MainState]):
     async def run(
-        self,
-        ctx: GraphRunContext[MainState]
+        self, ctx: GraphRunContext[MainState]
     ) -> RoomDesignAgent | End[Scene]:
         console.print("[bold yellow]Entering room design loop...[/]")
         if ctx.state.current_room_index < len(ctx.state.scene_definition.rooms):
@@ -112,9 +117,7 @@ class DesignLoopEntry(BaseNode[MainState]):
 class RoomDesignAgent(BaseNode[MainState]):
     async def run(self, ctx: GraphRunContext[MainState]) -> UpdateMainStateAfterDesign:
         console.print("[bold cyan]Executing Node:[/] RoomDesignAgent")
-        room_to_design = ctx.state.scene_definition.rooms[
-            ctx.state.current_room_index
-        ]
+        room_to_design = ctx.state.scene_definition.rooms[ctx.state.current_room_index]
         is_debug = ctx.state.config and ctx.state.config.debug
         db = ObjectDatabase(debug=is_debug)
 
@@ -153,15 +156,23 @@ class RoomDesignAgent(BaseNode[MainState]):
 
 
 @dataclass
+class ObjectPlacementAgent(BaseNode[]):
+    async def run(
+        self, ctx: GraphRunContext[MainState]
+    ) -> None: # TODO
+        None
+
+
+@dataclass
 class UpdateMainStateAfterDesign(BaseNode[MainState]):
     designed_room: Room
 
     async def run(self, ctx: GraphRunContext[MainState]) -> DesignLoopEntry:
         """Merges the result from the room design subgraph back into the main state."""
         console.print("[bold cyan]Executing Node:[/] update_main_state_after_design")
-        ctx.state.scene_definition.rooms[
-            ctx.state.current_room_index
-        ] = self.designed_room
+        ctx.state.scene_definition.rooms[ctx.state.current_room_index] = (
+            self.designed_room
+        )
         ctx.state.current_room_index += 1
         return DesignLoopEntry()
 
@@ -170,7 +181,7 @@ class UpdateMainStateAfterDesign(BaseNode[MainState]):
 workflow_builder = Graph(
     nodes=[
         MetadataAgent,
-        ScenePlanningAgent,
+        BuildingPlanAgent,
         FloorPlanAgent,
         DesignLoopEntry,
         RoomDesignAgent,
