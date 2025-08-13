@@ -15,8 +15,10 @@ FLOOR_PLAN_AGENT_PROMPT = (
 # rooms for a scene based on a plan. You should return a list of Room objects."
 
 PLACEMENT_AGENT_PROMPT = (
-    "Please recommend the best position where this object should be placed at. You may be given with a history",
-    "of past placement candidates along with images. Try to explore a diverse and creative set of positions.",
+    "Please edit the input set the best position where this object should be placed at. You may be given with a",
+    "history of past placement candidates along with images. Try to explore a diverse and creative set of positions.",
     "In addition, please decide whether the placement proposal loop should be continued, or if it is good enough",
-    "to finalize and move on to another object."
+    "to finalize and move on to another object.",
+    "Output formatting: You may be given callable tools that can be used edit the state of the scene/room.",
+    "If so, please utilize them. Otherwise, return an updated instance of the input scene/room state."
 )

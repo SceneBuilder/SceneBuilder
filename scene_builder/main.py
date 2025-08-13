@@ -48,7 +48,7 @@ def main():
     # Initial state for the graph
     initial_state = MainState(
         user_input=args.prompt,
-        config=GlobalConfig(debug=args.debug),
+        global_config=GlobalConfig(debug=args.debug),
     )
 
     # Run the graph asynchronously
