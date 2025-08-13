@@ -34,7 +34,9 @@ class ObjectBlueprint(BaseModel):
     id: str
     source: str
     description: str
-    extra_info: Any  # NOTE: useful informative things like size, default orientation, thumbnail, ...
+    extra_info: Any | None = (
+        None  # NOTE: useful informative things like size, default orientation, thumbnail, ...
+    )
 
 
 class Object(BaseModel):
@@ -65,12 +67,14 @@ class Room(BaseModel):
     """Represents a single room in the scene."""
 
     id: str
-    category: str | None
-    tags: list[str] | None
+    category: str | None = None
+    tags: list[str] | None = None
     plan: GenericPlan | None = None
     boundary: list[Vector2] | None = None
     viz: list[Path] | None = None
-    objects: list[Object | Section] = Field(default_factory=list)
+    objects: list[Object] | None = None
+    # objects: list[Object] = Field(default_factory=list)
+    # objects: list[Object | Section] = Field(default_factory=list)
 
 
 #     NOTE: don't delete!

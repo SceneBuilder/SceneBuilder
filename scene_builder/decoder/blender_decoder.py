@@ -30,6 +30,21 @@ def parse_scene_definition(scene_data: dict[str, Any]):
         _create_room(room_data)
 
 
+def parse_room_definition(room_data: dict[str, Any]):
+    """
+    Parses the room definition dictionary and creates the scene in Blender.
+
+    Args:
+        room_data: A dictionary representing the room, loaded from the YAML file.
+    """
+    print("Parsing room definition and creating scene in Blender...")
+
+    # Clear the existing scene
+    _clear_scene()
+
+    _create_room(room_data)
+
+
 def _clear_scene():
     """Clears all objects from the current Blender scene."""
     bpy.ops.object.select_all(action="SELECT")
@@ -57,7 +72,9 @@ def _create_object(obj_data: dict[str, Any]):
     if obj_data.get("source") == "objaverse":
         source_id = obj_data.get("sourceId")
         if not source_id:
-            raise ValueError(f"Object '{object_name}' has source 'objaverse' but no 'sourceId'.")
+            raise ValueError(
+                f"Object '{object_name}' has source 'objaverse' but no 'sourceId'."
+            )
 
         # Import the object from Objaverse
         object_path = objaverse_importer.import_object(source_id)
@@ -70,7 +87,9 @@ def _create_object(obj_data: dict[str, Any]):
                 blender_obj = bpy.context.selected_objects[0]
                 blender_obj.name = object_name
             except Exception as e:
-                raise IOError(f"Failed to import GLB file for '{object_name}' from '{object_path}'. Blender error: {e}")
+                raise IOError(
+                    f"Failed to import GLB file for '{object_name}' from '{object_path}'. Blender error: {e}"
+                )
         else:
             raise IOError(
                 f"Failed to import object '{object_name}' (sourceId: {source_id}). "
@@ -80,9 +99,10 @@ def _create_object(obj_data: dict[str, Any]):
         # For other sources, we don't have an importer yet.
         # We can either raise an error or create a placeholder.
         # Raising an error is more explicit about what's happening.
-        source = obj_data.get('source', 'unknown')
-        raise NotImplementedError(f"Object source '{source}' is not yet supported for '{object_name}'.")
-
+        source = obj_data.get("source", "unknown")
+        raise NotImplementedError(
+            f"Object source '{source}' is not yet supported for '{object_name}'."
+        )
 
     # Set position, rotation, and scale from the object data
     pos = obj_data.get("position", {"x": 0, "y": 0, "z": 0})

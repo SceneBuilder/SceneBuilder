@@ -10,12 +10,15 @@ from rich.console import Console
 from scene_builder.decoder import blender_decoder
 from scene_builder.database.object import ObjectDatabase
 from scene_builder.definition.scene import Scene, Room, Object, Vector3, GlobalConfig
+from scene_builder.utils.conversions import pydantic_to_dict
 from scene_builder.workflow.agent import (
     floor_plan_agent,
     placement_agent,
     planning_agent,
 )
 from scene_builder.workflow.state import PlacementState, RoomUpdateState
+
+DEBUG = True
 
 console = Console()
 
@@ -28,9 +31,6 @@ class MainState(BaseModel):
     messages: list[ModelMessage] = Field(default_factory=list)
     current_room_index: int = 0
     global_config: GlobalConfig | None = None
-
-    class Config:
-        arbitrary_types_allowed = True
 
 
 # --- Main Graph Nodes ---
@@ -93,13 +93,14 @@ class FloorPlanAgent(BaseNode[MainState]):
 
 
 class DesignLoopEntry(BaseNode[MainState]):
-    async def run(
-        self, ctx: GraphRunContext[MainState]
-    ) -> RoomDesignAgent | End[Scene]:
+    async def run(self, ctx: GraphRunContext[MainState]) -> End[Scene]:
         console.print("[bold yellow]Entering room design loop...[/]")
         if ctx.state.current_room_index < len(ctx.state.scene_definition.rooms):
             console.print("[magenta]Decision:[/] Design next room.")
-            return RoomDesignAgent()
+            subgraph_result = await room_design_graph.run(
+                RoomDesignAgent(ctx.state.initial_number)
+            )
+            ctx.state.scene_definition.rooms.append(subgraph_result)
         else:
             console.print("[magenta]Decision:[/] Finish.")
             return End(ctx.state.scene_definition)
@@ -151,18 +152,35 @@ class PlacementAgent(BaseNode[PlacementState]):
     async def run(
         self, ctx: GraphRunContext[PlacementState]
     ) -> VisualFeedback | End[Room]:
-        response = await placement_agent.run(ctx.state)
+        # user_prompt = "By the way, I have a quick question: are you able to read the deps (the PlacementState)?"
+        # user_prompt = "Could you repeat exactly what was provided to you (in terms of the depedencies) into the 'reasoning' output?"
+        # user_prompt = "Were you provided the current room boundaries (list[Vector2])? What is it?" # -> NO!
+        user_prompt = ""
 
-        if response.decision == "finalize":
+        if user_prompt != "":
+            response = await placement_agent.run(
+                user_prompt=user_prompt, deps=ctx.state
+            )
+            # response = await placement_agent.run(ctx.state, user_prompt=user_prompt)
+            # NOTE: when not using a kwarg, the first arg is understood as user prompt.
+        else:
+            response = await placement_agent.run(deps=ctx.state)
+
+        if DEBUG:
+            print(f"[PlacementAgent]: {response.output.reasoning}")
+            print(f"[PlacementAgent]: {response.output.decision}")
+
+        if response.output.decision == "finalize":
             return End(ctx.state.room)
         else:
-            ctx.state.room = response.placement_action.updated_room
+            ctx.state.room = response.output.placement_action.updated_room
             return VisualFeedback()
 
 
 class VisualFeedback(BaseNode[PlacementState]):
     async def run(self, ctx: GraphRunContext[PlacementState]) -> PlacementAgent:
-        blender_decoder.parse_scene_definition(ctx.state.room)
+        room_data = pydantic_to_dict(ctx.state.room)
+        blender_decoder.parse_room_definition(room_data)
         renders = blender_decoder.render()
         prev_room = ctx.state.room
         prev_room.viz.append(renders)
@@ -193,6 +211,14 @@ room_design_graph = Graph(
         UpdateScene,
     ],
     state_type=Room,
+)
+
+placement_graph = Graph(
+    nodes=[
+        PlacementAgent,
+        VisualFeedback,
+    ],
+    state_type=PlacementState,  # hmm
 )
 
 app = main_graph

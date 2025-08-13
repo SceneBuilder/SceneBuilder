@@ -35,3 +35,7 @@ def test_main_workflow():
         blender_decoder.save_scene(str(output_dir / "output.blend"))
 
         console.print("[bold green]Blender file created successfully.[/]")
+
+
+if __name__ == "__main__":
+    test_main_workflow()
