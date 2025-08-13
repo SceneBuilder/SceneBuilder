@@ -7,7 +7,7 @@ from rich.syntax import Syntax
 from scene_builder.decoder import blender_decoder
 from scene_builder.workflow.graph import app, MainState
 from scene_builder.utils.conversions import pydantic_to_dict
-from scene_builder.definition.scene import Config
+from scene_builder.definition.scene import GlobalConfig
 import yaml
 
 console = Console()
@@ -48,7 +48,7 @@ def main():
     # Initial state for the graph
     initial_state = MainState(
         user_input=args.prompt,
-        config=Config(debug=args.debug),
+        config=GlobalConfig(debug=args.debug),
     )
 
     # Run the graph asynchronously
@@ -71,7 +71,9 @@ def main():
 
     # Print the generated YAML to the console
     console.print(Panel("Generated Scene YAML:", expand=False))
-    console.print(Syntax(yaml.dump(scene_dict), "yaml", theme="monokai", line_numbers=True))
+    console.print(
+        Syntax(yaml.dump(scene_dict), "yaml", theme="monokai", line_numbers=True)
+    )
 
 
 if __name__ == "__main__":

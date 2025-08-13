@@ -24,3 +24,8 @@ class KeepEditingOrFinalize(BaseModel):
 class PlacementResponse(BaseModel):
     placement_action: PlacementAction
     decision: KeepEditingOrFinalize
+
+
+class RoomUpdateState(BaseModel):
+    updated_room: Room
+    

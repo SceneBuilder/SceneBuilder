@@ -1,4 +1,6 @@
 from pydantic_ai import Agent
+from pydantic_ai.models.google import GoogleModel
+from pydantic_ai.providers.google import GoogleProvider
 
 from scene_builder.definition.scene import Room
 from scene_builder.workflow.prompt import (
@@ -6,25 +8,30 @@ from scene_builder.workflow.prompt import (
     FLOOR_PLAN_AGENT_PROMPT,
     PLACEMENT_AGENT_PROMPT,
 )
-from scene_builder.workflow.state import PlacementState, PlacementAction, PlacementResponse
+from scene_builder.workflow.state import (
+    PlacementState,
+    PlacementAction,
+    PlacementResponse,
+)
 
-# VLM_MODEL = "openai:gpt-4o"
-VLM_MODEL = "gemini:gemini-flash-2.5"
+
+model = GoogleModel("gemini-2.5-flash")
+# model = "openai:gpt-4o"
 
 floor_plan_agent = Agent(
-    VLM_MODEL,
+    model,
     system_prompt=FLOOR_PLAN_AGENT_PROMPT,
     output_type=list[Room],
 )
 
 placement_agent = Agent(
-    VLM_MODEL,
+    model,
     deps_type=PlacementState,
     system_prompt=PLACEMENT_AGENT_PROMPT,
     output_type=PlacementResponse,
 )
 
 planning_agent = Agent(
-    VLM_MODEL,
+    model,
     system_prompt=BUILDING_PLAN_AGENT_PROMPT,
 )

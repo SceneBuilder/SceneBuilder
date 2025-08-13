@@ -4,8 +4,7 @@ from pathlib import Path
 from rich.console import Console
 from rich.panel import Panel
 
-from scene_builder.definition.scene import Config
-from scene_builder.utils.conversions import dataclass_to_dict
+from scene_builder.definition.scene import GlobalConfig
 from scene_builder.workflow.graph import app, MainState, MetadataAgent
 
 
@@ -14,7 +13,7 @@ def test_scene_generation():
     console.print(Panel("[bold green]Running SceneBuilder Workflow[/]", expand=False))
     initial_state = MainState(
         user_input="Create a modern, minimalist living room.",
-        config=Config(debug=True),
+        config=GlobalConfig(debug=True),
     )
 
     async def run_graph():
@@ -25,7 +24,7 @@ def test_scene_generation():
     if result:
         final_scene = result.output
         console.print(Panel("[bold green]Exporting Scene[/]", expand=False))
-        scene_dict = dataclass_to_dict(final_scene)
+        scene_dict = final_scene  # TODO: convert from BaseModel into dict
 
         # Save the scene as a YAML file
         output_dir = Path("scenes")

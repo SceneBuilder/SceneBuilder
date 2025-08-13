@@ -9,13 +9,13 @@ from rich.console import Console
 
 from scene_builder.decoder import blender_decoder
 from scene_builder.database.object import ObjectDatabase
-from scene_builder.definition.scene import Scene, Room, Object, Vector3, Config
+from scene_builder.definition.scene import Scene, Room, Object, Vector3, GlobalConfig
 from scene_builder.workflow.agent import (
     floor_plan_agent,
     placement_agent,
     planning_agent,
 )
-from scene_builder.workflow.state import PlacementState
+from scene_builder.workflow.state import PlacementState, RoomUpdateState
 
 console = Console()
 
@@ -27,7 +27,7 @@ class MainState(BaseModel):
     plan: str | None = None
     messages: list[ModelMessage] = Field(default_factory=list)
     current_room_index: int = 0
-    config: Config | None = None
+    global_config: GlobalConfig | None = None
 
     class Config:
         arbitrary_types_allowed = True
@@ -50,7 +50,7 @@ class MetadataAgent(BaseNode[MainState]):
 class BuildingPlanAgent(BaseNode[MainState]):
     async def run(self, ctx: GraphRunContext[MainState]) -> FloorPlanAgent:
         console.print("[bold cyan]Executing Agent:[/] Scene Planning Agent")
-        is_debug = ctx.state.config and ctx.state.config.debug
+        is_debug = ctx.state.global_config and ctx.state.global_config.debug
 
         if is_debug:
             console.print("[bold yellow]Debug mode: Using hardcoded scene plan.[/]")
@@ -69,7 +69,7 @@ class BuildingPlanAgent(BaseNode[MainState]):
 class FloorPlanAgent(BaseNode[MainState]):
     async def run(self, ctx: GraphRunContext[MainState]) -> DesignLoopEntry:
         console.print("[bold cyan]Executing Agent:[/] Floor Plan Agent")
-        is_debug = ctx.state.config and ctx.state.config.debug
+        is_debug = ctx.state.global_config and ctx.state.global_config.debug
 
         if is_debug:
             console.print("[bold yellow]Debug mode: Using hardcoded floor plan.[/]")
@@ -106,10 +106,10 @@ class DesignLoopEntry(BaseNode[MainState]):
 
 
 class RoomDesignAgent(BaseNode[MainState]):
-    async def run(self, ctx: GraphRunContext[MainState]) -> UpdateMainStateAfterDesign:
+    async def run(self, ctx: GraphRunContext[MainState]) -> UpdateScene:
         console.print("[bold cyan]Executing Node:[/] RoomDesignAgent")
         room_to_design = ctx.state.scene_definition.rooms[ctx.state.current_room_index]
-        is_debug = ctx.state.config and ctx.state.config.debug
+        is_debug = ctx.state.global_config and ctx.state.global_config.debug
         db = ObjectDatabase(debug=is_debug)
 
         if is_debug:
@@ -142,8 +142,9 @@ class RoomDesignAgent(BaseNode[MainState]):
             console.print(
                 f"[bold cyan]Added Objects:[/] {[obj.name for obj in new_objects]}"
             )
+            ctx.state.designed_room
 
-        return UpdateMainStateAfterDesign(designed_room=room_to_design)
+        return UpdateScene()
 
 
 class PlacementAgent(BaseNode[PlacementState]):
@@ -169,9 +170,7 @@ class VisualFeedback(BaseNode[PlacementState]):
         return PlacementAgent()
 
 
-class UpdateMainStateAfterDesign(BaseNode[MainState]):
-    designed_room: Room
-
+class UpdateScene(BaseNode[Scene, RoomUpdateState]):
     async def run(self, ctx: GraphRunContext[MainState]) -> DesignLoopEntry:
         """Merges the result from the room design subgraph back into the main state."""
         console.print("[bold cyan]Executing Node:[/] update_main_state_after_design")
@@ -183,16 +182,18 @@ class UpdateMainStateAfterDesign(BaseNode[MainState]):
 
 
 # --- Graph Definition ---
-workflow_builder = Graph(
-    nodes=[
-        MetadataAgent,
-        BuildingPlanAgent,
-        FloorPlanAgent,
-        DesignLoopEntry,
-        RoomDesignAgent,
-        UpdateMainStateAfterDesign,
-    ],
+main_graph = Graph(
+    nodes=[MetadataAgent, BuildingPlanAgent, FloorPlanAgent, DesignLoopEntry],
     state_type=MainState,
 )
 
-app = workflow_builder
+room_design_graph = Graph(
+    nodes=[
+        DesignLoopEntry,
+        RoomDesignAgent,
+        UpdateScene,
+    ],
+    state_type=Room,
+)
+
+app = main_graph

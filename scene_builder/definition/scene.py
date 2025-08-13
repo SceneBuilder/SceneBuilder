@@ -1,10 +1,10 @@
+from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
-from PIL import Image
 
 
-class Config(BaseModel):
+class GlobalConfig(BaseModel):
     """Global configuration for the generation process."""
 
     debug: bool = False
@@ -65,12 +65,14 @@ class Room(BaseModel):
     """Represents a single room in the scene."""
 
     id: str
-    category: str
-    tags: list[str]
+    category: str | None
+    tags: list[str] | None
     plan: GenericPlan | None = None
     boundary: list[Vector2] | None = None
-    viz: list[Image.Image] | None = None
+    viz: list[Path] | None = None
     objects: list[Object | Section] = Field(default_factory=list)
+
+
 #     NOTE: don't delete!
 #     type: str | None = None
 #     tags: list[str] | None = None
@@ -79,7 +81,7 @@ class Room(BaseModel):
 class Scene(BaseModel):
     """Represents the entire 3D scene."""
 
-    category: str
-    tags: list[str]
+    category: str | None
+    tags: list[str] | None
     floorType: Literal["single", "multi"]
     rooms: list[Room] = Field(default_factory=list)

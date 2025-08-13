@@ -9,6 +9,6 @@ stateDiagram-v2
   FloorPlanAgent --> DesignLoopEntry
   DesignLoopEntry --> RoomDesignAgent
   DesignLoopEntry --> [*]
-  RoomDesignAgent --> UpdateMainStateAfterDesign
-  UpdateMainStateAfterDesign --> DesignLoopEntry
+  RoomDesignAgent --> UpdateScene
+  UpdateScene --> DesignLoopEntry
 ```
