@@ -13,7 +13,7 @@ def test_scene_generation():
     console.print(Panel("[bold green]Running SceneBuilder Workflow[/]", expand=False))
     initial_state = MainState(
         user_input="Create a modern, minimalist living room.",
-        config=GlobalConfig(debug=True),
+        global_config=GlobalConfig(debug=True),
     )
 
     async def run_graph():

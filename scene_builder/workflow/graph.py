@@ -29,9 +29,6 @@ class MainState(BaseModel):
     current_room_index: int = 0
     global_config: GlobalConfig | None = None
 
-    class Config:
-        arbitrary_types_allowed = True
-
 
 # --- Main Graph Nodes ---
 class MetadataAgent(BaseNode[MainState]):
