@@ -170,20 +170,19 @@ class VisualFeedback(BaseNode[PlacementState]):
         return PlacementAgent()
 
 
-class UpdateScene(BaseNode[Scene, RoomUpdateState]):
+class UpdateScene(BaseNode[MainState]):
     async def run(self, ctx: GraphRunContext[MainState]) -> DesignLoopEntry:
         """Merges the result from the room design subgraph back into the main state."""
         console.print("[bold cyan]Executing Node:[/] update_main_state_after_design")
-        ctx.state.scene_definition.rooms[ctx.state.current_room_index] = (
-            self.designed_room
-        )
+        # The room has already been modified in place by RoomDesignAgent
+        # Just increment the counter to move to the next room
         ctx.state.current_room_index += 1
         return DesignLoopEntry()
 
 
 # --- Graph Definition ---
 main_graph = Graph(
-    nodes=[MetadataAgent, BuildingPlanAgent, FloorPlanAgent, DesignLoopEntry],
+    nodes=[MetadataAgent, BuildingPlanAgent, FloorPlanAgent, DesignLoopEntry, RoomDesignAgent, UpdateScene],
     state_type=MainState,
 )
 
