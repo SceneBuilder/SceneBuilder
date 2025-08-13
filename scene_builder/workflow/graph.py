@@ -1,35 +1,39 @@
 from __future__ import annotations
-from dataclasses import dataclass, field
 
+from pydantic import BaseModel, Field
 from pydantic_graph import BaseNode, End, Graph, GraphRunContext
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage
 
 from rich.console import Console
 
+from scene_builder.decoder import blender_decoder
 from scene_builder.database.object import ObjectDatabase
 from scene_builder.definition.scene import Scene, Room, Object, Vector3, Config
-from scene_builder.workflow.prompt import (
-    FLOOR_PLAN_AGENT_PROMPT,
-    BUILDING_PLAN_AGENT_PROMPT,
+from scene_builder.workflow.agent import (
+    floor_plan_agent,
+    placement_agent,
+    planning_agent,
 )
+from scene_builder.workflow.state import PlacementState
 
 console = Console()
 
 
 # --- State Definitions ---
-@dataclass
-class MainState:
+class MainState(BaseModel):
     user_input: str
     scene_definition: Scene | None = None
     plan: str | None = None
-    messages: list[ModelMessage] = field(default_factory=list)
+    messages: list[ModelMessage] = Field(default_factory=list)
     current_room_index: int = 0
     config: Config | None = None
 
+    class Config:
+        arbitrary_types_allowed = True
+
 
 # --- Main Graph Nodes ---
-@dataclass
 class MetadataAgent(BaseNode[MainState]):
     async def run(self, ctx: GraphRunContext[MainState]) -> BuildingPlanAgent:
         console.print("[bold cyan]Executing Agent:[/] Metadata Agent")
@@ -43,7 +47,6 @@ class MetadataAgent(BaseNode[MainState]):
         return BuildingPlanAgent()
 
 
-@dataclass
 class BuildingPlanAgent(BaseNode[MainState]):
     async def run(self, ctx: GraphRunContext[MainState]) -> FloorPlanAgent:
         console.print("[bold cyan]Executing Agent:[/] Scene Planning Agent")
@@ -56,10 +59,6 @@ class BuildingPlanAgent(BaseNode[MainState]):
             console.print(
                 "[bold green]Production mode: Generating scene plan via LLM.[/]"
             )
-            planning_agent = Agent(
-                "openai:gpt-4o",
-                system_prompt=BUILDING_PLAN_AGENT_PROMPT,
-            )
             response = await planning_agent.run(ctx.state.user_input)
             ctx.state.plan = response.content
             console.print(f"[bold cyan]Generated Plan:[/] {ctx.state.plan}")
@@ -67,7 +66,6 @@ class BuildingPlanAgent(BaseNode[MainState]):
         return FloorPlanAgent()
 
 
-@dataclass
 class FloorPlanAgent(BaseNode[MainState]):
     async def run(self, ctx: GraphRunContext[MainState]) -> DesignLoopEntry:
         console.print("[bold cyan]Executing Agent:[/] Floor Plan Agent")
@@ -83,11 +81,6 @@ class FloorPlanAgent(BaseNode[MainState]):
             console.print(
                 "[bold green]Production mode: Generating floor plan via LLM.[/]"
             )
-            floor_plan_agent = Agent(
-                "openai:gpt-4o",
-                system_prompt=FLOOR_PLAN_AGENT_PROMPT,
-                response_model=list[Room],
-            )
             generated_rooms = await floor_plan_agent.run(
                 f"Create rooms for the following plan: {ctx.state.plan}"
             )
@@ -99,7 +92,6 @@ class FloorPlanAgent(BaseNode[MainState]):
         return DesignLoopEntry()
 
 
-@dataclass
 class DesignLoopEntry(BaseNode[MainState]):
     async def run(
         self, ctx: GraphRunContext[MainState]
@@ -113,7 +105,6 @@ class DesignLoopEntry(BaseNode[MainState]):
             return End(ctx.state.scene_definition)
 
 
-@dataclass
 class RoomDesignAgent(BaseNode[MainState]):
     async def run(self, ctx: GraphRunContext[MainState]) -> UpdateMainStateAfterDesign:
         console.print("[bold cyan]Executing Node:[/] RoomDesignAgent")
@@ -130,9 +121,9 @@ class RoomDesignAgent(BaseNode[MainState]):
                 description=sofa_data["description"],
                 source=sofa_data["source"],
                 sourceId=sofa_data["id"],
-                position=Vector3(0, 0, 0),
-                rotation=Vector3(0, 0, 0),
-                scale=Vector3(1, 1, 1),
+                position=Vector3(x=0, y=0, z=0),
+                rotation=Vector3(x=0, y=0, z=0),
+                scale=Vector3(x=1, y=1, z=1),
             )
             room_to_design.objects.append(new_object)
         else:
@@ -152,18 +143,32 @@ class RoomDesignAgent(BaseNode[MainState]):
                 f"[bold cyan]Added Objects:[/] {[obj.name for obj in new_objects]}"
             )
 
-        return UpdateMainStateAfterDesign(room_to_design)
+        return UpdateMainStateAfterDesign(designed_room=room_to_design)
 
 
-@dataclass
-class ObjectPlacementAgent(BaseNode[]):
+class PlacementAgent(BaseNode[PlacementState]):
     async def run(
-        self, ctx: GraphRunContext[MainState]
-    ) -> None: # TODO
-        None
+        self, ctx: GraphRunContext[PlacementState]
+    ) -> VisualFeedback | End[Room]:
+        response = await placement_agent.run(ctx.state)
+
+        if response.decision == "finalize":
+            return End(ctx.state.room)
+        else:
+            ctx.state.room = response.placement_action.updated_room
+            return VisualFeedback()
 
 
-@dataclass
+class VisualFeedback(BaseNode[PlacementState]):
+    async def run(self, ctx: GraphRunContext[PlacementState]) -> PlacementAgent:
+        blender_decoder.parse_scene_definition(ctx.state.room)
+        renders = blender_decoder.render()
+        prev_room = ctx.state.room
+        prev_room.viz.append(renders)
+        ctx.state.room_history.append(prev_room)
+        return PlacementAgent()
+
+
 class UpdateMainStateAfterDesign(BaseNode[MainState]):
     designed_room: Room
 

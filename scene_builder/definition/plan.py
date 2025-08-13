@@ -1,9 +1,8 @@
-from dataclasses import dataclass
 from typing import Any
 
+from pydantic import BaseModel
 
-@dataclass
-class RoomPlan:
+
+class RoomPlan(BaseModel):
     room_description: str
     room_inspiration: list[Any]
-

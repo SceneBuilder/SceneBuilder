@@ -1,32 +1,28 @@
-from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from pydantic import BaseModel, Field
 from PIL import Image
 
 
-@dataclass
-class Config:
+class Config(BaseModel):
     """Global configuration for the generation process."""
 
     debug: bool = False
     previewAfterAction: bool = False
 
 
-@dataclass
-class GenericPlan:
+class GenericPlan(BaseModel):
     pass
 
 
-@dataclass
-class Vector2:
+class Vector2(BaseModel):
     """Represents a 2D vector."""
 
     x: float
     y: float
 
 
-@dataclass
-class Vector3:
+class Vector3(BaseModel):
     """Represents a 3D vector."""
 
     x: float
@@ -34,22 +30,27 @@ class Vector3:
     z: float
 
 
-@dataclass
-class Object:
+class ObjectBlueprint(BaseModel):
+    id: str
+    source: str
+    description: str
+    extra_info: Any  # NOTE: useful informative things like size, default orientation, thumbnail, ...
+
+
+class Object(BaseModel):
     """Represents a 3D object in the scene."""
 
-    id: str
     name: str
-    description: str
+    id: str
     source: str
-    sourceId: str
+    sourceId: str | None = None
+    description: str
     position: Vector3
     rotation: Vector3
     scale: Vector3
 
 
-@dataclass
-class Section:
+class Section(BaseModel):
     # NOTE: not sure whether to allow recursive sections (e.g., section of sections)
     """Represents a repeatable group of objects."""
 
@@ -57,34 +58,28 @@ class Section:
     position: Vector3
     rotation: Vector3
     # scale: Vector3  # ?
-    children: list[Object]
+    children: list[Object] = Field(default_factory=list)
 
 
-@dataclass
-class Room:
+class Room(BaseModel):
     """Represents a single room in the scene."""
 
     id: str
-    # category: str  # ?
+    category: str
     tags: list[str]
     plan: GenericPlan | None = None
     boundary: list[Vector2] | None = None
     viz: list[Image.Image] | None = None
-    # objects: list[Object] = field(default_factory=list)  # TODO: figure out how field / default_factory works!
-    children: list[Object | Section] = []
-
-
-# @dataclass
-# class RoomState: # NOTE: don't delete!
-#     # type: str | None = None
+    objects: list[Object | Section] = Field(default_factory=list)
+#     NOTE: don't delete!
+#     type: str | None = None
 #     tags: list[str] | None = None
 
 
-@dataclass
-class Scene:
+class Scene(BaseModel):
     """Represents the entire 3D scene."""
 
     category: str
     tags: list[str]
     floorType: Literal["single", "multi"]
-    rooms: list[Room] = field(default_factory=list)
+    rooms: list[Room] = Field(default_factory=list)

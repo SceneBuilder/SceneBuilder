@@ -6,7 +6,7 @@ from rich.syntax import Syntax
 
 from scene_builder.decoder import blender_decoder
 from scene_builder.workflow.graph import app, MainState
-from scene_builder.utils.conversions import dataclass_to_dict
+from scene_builder.utils.conversions import pydantic_to_dict
 from scene_builder.definition.scene import Config
 import yaml
 
@@ -54,8 +54,8 @@ def main():
     # Run the graph asynchronously
     final_scene = asyncio.run(app.run(initial_state))
 
-    # Convert the final scene dataclass to a dictionary for serialization
-    scene_dict = dataclass_to_dict(final_scene)
+    # Convert the final scene Pydantic model to a dictionary for serialization
+    scene_dict = pydantic_to_dict(final_scene)
 
     # Save the scene definition to a YAML file
     with open(args.output, "w") as f:
