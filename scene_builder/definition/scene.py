@@ -34,7 +34,7 @@ class ObjectBlueprint(BaseModel):
     id: str
     source: str
     description: str
-    extra_info: Any  # NOTE: useful informative things like size, default orientation, thumbnail, ...
+    extra_info: Any | None = None  # NOTE: useful informative things like size, default orientation, thumbnail, ...
 
 
 class Object(BaseModel):
