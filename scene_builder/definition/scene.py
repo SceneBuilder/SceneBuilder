@@ -65,8 +65,8 @@ class Room(BaseModel):
     """Represents a single room in the scene."""
 
     id: str
-    category: str | None
-    tags: list[str] | None
+    category: str | None = None
+    tags: list[str] | None = None
     plan: GenericPlan | None = None
     boundary: list[Vector2] | None = None
     viz: list[Path] | None = None

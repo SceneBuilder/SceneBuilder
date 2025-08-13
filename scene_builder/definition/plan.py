@@ -4,5 +4,5 @@ from pydantic import BaseModel
 
 
 class RoomPlan(BaseModel):
-    room_description: str
-    room_inspiration: list[Any]
+    room_description: str = None
+    room_inspiration: list[Any] = None
