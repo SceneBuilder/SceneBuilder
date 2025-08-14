@@ -10,7 +10,7 @@ class PlacementState(BaseModel):
     room: Room
     room_plan: RoomPlan
     what_to_place: Object | ObjectBlueprint | Section
-    room_history: list[Room] | None = None
+    room_history: list[Room] = []
 
 
 class PlacementAction(BaseModel):

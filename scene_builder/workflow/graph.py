@@ -155,7 +155,8 @@ class PlacementAgent(BaseNode[PlacementState]):
         # user_prompt = "By the way, I have a quick question: are you able to read the deps (the PlacementState)?"
         # user_prompt = "Could you repeat exactly what was provided to you (in terms of the depedencies) into the 'reasoning' output?"
         # user_prompt = "Were you provided the current room boundaries (list[Vector2])? What is it?" # -> NO!
-        user_prompt = ""
+        user_prompt = "Are you able to see the visualized image of the room?" 
+        # user_prompt = ""
 
         if user_prompt != "":
             response = await placement_agent.run(
@@ -181,7 +182,7 @@ class VisualFeedback(BaseNode[PlacementState]):
     async def run(self, ctx: GraphRunContext[PlacementState]) -> PlacementAgent:
         room_data = pydantic_to_dict(ctx.state.room)
         blender_decoder.parse_room_definition(room_data)
-        renders = blender_decoder.render()
+        renders = blender_decoder.render_top_down()
         prev_room = ctx.state.room
         prev_room.viz.append(renders)
         ctx.state.room_history.append(prev_room)

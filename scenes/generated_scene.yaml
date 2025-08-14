@@ -1,83 +1,28 @@
-!!python/object:scene_builder.definition.scene.Scene
-__dict__:
-  category: residential
+category: residential
+tags:
+- modern
+- minimalist
+floorType: single
+rooms:
+- id: living_room_1
+  category: living_room
   tags:
-  - modern
-  - minimalist
-  floorType: single
-  rooms:
-  - !!python/object:scene_builder.definition.scene.Room
-    __dict__:
-      id: living_room_1
-      category: living_room
-      tags:
-      - main
-      plan: null
-      boundary: null
-      viz: null
-      objects:
-      - !!python/object:scene_builder.definition.scene.Object
-        __dict__:
-          name: Living Room Sofa
-          id: test_sofa_001
-          source: mock
-          sourceId: test_sofa_001
-          description: A comfortable 3-seat sofa
-          position: !!python/object:scene_builder.definition.scene.Vector3
-            __dict__:
-              x: 0.0
-              y: 0.0
-              z: 0.0
-            __pydantic_extra__: null
-            __pydantic_fields_set__: !!set
-              y: null
-              x: null
-              z: null
-            __pydantic_private__: null
-          rotation: !!python/object:scene_builder.definition.scene.Vector3
-            __dict__:
-              x: 0.0
-              y: 0.0
-              z: 0.0
-            __pydantic_extra__: null
-            __pydantic_fields_set__: !!set
-              y: null
-              x: null
-              z: null
-            __pydantic_private__: null
-          scale: !!python/object:scene_builder.definition.scene.Vector3
-            __dict__:
-              x: 1.0
-              y: 1.0
-              z: 1.0
-            __pydantic_extra__: null
-            __pydantic_fields_set__: !!set
-              y: null
-              x: null
-              z: null
-            __pydantic_private__: null
-        __pydantic_extra__: null
-        __pydantic_fields_set__: !!set
-          id: null
-          name: null
-          description: null
-          position: null
-          scale: null
-          sourceId: null
-          rotation: null
-          source: null
-        __pydantic_private__: null
-    __pydantic_extra__: null
-    __pydantic_fields_set__: !!set
-      objects: null
-      category: null
-      id: null
-      tags: null
-    __pydantic_private__: null
-__pydantic_extra__: null
-__pydantic_fields_set__: !!set
-  category: null
-  rooms: null
-  floorType: null
-  tags: null
-__pydantic_private__: null
+  - main
+  objects:
+  - id: 000074a334c541878360457c672b6c2e
+    name: Modern Red Sofa
+    description: A comfortable red sofa with a modern design.
+    source: objaverse
+    sourceId: 000074a334c541878360457c672b6c2e
+    position:
+      x: 0
+      y: 0
+      z: 0
+    rotation:
+      x: 0
+      y: 0
+      z: 0
+    scale:
+      x: 1
+      y: 1
+      z: 1

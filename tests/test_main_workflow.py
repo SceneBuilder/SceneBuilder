@@ -31,7 +31,7 @@ def test_main_workflow():
 
         output_dir = Path("scenes")
         output_dir.mkdir(exist_ok=True)
-        blender_decoder.parse_scene_definition(scene_dict)
+        blender_decoder.parse_scene_definition(scene_dict) #여기다가 랜더 탑다운 호출
         blender_decoder.save_scene(str(output_dir / "output.blend"))
 
         console.print("[bold green]Blender file created successfully.[/]")

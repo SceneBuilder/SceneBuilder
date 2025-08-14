@@ -5,7 +5,7 @@ from pathlib import Path
 
 from scene_builder.definition.scene import Object, ObjectBlueprint, Room, Vector2
 from scene_builder.definition.plan import RoomPlan
-from scene_builder.importer.test_asset_importer import import_test_asset
+from scene_builder.importer.test_asset_importer import search_test_asset, import_test_asset
 from scene_builder.workflow.graph import (
     room_design_graph,
     placement_graph,
@@ -55,7 +55,7 @@ def test_single_object_placement():
             boundary=SMALL_RECTANGULAR_BOUNDARY,
         ),
         room_plan=RoomPlan(room_description=CLASSROOM_ROOM_DESCRIPTION),
-        what_to_place=import_test_asset("classroom_table"),
+        what_to_place=search_test_asset("classroom_table"),
     )
 
     async def run_graph():

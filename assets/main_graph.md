@@ -8,4 +8,6 @@ stateDiagram-v2
   BuildingPlanAgent --> FloorPlanAgent
   FloorPlanAgent --> DesignLoopEntry
   DesignLoopEntry --> [*]
+  RoomDesignAgent --> UpdateScene
+  UpdateScene --> DesignLoopEntry
 ```
