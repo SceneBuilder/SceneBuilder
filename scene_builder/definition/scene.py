@@ -71,7 +71,7 @@ class Room(BaseModel):
     tags: list[str] | None = None
     plan: GenericPlan | None = None
     boundary: list[Vector2] | None = None
-    viz: list[Path] | None = None
+    viz: list[Path] = []
     objects: list[Object] | None = None
     # objects: list[Object] = Field(default_factory=list)
     # objects: list[Object | Section] = Field(default_factory=list)

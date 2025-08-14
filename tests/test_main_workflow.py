@@ -25,11 +25,13 @@ def test_main_workflow():
     if result:
         final_scene = result.output
         console.print(Panel("[bold green]Exporting to Blender[/]", expand=False))
-        scene_dict = final_scene  # TODO: convert from BaseModel into dict
+        # Convert from BaseModel to dict for blender_decoder
+        from scene_builder.utils.conversions import pydantic_to_dict
+        scene_dict = pydantic_to_dict(final_scene)
 
         output_dir = Path("scenes")
         output_dir.mkdir(exist_ok=True)
-        blender_decoder.parse_scene_definition(scene_dict)
+        blender_decoder.parse_scene_definition(scene_dict) #여기다가 랜더 탑다운 호출
         blender_decoder.save_scene(str(output_dir / "output.blend"))
 
         console.print("[bold green]Blender file created successfully.[/]")
