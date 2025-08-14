@@ -9,7 +9,7 @@ import yaml
 
 from scene_builder.importer import objaverse_importer, test_asset_importer
 
-# This script uses the `bpy` module to create a Blender scene.
+# This script uses the the `bpy` module to create a Blender scene.
 # It can be run with a standalone `bpy` installation (e.g., from pip)
 # or within the Blender Python environment.
 
@@ -30,17 +30,21 @@ def parse_scene_definition(scene_data: dict[str, Any]):
         _create_room(room_data)
 
 
-def parse_room_definition(room_data: dict[str, Any]):
+def parse_room_definition(room_data: dict[str, Any], clear=False):
     """
     Parses the room definition dictionary and creates the scene in Blender.
 
     Args:
         room_data: A dictionary representing the room, loaded from the YAML file.
+        clear: Whether to clear the Blender scene before building room.
+
+    # NOTE: not sure if it's good for `clear` to default to True; (it was for testing)
     """
     print("Parsing room definition and creating scene in Blender...")
 
     # Clear the existing scene
-    _clear_scene()
+    if clear:
+        _clear_scene()
 
     _create_room(room_data)
 
@@ -72,7 +76,9 @@ def _create_object(obj_data: dict[str, Any]):
     if obj_data.get("source") == "objaverse":
         source_id = obj_data.get("sourceId")
         if not source_id:
-            raise ValueError(f"Object '{object_name}' has source 'objaverse' but no 'sourceId'.")
+            raise ValueError(
+                f"Object '{object_name}' has source 'objaverse' but no 'sourceId'."
+            )
 
         # Import the object from Objaverse
         object_path = objaverse_importer.import_object(source_id)
@@ -84,8 +90,10 @@ def _create_object(obj_data: dict[str, Any]):
         # For other sources, we don't have an importer yet.
         # We can either raise an error or create a placeholder.
         # Raising an error is more explicit about what's happening.
-        source = obj_data.get('source', 'unknown')
-        raise NotImplementedError(f"Object source '{source}' is not yet supported for '{object_name}'.")
+        source = obj_data.get("source", "unknown")
+        raise NotImplementedError(
+            f"Object source '{source}' is not yet supported for '{object_name}'."
+        )
 
     # Import the .glb file
     if object_path and object_path.endswith(".glb"):
@@ -95,7 +103,9 @@ def _create_object(obj_data: dict[str, Any]):
             blender_obj = bpy.context.selected_objects[0]
             blender_obj.name = object_name
         except Exception as e:
-            raise IOError(f"Failed to import GLB file for '{object_name}' from '{object_path}'. Blender error: {e}")
+            raise IOError(
+                f"Failed to import GLB file for '{object_name}' from '{object_path}'. Blender error: {e}"
+            )
     else:
         raise IOError(
             f"Failed to import object '{object_name}' (sourceId: {source_id}). "
@@ -112,6 +122,24 @@ def _create_object(obj_data: dict[str, Any]):
     blender_obj.scale = (scl["x"], scl["y"], scl["z"])
 
 
+def load_template(path: str, clear_scene: bool):
+    """
+    Loads a template .blend file.
+
+    Args:
+        path: The path to the .blend file.
+        clear_scene: Whether to clear the current scene before loading.
+    """
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"Template file not found: {path}")
+
+    if clear_scene:
+        _clear_scene()
+
+    bpy.ops.wm.open_mainfile(filepath=path)
+    print(f"Loaded template from {path}")
+
+
 def save_scene(filepath: str):
     """Saves the current Blender scene to a .blend file."""
     if not filepath.endswith(".blend"):
@@ -123,11 +151,11 @@ def save_scene(filepath: str):
 def render_top_down(output_dir: str = None) -> Path:
     """
     Brief Pipeline:
-    1. Build the scene in Blender (bpy) 
+    1. Build the scene in Blender (bpy)
     2. Set the camera to top-down + orthographic, then render
-    3. Save the rendered image as a file (PNG) 
+    3. Save the rendered image as a file (PNG)
     4. Attach the generated top-down image to the Pydantic graph (viz field)
-    
+
     Returns:
         Path to the rendered top-down PNG file.
     """
@@ -135,12 +163,12 @@ def render_top_down(output_dir: str = None) -> Path:
 
     # Select a compatible render engine (handles Blender versions where 'EEVEE' is renamed)
     try:
-        engine_prop = bpy.context.scene.render.bl_rna.properties['engine']
+        engine_prop = bpy.context.scene.render.bl_rna.properties["engine"]
         available_engines = [item.identifier for item in engine_prop.enum_items]
     except Exception:
         available_engines = []
 
-    preferred_engines = ['BLENDER_EEVEE_NEXT', 'EEVEE', 'CYCLES', 'BLENDER_WORKBENCH']
+    preferred_engines = ["BLENDER_EEVEE_NEXT", "EEVEE", "CYCLES", "BLENDER_WORKBENCH"]
     for candidate in preferred_engines:
         if candidate in available_engines:
             bpy.context.scene.render.engine = candidate
@@ -148,68 +176,73 @@ def render_top_down(output_dir: str = None) -> Path:
     else:
         # Fallback to whatever is currently set if preferences are unavailable
         pass
-    bpy.context.scene.render.image_settings.file_format = 'PNG'
+    bpy.context.scene.render.image_settings.file_format = "PNG"
     bpy.context.scene.render.resolution_x = 1024
     bpy.context.scene.render.resolution_y = 1024
     bpy.context.scene.render.resolution_percentage = 100
-    
+
     # Clear existing cameras
     for obj in bpy.context.scene.objects:
-        if obj.type == 'CAMERA':
+        if obj.type == "CAMERA":
             bpy.data.objects.remove(obj, do_unlink=True)
-    
+
     # Add top-down orthographic camera
     bpy.ops.object.camera_add(location=(0, 0, 10))  # 10 units above origin
     camera = bpy.context.object
     camera.name = "TopDownCamera"
-    
+
     # Set to orthographic projection
-    camera.data.type = 'ORTHO'
-    # camera.data.ortho_scale = 1.0  # Adjust based on room size
+    camera.data.type = "ORTHO"
+    camera.data.ortho_scale = 1.0  # Adjust based on room size
     # camera.data.ortho_scale = 5.0  # Adjust based on room size
-    camera.data.ortho_scale = 20.0  # Adjust based on room size
-    
+    # camera.data.ortho_scale = 20.0  # Adjust based on room size
+
     # Point camera straight down (top-down view)
     camera.rotation_euler = (0, 0, 0)  # Looking straight down Z-axis
-    
+
     # Set as active camera
     bpy.context.scene.camera = camera
-    
+
     # Add basic lighting for visibility
-    if not any(obj.type == 'LIGHT' for obj in bpy.context.scene.objects):
-        bpy.ops.object.light_add(type='SUN', location=(0, 0, 15))
+    if not any(obj.type == "LIGHT" for obj in bpy.context.scene.objects):
+        bpy.ops.object.light_add(type="SUN", location=(0, 0, 15))
         light = bpy.context.object
         # light.data.energy = 5.0
         light.data.energy = 0.5
         light.rotation_euler = (0, 0, 0)  # Light pointing down
         print("Added top-down lighting")
-    
+
     # Prepare output filepath
     if output_dir is None:
         output_dir = tempfile.gettempdir()
-    
-    output_path = Path(output_dir) / f"room_topdown_{abs(hash(str(bpy.context.scene.objects)))}.png"
+
+    output_path = (
+        Path(output_dir)
+        / f"room_topdown_{abs(hash(str(bpy.context.scene.objects)))}.png"
+    )
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    
+
     # Set render output path
     bpy.context.scene.render.filepath = str(output_path)
-    
+
     # Render the scene
     print(f"Rendering top-down view to {output_path}")
     bpy.ops.render.render(write_still=True)
-    
+
     if output_path.exists():
         print(f"Top-down render completed: {output_path}")
         return output_path
     else:
-        raise IOError(f"Top-down render failed - output file not created: {output_path}")
+        raise IOError(
+            f"Top-down render failed - output file not created: {output_path}"
+        )
 
 
 def render() -> np.ndarray:
     """
     Main render function for the workflow - renders scene to NumPy array.
     Sets up top-down orthographic view and renders directly to memory.
-    
+
     Returns:
         NumPy array of rendered top-down image data (RGBA format).
     """
@@ -217,12 +250,12 @@ def render() -> np.ndarray:
 
     # Select a compatible render engine (handles Blender versions where 'EEVEE' is renamed)
     try:
-        engine_prop = bpy.context.scene.render.bl_rna.properties['engine']
+        engine_prop = bpy.context.scene.render.bl_rna.properties["engine"]
         available_engines = [item.identifier for item in engine_prop.enum_items]
     except Exception:
         available_engines = []
 
-    preferred_engines = ['BLENDER_EEVEE_NEXT', 'EEVEE', 'CYCLES', 'BLENDER_WORKBENCH']
+    preferred_engines = ["BLENDER_EEVEE_NEXT", "EEVEE", "CYCLES", "BLENDER_WORKBENCH"]
     for candidate in preferred_engines:
         if candidate in available_engines:
             bpy.context.scene.render.engine = candidate
@@ -230,54 +263,54 @@ def render() -> np.ndarray:
     else:
         # Fallback to whatever is currently set if preferences are unavailable
         pass
-    bpy.context.scene.render.image_settings.file_format = 'PNG'
+    bpy.context.scene.render.image_settings.file_format = "PNG"
     bpy.context.scene.render.resolution_x = 1024
     bpy.context.scene.render.resolution_y = 1024
     bpy.context.scene.render.resolution_percentage = 100
-    
+
     # Clear existing cameras
     for obj in bpy.context.scene.objects:
-        if obj.type == 'CAMERA':
+        if obj.type == "CAMERA":
             bpy.data.objects.remove(obj, do_unlink=True)
-    
+
     # Add top-down orthographic camera
     bpy.ops.object.camera_add(location=(0, 0, 10))  # 10 units above origin
     camera = bpy.context.object
     camera.name = "TopDownCamera"
-    
+
     # Set to orthographic projection
-    camera.data.type = 'ORTHO'
+    camera.data.type = "ORTHO"
     camera.data.ortho_scale = 20.0  # Adjust based on room size
-    
+
     # Point camera straight down (top-down view)
     camera.rotation_euler = (0, 0, 0)  # Looking straight down Z-axis
-    
+
     # Set as active camera
     bpy.context.scene.camera = camera
-    
+
     # Add basic lighting for visibility
-    if not any(obj.type == 'LIGHT' for obj in bpy.context.scene.objects):
-        bpy.ops.object.light_add(type='SUN', location=(0, 0, 15))
+    if not any(obj.type == "LIGHT" for obj in bpy.context.scene.objects):
+        bpy.ops.object.light_add(type="SUN", location=(0, 0, 15))
         light = bpy.context.object
         light.data.energy = 5.0
         light.rotation_euler = (0, 0, 0)  # Light pointing down
         print("Added top-down lighting")
-    
+
     # Render to Blender's internal buffer
     print("Rendering top-down view to memory...")
     bpy.ops.render.render()
-    
+
     # Get rendered image from Blender
     render_result = bpy.context.scene.render
     width = render_result.resolution_x
     height = render_result.resolution_y
-    
+
     # Extract pixel data
-    pixels = bpy.data.images['Render Result'].pixels[:]
-    
+    pixels = bpy.data.images["Render Result"].pixels[:]
+
     # Convert to NumPy array (RGBA format)
     image_array = np.array(pixels).reshape((height, width, 4))
-    
+
     print(f"Render completed: {width}x{height} RGBA array")
     return image_array
 
@@ -285,24 +318,24 @@ def render() -> np.ndarray:
 def render_to_numpy() -> np.ndarray:
     """
     Alternative: Render directly to NumPy array in memory (no file).
-    
+
     Returns:
         NumPy array of rendered image data.
     """
     # Render to Blender's internal buffer
     bpy.ops.render.render()
-    
+
     # Get rendered image from Blender
     render_result = bpy.context.scene.render
     width = render_result.resolution_x
     height = render_result.resolution_y
-    
+
     # Extract pixel data
-    pixels = bpy.data.images['Render Result'].pixels[:]
-    
+    pixels = bpy.data.images["Render Result"].pixels[:]
+
     # Convert to NumPy array (RGBA format)
     image_array = np.array(pixels).reshape((height, width, 4))
-    
+
     return image_array
 
 

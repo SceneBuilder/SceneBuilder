@@ -155,7 +155,7 @@ class PlacementAgent(BaseNode[PlacementState]):
         # user_prompt = "By the way, I have a quick question: are you able to read the deps (the PlacementState)?"
         # user_prompt = "Could you repeat exactly what was provided to you (in terms of the depedencies) into the 'reasoning' output?"
         # user_prompt = "Were you provided the current room boundaries (list[Vector2])? What is it?" # -> NO!
-        user_prompt = "Are you able to see the visualized image of the room?" 
+        user_prompt = "Are you able to see the visualized image of the room?"
         # user_prompt = ""
 
         if user_prompt != "":
@@ -187,6 +187,8 @@ class VisualFeedback(BaseNode[PlacementState]):
         prev_room.viz.append(renders)
         ctx.state.room_history.append(prev_room)
         return PlacementAgent()
+# NOTE: maybe we should refactor input/output state to `Feedbackable`, that can either
+#       be PlacementState, RoomDesignState, SceneState, etc., anything with a `history` field.
 
 
 class UpdateScene(BaseNode[MainState]):
