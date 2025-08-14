@@ -181,12 +181,18 @@ class PlacementAgent(BaseNode[PlacementState]):
 class VisualFeedback(BaseNode[PlacementState]):
     async def run(self, ctx: GraphRunContext[PlacementState]) -> PlacementAgent:
         room_data = pydantic_to_dict(ctx.state.room)
+        blender_decoder.load_template(
+            "test_assets/scenes/classroom.blend", clear_scene=True
+        )  # TEMP HACK
         blender_decoder.parse_room_definition(room_data)
         renders = blender_decoder.render_top_down()
         prev_room = ctx.state.room
         prev_room.viz.append(renders)
         ctx.state.room_history.append(prev_room)
+        # blender_decoder.save_scene("tests/test_partial_room_completion.blend")
         return PlacementAgent()
+
+
 # NOTE: maybe we should refactor input/output state to `Feedbackable`, that can either
 #       be PlacementState, RoomDesignState, SceneState, etc., anything with a `history` field.
 
@@ -203,7 +209,14 @@ class UpdateScene(BaseNode[MainState]):
 
 # --- Graph Definition ---
 main_graph = Graph(
-    nodes=[MetadataAgent, BuildingPlanAgent, FloorPlanAgent, DesignLoopEntry, RoomDesignAgent, UpdateScene],
+    nodes=[
+        MetadataAgent,
+        BuildingPlanAgent,
+        FloorPlanAgent,
+        DesignLoopEntry,
+        RoomDesignAgent,
+        UpdateScene,
+    ],
     state_type=MainState,
 )
 

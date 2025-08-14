@@ -86,6 +86,9 @@ def _create_object(obj_data: dict[str, Any]):
     elif obj_data.get("source") == "test_asset":
         object_path = test_asset_importer.import_test_asset(obj_data.get("id"))
 
+    elif obj_data.get("source") == "template":
+        return
+
     else:
         # For other sources, we don't have an importer yet.
         # We can either raise an error or create a placeholder.
@@ -193,9 +196,9 @@ def render_top_down(output_dir: str = None) -> Path:
 
     # Set to orthographic projection
     camera.data.type = "ORTHO"
-    camera.data.ortho_scale = 1.0  # Adjust based on room size
     # camera.data.ortho_scale = 5.0  # Adjust based on room size
     # camera.data.ortho_scale = 20.0  # Adjust based on room size
+    camera.data.ortho_scale = 20.0  # Adjust based on room size
 
     # Point camera straight down (top-down view)
     camera.rotation_euler = (0, 0, 0)  # Looking straight down Z-axis
