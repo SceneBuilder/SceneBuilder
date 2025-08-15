@@ -7,7 +7,7 @@ from pydantic_ai.messages import ModelMessage
 
 from rich.console import Console
 
-from scene_builder.decoder import blender_decoder
+from scene_builder.decoder import blender
 from scene_builder.database.object import ObjectDatabase
 from scene_builder.definition.scene import Scene, Room, Object, Vector3, GlobalConfig
 from scene_builder.utils.conversions import pydantic_to_dict
@@ -155,7 +155,7 @@ class PlacementAgent(BaseNode[PlacementState]):
         # user_prompt = "By the way, I have a quick question: are you able to read the deps (the PlacementState)?"
         # user_prompt = "Could you repeat exactly what was provided to you (in terms of the depedencies) into the 'reasoning' output?"
         # user_prompt = "Were you provided the current room boundaries (list[Vector2])? What is it?" # -> NO!
-        user_prompt = "Are you able to see the visualized image of the room?" 
+        user_prompt = "Are you able to see the visualized image of the room?"
         # user_prompt = ""
 
         if user_prompt != "":
@@ -181,12 +181,19 @@ class PlacementAgent(BaseNode[PlacementState]):
 class VisualFeedback(BaseNode[PlacementState]):
     async def run(self, ctx: GraphRunContext[PlacementState]) -> PlacementAgent:
         room_data = pydantic_to_dict(ctx.state.room)
-        blender_decoder.parse_room_definition(room_data)
-        renders = blender_decoder.render_top_down()
+        blender.load_template(
+            "test_assets/scenes/classroom.blend", clear_scene=True
+        )  # TEMP HACK
+        blender.parse_room_definition(room_data)
+        renders = blender.create_scene_visualization(output_dir="test_output")
         prev_room = ctx.state.room
         prev_room.viz.append(renders)
         ctx.state.room_history.append(prev_room)
         return PlacementAgent()
+
+
+# NOTE: maybe we should refactor input/output state to `Feedbackable`, that can either
+#       be PlacementState, RoomDesignState, SceneState, etc., anything with a `history` field.
 
 
 class UpdateScene(BaseNode[MainState]):
@@ -201,7 +208,14 @@ class UpdateScene(BaseNode[MainState]):
 
 # --- Graph Definition ---
 main_graph = Graph(
-    nodes=[MetadataAgent, BuildingPlanAgent, FloorPlanAgent, DesignLoopEntry, RoomDesignAgent, UpdateScene],
+    nodes=[
+        MetadataAgent,
+        BuildingPlanAgent,
+        FloorPlanAgent,
+        DesignLoopEntry,
+        RoomDesignAgent,
+        UpdateScene,
+    ],
     state_type=MainState,
 )
 

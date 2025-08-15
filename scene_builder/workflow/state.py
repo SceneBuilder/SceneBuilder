@@ -9,8 +9,8 @@ from scene_builder.definition.plan import RoomPlan
 class PlacementState(BaseModel):
     room: Room
     room_plan: RoomPlan
-    what_to_place: Object | ObjectBlueprint | Section
-    room_history: list[Room] = []
+    what_to_place: Object | ObjectBlueprint | Section  # NOTE: maybe rename to `placeable`
+    room_history: list[Room] = []  # NOTE: maybe rename to `history`
 
 
 class PlacementAction(BaseModel):
