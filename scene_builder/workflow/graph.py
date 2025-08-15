@@ -7,7 +7,7 @@ from pydantic_ai.messages import ModelMessage
 
 from rich.console import Console
 
-from scene_builder.decoder import blender_decoder
+from scene_builder.decoder import blender
 from scene_builder.database.object import ObjectDatabase
 from scene_builder.definition.scene import Scene, Room, Object, Vector3, GlobalConfig
 from scene_builder.utils.conversions import pydantic_to_dict
@@ -181,15 +181,14 @@ class PlacementAgent(BaseNode[PlacementState]):
 class VisualFeedback(BaseNode[PlacementState]):
     async def run(self, ctx: GraphRunContext[PlacementState]) -> PlacementAgent:
         room_data = pydantic_to_dict(ctx.state.room)
-        blender_decoder.load_template(
+        blender.load_template(
             "test_assets/scenes/classroom.blend", clear_scene=True
         )  # TEMP HACK
-        blender_decoder.parse_room_definition(room_data)
-        renders = blender_decoder.render_top_down()
+        blender.parse_room_definition(room_data)
+        renders = blender.create_scene_visualization(output_dir="test_output")
         prev_room = ctx.state.room
         prev_room.viz.append(renders)
         ctx.state.room_history.append(prev_room)
-        # blender_decoder.save_scene("tests/test_partial_room_completion.blend")
         return PlacementAgent()
 
 

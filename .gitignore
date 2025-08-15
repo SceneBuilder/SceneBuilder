@@ -1,5 +1,9 @@
 # Modified
 experiments/usna_floor_plan_images
+test_output/
+
+*.glb
+*.blend1
 
 # Created by https://www.toptal.com/developers/gitignore/api/windows,macos,linux,python
 # Edit at https://www.toptal.com/developers/gitignore?templates=windows,macos,linux,python

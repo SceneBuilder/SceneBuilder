@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from pydantic_ai import Agent
 from pydantic_ai.messages import BinaryContent
 
-from scene_builder.utils.pai_utils import transform_paths_to_binary
+from scene_builder.utils.pai import transform_paths_to_binary
 
 
 class ImageQuery(BaseModel):

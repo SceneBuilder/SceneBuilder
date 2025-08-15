@@ -5,7 +5,7 @@ from pydantic_ai.providers.google import GoogleProvider
 
 from scene_builder.definition.scene import Room
 from scene_builder.tools.read_file import read_media_file
-from scene_builder.utils.pai_utils import transform_paths_to_binary
+from scene_builder.utils.pai import transform_paths_to_binary
 from scene_builder.workflow.prompt import (
     BUILDING_PLAN_AGENT_PROMPT,
     FLOOR_PLAN_AGENT_PROMPT,

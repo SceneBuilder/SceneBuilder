@@ -3,7 +3,7 @@ from pathlib import Path
 import unittest.mock as mock
 
 # bpy = pytest.importorskip("bpy", reason="Blender bpy not available")
-from scene_builder.decoder import blender_decoder
+from scene_builder.decoder import blender
 from scene_builder.importer.test_asset_importer import search_test_asset
 from scene_builder.workflow.graph import VisualFeedback
 from scene_builder.workflow.state import PlacementState
@@ -96,7 +96,7 @@ def test_template_loading():
     #     blender_decoder.load_template(template_path, clear_scene=True)
     #     mock_load.assert_called_once_with(template_path, clear_scene=True)
 
-    blender_decoder.load_template(template_path, clear_scene=True)
+    blender.load_template(template_path, clear_scene=True)
 
     async def run():
         node = VisualFeedback()
@@ -109,9 +109,10 @@ def test_template_loading():
     assert state.room.viz and isinstance(state.room.viz[-1], Path)
     assert state.room.viz[-1].exists()
 
-    blender_decoder.save_scene("tests/test_template_loading.blend")
+    blender.save_scene("tests/test_template_loading.blend")
 
 
 if __name__ == "__main__":
     test_visual_feedback_renders_png()
     test_template_loading()
+

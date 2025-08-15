@@ -3,11 +3,12 @@ import os
 from pathlib import Path
 
 
-from scene_builder.decoder import blender_decoder
+from scene_builder.decoder import blender
 from scene_builder.definition.scene import Object, ObjectBlueprint, Room, Vector2, Scene
 from scene_builder.definition.plan import RoomPlan
 from scene_builder.importer.test_asset_importer import search_test_asset
 from scene_builder.utils.conversions import pydantic_from_yaml
+from scene_builder.utils.image import create_gif_from_images
 from scene_builder.workflow.graph import (
     room_design_graph,
     placement_graph,
@@ -102,19 +103,24 @@ def test_partial_room_completion():
         what_to_place=search_test_asset("classroom_table"),
     )
 
-    blender_decoder.load_template(
+    blender.load_template(
         "test_assets/scenes/classroom.blend", clear_scene=True
     )
 
     async def run_graph():
-        # return await placement_graph.run(PlacementAgent(), state=initial_state)
         return await placement_graph.run(VisualFeedback(), state=initial_state)
 
     # TODO: log each step, save info GIF, video, or markdown(?).
 
-    result = asyncio.run(run_graph())
+    result: PlacementState = asyncio.run(run_graph())
 
-    blender_decoder.save_scene("tests/test_partial_room_completion.blend")
+    room_vizs = []
+    for step, state in enumerate(result.room_history):
+        room_vizs.append(state.viz[0])
+
+    create_gif_from_images(room_vizs, "test_output/partial_room_completion.gif")
+
+    blender.save_scene("tests/test_partial_room_completion.blend")
 
 
 def test_room_design_workflow():
