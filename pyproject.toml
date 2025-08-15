@@ -20,6 +20,8 @@ dependencies = [
   "objaverse",
   "pydantic-ai",
   "pydantic-graph",
+  "natsort",
+  "pillow",
 ]
 
 [project.optional-dependencies]
