@@ -107,8 +107,8 @@ def test_partial_room_completion():
     )
 
     async def run_graph():
-        return await placement_graph.run(PlacementAgent(), state=initial_state)
-        # return await placement_graph.run(VisualFeedback(), state=initial_state)
+        # return await placement_graph.run(PlacementAgent(), state=initial_state)
+        return await placement_graph.run(VisualFeedback(), state=initial_state)
 
     # TODO: log each step, save info GIF, video, or markdown(?).
 
@@ -122,6 +122,6 @@ def test_room_design_workflow():
 
 
 if __name__ == "__main__":
-    test_single_object_placement()
+    # test_single_object_placement()
     test_partial_room_completion()
     # test_room_design_workflow()
