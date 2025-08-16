@@ -34,6 +34,8 @@ rooms:
           x: 1
           y: 1
           z: 1
+        tags:
+          - immutable
       - id: template_object_2
         name: bookcase
         description: ""
@@ -51,6 +53,8 @@ rooms:
           x: 1
           y: 1
           z: 1
+        tags:
+          - immutable
       - id: template_object_3
         name: drawer
         description: ""
@@ -68,6 +72,8 @@ rooms:
           x: 1
           y: 1
           z: 1
+        tags:
+          - immutable
       - id: template_object_4
         name: closet
         description: ""
@@ -85,6 +91,8 @@ rooms:
           x: 1
           y: 1
           z: 1
+        tags:
+          - immutable
       - id: template_object_6
         name: table_chair
         description: ""
@@ -102,6 +110,8 @@ rooms:
           x: 1
           y: 1
           z: 1
+        tags:
+          - immutable
       - id: template_object_7
         name: table_chair
         description: ""
@@ -119,6 +129,8 @@ rooms:
           x: 1
           y: 1
           z: 1
+        tags:
+          - immutable
       - id: template_object_8
         name: table_chair
         description: ""
@@ -136,6 +148,8 @@ rooms:
           x: 1
           y: 1
           z: 1
+        tags:
+          - immutable
       - id: template_object_9
         name: table_chair
         description: ""
@@ -153,6 +167,8 @@ rooms:
           x: 1
           y: 1
           z: 1
+        tags:
+          - immutable
       - id: template_object_10
         name: table_chair
         description: ""
@@ -170,6 +186,8 @@ rooms:
           x: 1
           y: 1
           z: 1
+        tags:
+          - immutable
       - id: template_object_11
         name: table_chair
         description: ""
@@ -187,6 +205,8 @@ rooms:
           x: 1
           y: 1
           z: 1
+        tags:
+          - immutable
       - id: template_object_12
         name: table_chair
         description: ""
@@ -204,6 +224,8 @@ rooms:
           x: 1
           y: 1
           z: 1
+        tags:
+          - immutable
       - id: template_object_13
         name: table_chair
         description: ""
@@ -221,6 +243,8 @@ rooms:
           x: 1
           y: 1
           z: 1
+        tags:
+          - immutable
       - id: template_object_14
         name: table_chair
         description: ""
@@ -238,6 +262,8 @@ rooms:
           x: 1
           y: 1
           z: 1
+        tags:
+          - immutable
       - id: template_object_15
         name: table_chair
         description: ""
@@ -255,6 +281,8 @@ rooms:
           x: 1
           y: 1
           z: 1
+        tags:
+          - immutable
       - id: template_object_16
         name: table_chair
         description: ""
@@ -272,6 +300,8 @@ rooms:
           x: 1
           y: 1
           z: 1
+        tags:
+          - immutable
       - id: template_object_17
         name: table_chair
         description: ""
@@ -289,6 +319,8 @@ rooms:
           x: 1
           y: 1
           z: 1
+        tags:
+          - immutable
       - id: template_object_18
         name: table_chair
         description: ""
@@ -306,6 +338,8 @@ rooms:
           x: 1
           y: 1
           z: 1
+        tags:
+          - immutable
       - id: template_object_19
         name: table_chair
         description: ""
@@ -323,6 +357,8 @@ rooms:
           x: 1
           y: 1
           z: 1
+        tags:
+          - immutable
       - id: template_object_20
         name: table_chair
         description: ""
@@ -340,6 +376,8 @@ rooms:
           x: 1
           y: 1
           z: 1
+        tags:
+          - immutable
       - id: template_object_21
         name: table_chair
         description: ""
@@ -357,6 +395,8 @@ rooms:
           x: 1
           y: 1
           z: 1
+        tags:
+          - immutable
       - id: template_object_22
         name: table_chair
         description: ""
@@ -374,3 +414,5 @@ rooms:
           x: 1
           y: 1
           z: 1
+        tags:
+          - immutable

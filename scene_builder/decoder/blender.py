@@ -1,11 +1,13 @@
 import os
 import tempfile
+import math
 from pathlib import Path
 from typing import Any
 
 import bpy
 import numpy as np
 import yaml
+from scipy.spatial.transform import Rotation
 
 from scene_builder.importer import objaverse_importer, test_asset_importer
 from scene_builder.logging import logger
@@ -82,7 +84,7 @@ def _create_object(obj_data: dict[str, Any]):
         object_path = objaverse_importer.import_object(source_id)
 
     elif obj_data.get("source") == "test_asset":
-        object_path = test_asset_importer.import_test_asset(obj_data.get("id"))
+        object_path = test_asset_importer.import_test_asset(obj_data.get("sourceId"))
 
     elif obj_data.get("source") == "template":
         return
@@ -119,8 +121,15 @@ def _create_object(obj_data: dict[str, Any]):
     scl = obj_data.get("scale", {"x": 1, "y": 1, "z": 1})
 
     blender_obj.location = (pos["x"], pos["y"], pos["z"])
-    blender_obj.rotation_euler = (rot["x"], rot["y"], rot["z"])
     blender_obj.scale = (scl["x"], scl["y"], scl["z"])
+
+    # Combine the original rotation with the rotation from the scene definition.
+    original_rotation = Rotation.from_euler("xyz", blender_obj.rotation_euler)
+    new_rotation = Rotation.from_euler("xyz", [rot["x"], rot["y"], rot["z"]])
+    combined_rotation = new_rotation * original_rotation
+
+    # Apply the combined rotation.
+    blender_obj.rotation_euler = combined_rotation.as_euler("xyz")
 
 
 def load_template(path: str, clear_scene: bool):
@@ -202,6 +211,27 @@ def _setup_top_down_camera():
     bpy.context.scene.camera = camera
 
 
+def _setup_isometric_camera():
+    """Sets up an isometric orthographic camera."""
+    # Clear existing cameras
+    for obj in bpy.context.scene.objects:
+        if obj.type == "CAMERA":
+            bpy.data.objects.remove(obj, do_unlink=True)
+
+    # Add isometric orthographic camera
+    bpy.ops.object.camera_add(location=(10, -10, 10))
+    camera = bpy.context.object
+    camera.name = "IsometricCamera"
+    camera.data.type = "ORTHO"
+    camera.data.ortho_scale = 20.0  # Adjust based on room size
+
+    # Point camera towards the origin with isometric rotation
+    camera.rotation_euler = (math.radians(54.736), 0, math.radians(45))
+
+    # Set as active camera
+    bpy.context.scene.camera = camera
+
+
 def _setup_lighting(energy: float = 1.0):
     """Sets up basic lighting for the scene."""
     if not any(obj.type == "LIGHT" for obj in bpy.context.scene.objects):
@@ -266,18 +296,32 @@ def render_to_numpy() -> np.ndarray:
 
 
 def create_scene_visualization(
-    resolution=1024, format="jpg", output_dir: str = None
+    resolution=1024, format="jpg", output_dir: str = None, view: str = "top_down"
 ) -> Path:
     """
+    Creates a visualization of the current scene.
+
+    Args:
+        resolution: The resolution of the output image.
+        format: The format of the output image.
+        output_dir: The directory to save the output image to.
+        view: The view to render from. Can be 'top_down' or 'isometric'.
 
     Returns:
         Path to the rendered scene visualization file.
     """
-    logger.debug("Setting up top-down orthographic render...")
+    logger.debug(f"Setting up {view} orthographic render...")
 
     _select_render_engine()
     _configure_output_image(format, resolution)
-    _setup_top_down_camera()
+    if view == "top_down":
+        _setup_top_down_camera()
+    elif view == "isometric":
+        _setup_isometric_camera()
+    else:
+        raise ValueError(
+            f"Unsupported view type: {view}. Must be 'top_down' or 'isometric'."
+        )
     _setup_lighting(energy=0.5)
 
     # Prepare output filepath
@@ -286,7 +330,7 @@ def create_scene_visualization(
 
     output_path = get_filename(
         output_dir=output_dir,
-        base_name="sb_scene_viz",
+        base_name=f"sb_scene_viz_{view}",
         extension=format.lower(),
         strategy="increment",
     )

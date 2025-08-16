@@ -2,6 +2,7 @@ import asyncio
 import os
 from pathlib import Path
 
+from pydantic_graph import GraphRunResult
 
 from scene_builder.decoder import blender
 from scene_builder.definition.scene import Object, ObjectBlueprint, Room, Vector2, Scene
@@ -112,11 +113,11 @@ def test_partial_room_completion():
 
     # TODO: log each step, save info GIF, video, or markdown(?).
 
-    result: PlacementState = asyncio.run(run_graph())
+    result: GraphRunResult[PlacementState] = asyncio.run(run_graph())
 
     room_vizs = []
-    for step, state in enumerate(result.room_history):
-        room_vizs.append(state.viz[0])
+    for step, state in enumerate(result.state.room_history):
+        room_vizs.append(state.viz[-1])
 
     create_gif_from_images(room_vizs, "test_output/partial_room_completion.gif")
 

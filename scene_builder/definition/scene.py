@@ -31,7 +31,8 @@ class Vector3(BaseModel):
 
 
 class ObjectBlueprint(BaseModel):
-    id: str
+    name: str | None
+    source_id: str
     source: str
     description: str
     extra_info: Any | None = (
@@ -50,6 +51,7 @@ class Object(BaseModel):
     position: Vector3
     rotation: Vector3
     scale: Vector3
+    tags: list[str] | None = None
 
 
 class Section(BaseModel):
