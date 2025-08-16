@@ -5,7 +5,11 @@ import tempfile
 import numpy as np
 
 import bpy
+import bmesh
 import yaml
+import time
+from mathutils.geometry import tessellate_polygon
+from mathutils import Vector
 
 from scene_builder.importer import objaverse_importer, test_asset_importer
 
@@ -53,10 +57,44 @@ def _clear_scene():
 
 
 def _create_room(room_data: dict[str, Any]):
-    """Creates a representation of a room (for now, just its objects)."""
-    print(f"Creating room: {room_data.get('id')}")
-    for obj_data in room_data.get("objects", []):
-        _create_object(obj_data)
+    """Creates a representation of a room including floor mesh and objects."""
+    if room_data is None:
+        print("Warning: room_data is None, skipping room creation")
+        return
+        
+    room_id = room_data.get('id', 'unknown_room')
+    print(f"Creating room: {room_id}")
+    
+    # Create floor mesh if boundary data exists
+    boundary = room_data.get('boundary')
+    if boundary:
+        print(f"Creating floor mesh for room: {room_id}")
+        try:
+            # Extract LLM metadata if available
+            llm_metadata = {}
+            if 'floor_dimensions' in room_data:
+                floor_dims = room_data['floor_dimensions']
+                llm_metadata = {
+                    'width': floor_dims.get('width', 0),
+                    'height': floor_dims.get('height', 0),
+                    'area_sqm': floor_dims.get('area_sqm', 0),
+                    'shape': floor_dims.get('shape', 'unknown'),
+                    'confidence': floor_dims.get('confidence', 0),
+                    'llm_analysis': floor_dims.get('llm_analysis', '')
+                }
+            
+            floor_result = _create_floor_mesh(boundary, room_id, llm_metadata=llm_metadata)
+            print(f"Floor mesh created: {floor_result.get('status', 'unknown')}")
+        except Exception as e:
+            print(f"Failed to create floor mesh for room {room_id}: {e}")
+    
+    # Create objects in the room
+    objects = room_data.get("objects")
+    if objects:
+        for obj_data in objects:
+            _create_object(obj_data)
+    else:
+        print(f"No objects to create for room: {room_id}")
 
 
 def _create_object(obj_data: dict[str, Any]):
@@ -111,6 +149,249 @@ def _create_object(obj_data: dict[str, Any]):
     blender_obj.rotation_euler = (rot["x"], rot["y"], rot["z"])
     blender_obj.scale = (scl["x"], scl["y"], scl["z"])
 
+
+def _create_floor_mesh(
+    boundary: list[dict[str, float]], 
+    room_id: str,
+    floor_thickness_m: float = 0.5,
+    origin: str = "center",
+    llm_metadata: dict[str, Any] = None
+) -> dict[str, Any]:
+    """
+    Creates a watertight floor mesh from room boundary points with LLM metadata integration.
+    
+    Args:
+        boundary: List of Vector2 points from room.boundary [{"x": float, "y": float}, ...]
+        room_id: Room identifier for naming
+        floor_thickness_m: Thickness of the floor in meters (default: 0.1)
+        origin: Origin placement - "center" or "min" (default: "center") 
+        material_name: Optional material name to apply
+        llm_metadata: LLM analysis data from floor_dimensions
+    
+    Returns:
+        Dictionary with creation status and metadata
+    """
+    
+    if not boundary or len(boundary) < 3:
+        return {
+            "status": "error",
+            "message": f"Room {room_id}: At least 3 boundary points required for floor mesh",
+            "timestamp": int(time.time())
+        }
+    
+    # try:
+    # Generate timestamp for deterministic naming
+    timestamp = int(time.time())
+    floor_name = f"Floor_{room_id}_{timestamp}"
+    mesh_name = f"FloorMesh_{room_id}_{timestamp}"
+    
+    # Ensure NavGo_Floors collection exists
+    collection = _ensure_collection("NavGo_Floors")
+    
+    # Create new mesh and object
+    mesh = bpy.data.meshes.new(mesh_name)
+    floor_obj = bpy.data.objects.new(floor_name, mesh)
+    
+    # Link to collection
+    collection.objects.link(floor_obj)
+    
+    # Create bmesh instance
+    bm = bmesh.new()
+    
+    try:
+        # Convert boundary points to 3D vertices (z=0 for top face)
+        # Handle both Vector2 objects and dictionaries
+        vertices_2d = []
+        for point in boundary:
+            if hasattr(point, 'x'):  # Vector2 object
+                vertices_2d.append((point.x, point.y))
+            else:  # Dictionary format
+                vertices_2d.append((point['x'], point['y']))
+        verts_3d = [(x, y, 0.0) for x, y in vertices_2d]
+        
+        # Create vertices in bmesh
+        bmesh_verts = []
+        for vert in verts_3d:
+            bmesh_verts.append(bm.verts.new(vert))
+        
+        # Ensure face indices are valid
+        bm.verts.ensure_lookup_table()
+        
+        # Create the top face using all vertices
+        try:
+            top_face = bm.faces.new(bmesh_verts)
+            top_face.normal_update()
+        except ValueError as e:
+            # If direct face creation fails, try triangulation
+            print(f"Direct face creation failed: {e}. Attempting triangulation...")
+            
+            # Convert to mathutils Vectors for tessellation
+            vectors = [Vector(v) for v in verts_3d]
+            
+            # Tessellate the polygon
+            try:
+                tessellated = tessellate_polygon([vectors])
+                
+                # Create faces from tessellation
+                for tri in tessellated:
+                    try:
+                        face_verts = [bmesh_verts[i] for i in tri]
+                        bm.faces.new(face_verts)
+                    except (ValueError, IndexError):
+                        continue
+                        
+            except Exception as tess_error:
+                print(f"Tessellation failed: {tess_error}")
+                # Fallback: create a simple triangular fan
+                for i in range(1, len(bmesh_verts) - 1):
+                    try:
+                        face_verts = [bmesh_verts[0], bmesh_verts[i], bmesh_verts[i + 1]]
+                        bm.faces.new(face_verts)
+                    except ValueError as ve:
+                        print(f"Failed to create fallback triangle face: {ve}")
+                        continue
+        
+        # Create bottom face and side walls if thickness > 0
+        if floor_thickness_m > 0:
+            # Duplicate vertices for bottom face
+            bottom_verts = []
+            for x, y, _ in verts_3d:
+                bottom_verts.append(bm.verts.new((x, y, -floor_thickness_m)))
+            
+            bm.verts.ensure_lookup_table()
+            
+            # Create bottom face (reversed order for correct normal)
+            try:
+                bottom_face = bm.faces.new(reversed(bottom_verts))
+                bottom_face.normal_update()
+            except ValueError:
+                # Fallback triangulation for bottom face
+                for i in range(1, len(bottom_verts) - 1):
+                    face_verts = [bottom_verts[0], bottom_verts[i + 1], bottom_verts[i]]
+                    bm.faces.new(face_verts)
+
+            
+            # Create side walls
+            num_verts = len(bmesh_verts)
+            for i in range(num_verts):
+                next_i = (i + 1) % num_verts
+                # Create quad face for each side
+                side_face = bm.faces.new([
+                    bmesh_verts[i],
+                    bmesh_verts[next_i], 
+                    bottom_verts[next_i],
+                    bottom_verts[i]
+                ])
+                side_face.normal_update()
+
+        
+        # Recalculate normals
+        bm.faces.ensure_lookup_table()
+        bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+        
+        # Update mesh
+        bm.to_mesh(mesh)
+        mesh.update()
+        
+    finally:
+        bm.free()
+    
+    # Set object origin
+    bpy.context.view_layer.objects.active = floor_obj
+    bpy.ops.object.select_all(action='DESELECT')
+    floor_obj.select_set(True)
+    
+    if origin == "center":
+        bpy.ops.object.origin_set(type='ORIGIN_CENTER_OF_MASS', center='BOUNDS')
+    elif origin == "min":
+        bpy.ops.object.origin_set(type='ORIGIN_GEOMETRY', center='BOUNDS')
+    
+
+    # Calculate bounds
+    bounds = _calculate_bounds(vertices_2d)
+    
+    # Build result with LLM metadata
+    result = {
+        "status": "success",
+        "object_name": floor_name,
+        "mesh_name": mesh_name,
+        "collection": "NavGo_Floors",
+        "room_id": room_id,
+        "vertex_count": len(vertices_2d),
+        "face_count": len(mesh.polygons),
+        "thickness_m": floor_thickness_m,
+        "origin_mode": origin,
+        "bounds": bounds,
+        "timestamp": timestamp
+    }
+    
+    # Add LLM metadata to result
+    if llm_metadata:
+        result["llm_metadata"] = llm_metadata
+        if llm_metadata.get('llm_analysis'):
+            result["llm_analysis"] = llm_metadata['llm_analysis']
+            
+    return result
+        
+    # except Exception as e:
+    #     return {
+    #         "status": "error",
+    #         "message": f"Floor mesh creation failed for room {room_id}: {str(e)}",
+    #         "timestamp": int(time.time())
+    #     }
+
+
+def _calculate_bounds(vertices_2d: list[tuple[float, float]]) -> dict[str, float | bool | int]:
+    """
+    Calculate bounding box dimensions from 2D vertices.
+    
+    Args:
+        vertices_2d: List of (x, y) coordinate tuples
+        
+    Returns:
+        Dictionary containing min/max coordinates, width, height, and area
+    """
+
+    if not vertices_2d:
+        return {
+            "value": False,
+            "count": 0,
+            "min_x": 0, "max_x": 0,
+            "min_y": 0, "max_y": 0,
+            "width": 0, "height": 0,
+            "area": 0,
+            "has_area": False
+        }
+
+    x_coords = [x for x, y in vertices_2d]
+    y_coords = [y for x, y in vertices_2d]
+    
+    min_x, max_x = min(x_coords), max(x_coords)
+    min_y, max_y = min(y_coords), max(y_coords)
+    width = max_x - min_x
+    height = max_y - min_y  
+    area = width * height
+    
+    return {
+        "value": True,
+        "count": len(vertices_2d),
+        "min_x": min_x, "max_x": max_x,
+        "min_y": min_y, "max_y": max_y,
+        "width": width, "height": height,
+        "area": area,
+        "has_area": (width > 0 and height > 0)
+    }
+
+
+def _ensure_collection(collection_name: str):
+    """Ensures a collection exists and returns it."""
+    if collection_name in bpy.data.collections:
+        return bpy.data.collections[collection_name]
+    
+    # Create new collection
+    collection = bpy.data.collections.new(collection_name)
+    bpy.context.scene.collection.children.link(collection)
+    return collection
 
 def save_scene(filepath: str):
     """Saves the current Blender scene to a .blend file."""

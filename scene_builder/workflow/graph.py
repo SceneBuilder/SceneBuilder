@@ -13,6 +13,7 @@ from scene_builder.definition.scene import Scene, Room, Object, Vector3, GlobalC
 from scene_builder.utils.conversions import pydantic_to_dict
 from scene_builder.workflow.agent import (
     floor_plan_agent,
+    floor_size_agent,
     placement_agent,
     planning_agent,
 )
@@ -79,14 +80,77 @@ class FloorPlanAgent(BaseNode[MainState]):
             ctx.state.scene_definition.rooms.append(living_room)
         else:
             console.print(
-                "[bold green]Production mode: Generating floor plan via LLM.[/]"
+                "[bold green]Production mode: Generating intelligent room layout with LLM.[/]"
             )
-            generated_rooms = await floor_plan_agent.run(
-                f"Create rooms for the following plan: {ctx.state.plan}"
+            
+            # Step 1: Use LLM to analyze floor dimensions from text description
+            console.print("[bold cyan]Step 1: Analyzing floor dimensions with LLM...[/]")
+            floor_analysis_prompt = (
+                f"Based on the user request: '{ctx.state.user_input}' and building plan: '{ctx.state.plan}', "
+                f"estimate realistic floor dimensions for the main room. Consider the room type and its intended use."
             )
+            llm_floor_dims_result = await floor_size_agent.run(floor_analysis_prompt)
+            llm_floor_dims = llm_floor_dims_result.output
+            console.print(f"[bold cyan]LLM Dimension Analysis:[/] {llm_floor_dims.width}x{llm_floor_dims.height}m, {llm_floor_dims.shape}")
+            
+            # Step 2: Generate rooms with LLM using dimensional context
+            console.print("[bold cyan]Step 2: Generating room layout with architectural intelligence...[/]")
+            room_generation_prompt = (
+                f"Create a room layout for: {ctx.state.user_input}\n"
+                f"Building plan context: {ctx.state.plan}\n"
+                f"Recommended dimensions: {llm_floor_dims.width}m x {llm_floor_dims.height}m\n"
+                f"Room shape: {llm_floor_dims.shape}\n"
+                f"Focus on creating one primary room that matches the user's request with appropriate sizing." # TODO: multi rooms
+            )
+            generated_rooms_result = await floor_plan_agent.run(room_generation_prompt)
+            generated_rooms = generated_rooms_result.output
+            
+            # Step 3: Enhance generated rooms with LLM dimensions and coordinates
+            from scene_builder.definition.scene import Vector2
+            console.print("[bold cyan]Step 3: Integrating LLM analysis with room geometry...[/]")
+            
+            try:
+                for room in generated_rooms:
+                    # Apply LLM-analyzed dimensions to the room
+                    room.floor_dimensions = llm_floor_dims
+                    
+                    # Try to set estimated_size if the field exists
+                    try:
+                        room.estimated_size = Vector2(x=llm_floor_dims.width, y=llm_floor_dims.height)
+                    except Exception as field_error:
+                        console.print(f"[bold yellow]⚠ Could not set estimated_size: {field_error}[/]")
+                        console.print(f"[bold yellow]⚠ Using floor_dimensions instead[/]")
+                    
+                    # Generate boundary coordinates (rectangular for now)
+                    if llm_floor_dims.shape == "rectangular" or not llm_floor_dims.shape:
+                        half_width = llm_floor_dims.width / 2
+                        half_height = llm_floor_dims.height / 2
+                        room.boundary = [
+                            Vector2(x=-half_width, y=-half_height),
+                            Vector2(x=half_width, y=-half_height),
+                            Vector2(x=half_width, y=half_height),
+                            Vector2(x=-half_width, y=half_height)
+                        ]
+                        console.print(f"[bold green]✓ Generated rectangular boundary for {room.id}[/]")
+                    else:
+                        # Fallback to rectangular for unsupported shapes
+                        console.print(f"[bold yellow]⚠ Shape '{llm_floor_dims.shape}' not yet supported, using rectangular fallback[/]")
+                        half_width = llm_floor_dims.width / 2
+                        half_height = llm_floor_dims.height / 2
+                        room.boundary = [
+                            Vector2(x=-half_width, y=-half_height),
+                            Vector2(x=half_width, y=-half_height),
+                            Vector2(x=half_width, y=half_height),
+                            Vector2(x=-half_width, y=half_height)
+                        ]
+                        
+            except Exception as room_error:
+                console.print(f"[bold red]✗ Error enhancing rooms: {room_error}[/]")
+                raise room_error
+                    
             ctx.state.scene_definition.rooms.extend(generated_rooms)
             console.print(
-                f"[bold cyan]Generated Rooms:[/] {[room.id for room in generated_rooms]}"
+                f"[bold cyan]✓ Successfully generated {len(generated_rooms)} room(s):[/] {[room.id for room in generated_rooms]}"
             )
 
         return DesignLoopEntry()
@@ -155,8 +219,8 @@ class PlacementAgent(BaseNode[PlacementState]):
         # user_prompt = "By the way, I have a quick question: are you able to read the deps (the PlacementState)?"
         # user_prompt = "Could you repeat exactly what was provided to you (in terms of the depedencies) into the 'reasoning' output?"
         # user_prompt = "Were you provided the current room boundaries (list[Vector2])? What is it?" # -> NO!
-        user_prompt = "Are you able to see the visualized image of the room?" 
-        # user_prompt = ""
+        # user_prompt = "Are you able to see the visualized image of the room?" 
+        user_prompt = ""
 
         if user_prompt != "":
             response = await placement_agent.run(
