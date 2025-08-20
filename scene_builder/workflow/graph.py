@@ -91,16 +91,16 @@ class FloorPlanAgent(BaseNode[MainState]):
             )
             llm_floor_dims_result = await floor_size_agent.run(floor_analysis_prompt)
             llm_floor_dims = llm_floor_dims_result.output
-            console.print(f"[bold cyan]LLM Dimension Analysis:[/] {llm_floor_dims.width}x{llm_floor_dims.height}m, {llm_floor_dims.shape}")
+            console.print(f"[bold cyan]LLM Dimension Analysis:[/] {llm_floor_dims.width}x{llm_floor_dims.length}m (floor), height: {llm_floor_dims.ceiling_height}m, {llm_floor_dims.shape}")
             
             # Step 2: Generate rooms with LLM using dimensional context
             console.print("[bold cyan]Step 2: Generating room layout with architectural intelligence...[/]")
             room_generation_prompt = (
                 f"Create a room layout for: {ctx.state.user_input}\n"
                 f"Building plan context: {ctx.state.plan}\n"
-                f"Recommended dimensions: {llm_floor_dims.width}m x {llm_floor_dims.height}m\n"
+                f"Recommended dimensions: {llm_floor_dims.width}m x {llm_floor_dims.length}m (floor area)\n"
                 f"Room shape: {llm_floor_dims.shape}\n"
-                f"Focus on creating one primary room that matches the user's request with appropriate sizing." # TODO: multi rooms
+                f"Focus on creating one primary room that matches the user's request with appropriate sizing." # TODO: multi rooms soon later 
             )
             generated_rooms_result = await floor_plan_agent.run(room_generation_prompt)
             generated_rooms = generated_rooms_result.output
@@ -114,34 +114,27 @@ class FloorPlanAgent(BaseNode[MainState]):
                     # Apply LLM-analyzed dimensions to the room
                     room.floor_dimensions = llm_floor_dims
                     
-                    # Try to set estimated_size if the field exists
-                    try:
-                        room.estimated_size = Vector2(x=llm_floor_dims.width, y=llm_floor_dims.height)
-                    except Exception as field_error:
-                        console.print(f"[bold yellow]⚠ Could not set estimated_size: {field_error}[/]")
-                        console.print(f"[bold yellow]⚠ Using floor_dimensions instead[/]")
-                    
                     # Generate boundary coordinates (rectangular for now)
-                    if llm_floor_dims.shape == "rectangular" or not llm_floor_dims.shape:
+                    if llm_floor_dims.shape and llm_floor_dims.shape.lower() == "rectangular":
                         half_width = llm_floor_dims.width / 2
-                        half_height = llm_floor_dims.height / 2
+                        half_length = llm_floor_dims.length / 2
                         room.boundary = [
-                            Vector2(x=-half_width, y=-half_height),
-                            Vector2(x=half_width, y=-half_height),
-                            Vector2(x=half_width, y=half_height),
-                            Vector2(x=-half_width, y=half_height)
+                            Vector2(x=-half_width, y=-half_length),
+                            Vector2(x=half_width, y=-half_length),
+                            Vector2(x=half_width, y=half_length),
+                            Vector2(x=-half_width, y=half_length)
                         ]
                         console.print(f"[bold green]✓ Generated rectangular boundary for {room.id}[/]")
                     else:
                         # Fallback to rectangular for unsupported shapes
                         console.print(f"[bold yellow]⚠ Shape '{llm_floor_dims.shape}' not yet supported, using rectangular fallback[/]")
                         half_width = llm_floor_dims.width / 2
-                        half_height = llm_floor_dims.height / 2
+                        half_length = llm_floor_dims.length / 2
                         room.boundary = [
-                            Vector2(x=-half_width, y=-half_height),
-                            Vector2(x=half_width, y=-half_height),
-                            Vector2(x=half_width, y=half_height),
-                            Vector2(x=-half_width, y=half_height)
+                            Vector2(x=-half_width, y=-half_length),
+                            Vector2(x=half_width, y=-half_length),
+                            Vector2(x=half_width, y=half_length),
+                            Vector2(x=-half_width, y=half_length)
                         ]
                         
             except Exception as room_error:
