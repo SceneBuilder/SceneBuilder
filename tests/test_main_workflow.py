@@ -6,7 +6,9 @@ from rich.panel import Panel
 
 from scene_builder.decoder import blender
 from scene_builder.definition.scene import GlobalConfig
-from scene_builder.workflow.graph import app, MainState, MetadataAgent
+from scene_builder.nodes.general import MetadataNode
+from scene_builder.workflow.graphs import main_graph
+from scene_builder.workflow.states import MainState
 
 
 def test_main_workflow():
@@ -18,7 +20,7 @@ def test_main_workflow():
     )
 
     async def run_graph():
-        return await app.run(MetadataAgent(), state=initial_state)
+        return await main_graph.run(MetadataNode(), state=initial_state)
 
     result = asyncio.run(run_graph())
 
@@ -31,7 +33,7 @@ def test_main_workflow():
 
         output_dir = Path("scenes")
         output_dir.mkdir(exist_ok=True)
-        blender.parse_scene_definition(scene_dict) #여기다가 랜더 탑다운 호출
+        blender.parse_scene_definition(scene_dict)
         blender.save_scene(str(output_dir / "output.blend"))
 
         console.print("[bold green]Blender file created successfully.[/]")

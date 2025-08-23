@@ -1,10 +1,10 @@
 import pytest
 import requests
-from pydantic_ai import BinaryContent
 from graphics_db_server.schemas.asset import Asset
+from pydantic_ai import BinaryContent
 
-from scene_builder.workflow.agent import shopping_agent
 from scene_builder.definition.scene import Object, Vector3
+from scene_builder.workflow.agents import shopping_agent
 
 
 API_BASE_URL = "http://localhost:2692/api/v0"
