@@ -1,0 +1,3 @@
+[submodule "References/graphics-db"]
+	path = References/graphics-db
+	url = https://github.com/SceneBuilder/graphics-db
