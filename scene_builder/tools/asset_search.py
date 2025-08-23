@@ -1,10 +1,13 @@
+import base64
 import requests
-from typing import List
+from typing import List, Dict
 
 from graphics_db_server.schemas.asset import Asset
 
-# Assuming the graphics database server runs locally on port 8000
-API_BASE_URL = "http://localhost:8000/api/v0"
+from pydantic_ai import BinaryContent
+
+
+API_BASE_URL = "http://localhost:2692/api/v0"
 
 
 def search_assets(query: str, top_k: int = 5) -> List[Asset]:
@@ -35,3 +38,54 @@ def search_assets(query: str, top_k: int = 5) -> List[Asset]:
     except Exception as e:
         print(f"Unexpected error: {e}")
         return []
+
+
+def get_asset_thumbnails(asset_uids: list[str]) -> dict[str, str]:
+    """
+    Get thumbnails for a list of asset UIDs from the graphics database.
+    
+    Args:
+        asset_uids: List of asset UIDs to fetch thumbnails for
+    
+    Returns:
+        Dictionary mapping asset UIDs to base64-encoded thumbnail images
+    """
+    try:
+        response = requests.post(
+            f"{API_BASE_URL}/assets/thumbnails",
+            json={"asset_uids": asset_uids},
+            timeout=30
+        )
+        response.raise_for_status()
+        
+        return response.json()
+        
+    except requests.exceptions.RequestException as e:
+        print(f"Error fetching thumbnails: {e}")
+        return {}
+    except Exception as e:
+        print(f"Unexpected error: {e}")
+        return {}
+
+
+def get_asset_thumbnail(asset_uid: str) -> BinaryContent:
+    """
+    Get thumbnail for a single asset and return as BinaryContent object for viewing.
+    
+    Args:
+        asset_uid: The UID of the asset to get thumbnail for
+    
+    Returns:
+        BinaryContent object containing the thumbnail image data
+    """
+    thumbnails = get_asset_thumbnails([asset_uid])
+    if asset_uid in thumbnails:
+        base64_data = thumbnails[asset_uid]
+        try:
+            image_data = base64.b64decode(base64_data)
+            # NOTE could be enhanced with proper content detection
+            return BinaryContent(data=image_data, media_type="image/png")
+        except Exception as e:
+            raise ValueError(f"Failed to decode thumbnail for asset {asset_uid}: {e}")
+    else:
+        raise ValueError(f"Thumbnail not found for asset {asset_uid}")
