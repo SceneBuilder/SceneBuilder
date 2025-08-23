@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 from pydantic import BaseModel, Field
-from pydantic_graph import BaseNode, End, Graph, GraphRunContext
-from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage
+from pydantic_graph import BaseNode, End, Graph, GraphRunContext
 
 from rich.console import Console
 
-from scene_builder.decoder import blender
 from scene_builder.database.object import ObjectDatabase
+from scene_builder.decoder import blender
 from scene_builder.definition.scene import Scene, Room, Object, Vector3, GlobalConfig
 from scene_builder.utils.conversions import pydantic_to_dict
 from scene_builder.workflow.agent import (
@@ -35,9 +34,9 @@ class MainState(BaseModel):
 
 
 # --- Main Graph Nodes ---
-class MetadataAgent(BaseNode[MainState]):
-    async def run(self, ctx: GraphRunContext[MainState]) -> BuildingPlanAgent:
-        console.print("[bold cyan]Executing Agent:[/] Metadata Agent")
+class MetadataModule(BaseNode[MainState]):
+    async def run(self, ctx: GraphRunContext[MainState]) -> BuildingPlanModule:
+        console.print("[bold cyan]Executing Module:[/] Metadata Module")
         initial_scene = Scene(
             category="residential",
             tags=["modern", "minimalist"],
@@ -45,12 +44,12 @@ class MetadataAgent(BaseNode[MainState]):
             rooms=[],
         )
         ctx.state.scene_definition = initial_scene
-        return BuildingPlanAgent()
+        return BuildingPlanModule()
 
 
-class BuildingPlanAgent(BaseNode[MainState]):
-    async def run(self, ctx: GraphRunContext[MainState]) -> FloorPlanAgent:
-        console.print("[bold cyan]Executing Agent:[/] Scene Planning Agent")
+class BuildingPlanModule(BaseNode[MainState]):
+    async def run(self, ctx: GraphRunContext[MainState]) -> FloorPlanModule:
+        console.print("[bold cyan]Executing Module:[/] Scene Planning Module")
         is_debug = ctx.state.global_config and ctx.state.global_config.debug
 
         if is_debug:
@@ -64,12 +63,12 @@ class BuildingPlanAgent(BaseNode[MainState]):
             ctx.state.plan = response.content
             console.print(f"[bold cyan]Generated Plan:[/] {ctx.state.plan}")
 
-        return FloorPlanAgent()
+        return FloorPlanModule()
 
 
-class FloorPlanAgent(BaseNode[MainState]):
-    async def run(self, ctx: GraphRunContext[MainState]) -> DesignLoopEntry:
-        console.print("[bold cyan]Executing Agent:[/] Floor Plan Agent")
+class FloorPlanModule(BaseNode[MainState]):
+    async def run(self, ctx: GraphRunContext[MainState]) -> DesignLoopRouter:
+        console.print("[bold cyan]Executing Module:[/] Floor Plan Module")
         is_debug = ctx.state.global_config and ctx.state.global_config.debug
 
         if is_debug:
@@ -90,26 +89,28 @@ class FloorPlanAgent(BaseNode[MainState]):
                 f"[bold cyan]Generated Rooms:[/] {[room.id for room in generated_rooms]}"
             )
 
-        return DesignLoopEntry()
+        return DesignLoopRouter()
 
 
-class DesignLoopEntry(BaseNode[MainState]):
+class DesignLoopRouter(BaseNode[MainState]):
     async def run(self, ctx: GraphRunContext[MainState]) -> End[Scene]:
         console.print("[bold yellow]Entering room design loop...[/]")
         if ctx.state.current_room_index < len(ctx.state.scene_definition.rooms):
             console.print("[magenta]Decision:[/] Design next room.")
             subgraph_result = await room_design_graph.run(
-                RoomDesignAgent(ctx.state.initial_number)
+                RoomDesignModule(ctx.state.initial_number)
             )
             ctx.state.scene_definition.rooms.append(subgraph_result)
         else:
             console.print("[magenta]Decision:[/] Finish.")
             return End(ctx.state.scene_definition)
+        # TODO: use VisualFeedback to decide if there are rooms that still need designing.
+        # TODO: 
 
 
-class RoomDesignAgent(BaseNode[MainState]):
+class RoomDesignModule(BaseNode[MainState]):
     async def run(self, ctx: GraphRunContext[MainState]) -> UpdateScene:
-        console.print("[bold cyan]Executing Node:[/] RoomDesignAgent")
+        console.print("[bold cyan]Executing Node:[/] RoomDesignModule")
         room_to_design = ctx.state.scene_definition.rooms[ctx.state.current_room_index]
         is_debug = ctx.state.global_config and ctx.state.global_config.debug
         db = ObjectDatabase(debug=is_debug)
@@ -138,11 +139,18 @@ class RoomDesignAgent(BaseNode[MainState]):
             console.print(
                 f"[bold cyan]Added Objects:[/] {[obj.name for obj in new_objects]}"
             )
+            # TODO: use VisualFeedback and ShoppingCart to decide if room needs more objects or end
+            # TODO: invoke placement_graph to place object
+            # subgraph_result = await placement_graph.run(
+            #     PlacementModule(ctx.state.???)
+            # )
+            # TODO: don't return `UpdateScene` directly; return a room to caller (DesignLoopRouter)
+            #       and let it take care of coalescing it with the entire Scene.
 
         return UpdateScene()
 
 
-class PlacementAgent(BaseNode[PlacementState]):
+class PlacementModule(BaseNode[PlacementState]):
     async def run(
         self, ctx: GraphRunContext[PlacementState]
     ) -> VisualFeedback | End[Room]:
@@ -162,8 +170,8 @@ class PlacementAgent(BaseNode[PlacementState]):
             response = await placement_agent.run(deps=ctx.state)
 
         if DEBUG:
-            print(f"[PlacementAgent]: {response.output.reasoning}")
-            print(f"[PlacementAgent]: {response.output.decision}")
+            print(f"[PlacementModule]: {response.output.reasoning}")
+            print(f"[PlacementModule]: {response.output.decision}")
 
         if response.output.decision == "finalize":
             return End(ctx.state.room)
@@ -173,7 +181,7 @@ class PlacementAgent(BaseNode[PlacementState]):
 
 
 class VisualFeedback(BaseNode[PlacementState]):
-    async def run(self, ctx: GraphRunContext[PlacementState]) -> PlacementAgent:
+    async def run(self, ctx: GraphRunContext[PlacementState]) -> PlacementModule:
         room_data = pydantic_to_dict(ctx.state.room)
         blender.load_template(
             "test_assets/scenes/classroom.blend", clear_scene=True
@@ -183,7 +191,7 @@ class VisualFeedback(BaseNode[PlacementState]):
         prev_room = ctx.state.room
         prev_room.viz.append(renders)
         ctx.state.room_history.append(prev_room)
-        return PlacementAgent()
+        return PlacementModule()
 
 
 # NOTE: maybe we should refactor input/output state to `Feedbackable`, that can either
@@ -191,23 +199,24 @@ class VisualFeedback(BaseNode[PlacementState]):
 
 
 class UpdateScene(BaseNode[MainState]):
-    async def run(self, ctx: GraphRunContext[MainState]) -> DesignLoopEntry:
+    async def run(self, ctx: GraphRunContext[MainState]) -> DesignLoopRouter:
         """Merges the result from the room design subgraph back into the main state."""
         console.print("[bold cyan]Executing Node:[/] update_main_state_after_design")
-        # The room has already been modified in place by RoomDesignAgent
+        # The room has already been modified in place by RoomDesignModule
         # Just increment the counter to move to the next room
         ctx.state.current_room_index += 1
-        return DesignLoopEntry()
+        return DesignLoopRouter()
 
 
-# --- Graph Definition ---
+### Graphs ###
+
 main_graph = Graph(
     nodes=[
-        MetadataAgent,
-        BuildingPlanAgent,
-        FloorPlanAgent,
-        DesignLoopEntry,
-        RoomDesignAgent,
+        MetadataModule,
+        BuildingPlanModule,
+        FloorPlanModule,
+        DesignLoopRouter,
+        RoomDesignModule,
         UpdateScene,
     ],
     state_type=MainState,
@@ -215,16 +224,15 @@ main_graph = Graph(
 
 room_design_graph = Graph(
     nodes=[
-        DesignLoopEntry,
-        RoomDesignAgent,
-        UpdateScene,
+        RoomDesignModule,
+        VisualFeedback,
     ],
     state_type=Room,
 )
 
 placement_graph = Graph(
     nodes=[
-        PlacementAgent,
+        PlacementModule,
         VisualFeedback,
     ],
     state_type=PlacementState,  # hmm

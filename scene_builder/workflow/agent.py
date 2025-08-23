@@ -61,3 +61,12 @@ shopping_agent = Agent(
     tools=[search_assets, get_asset_thumbnail],
     output_type=list[Object],  # Return Object instances for scene placement
 )
+
+
+room_design_agent = Agent(
+    "openai:gpt-4o",
+    system_prompt="You are a room designer. Your goal is to add objects to the room based on the plan. Please utilize `PlacementAgent` to populate the room with objects from the `ShoppingCart`, until you are satisfied with the room.",
+    tools=[db.query],
+    response_model=list[Object],
+
+)
