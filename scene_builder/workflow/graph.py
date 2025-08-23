@@ -15,6 +15,7 @@ from scene_builder.workflow.agent import (
     floor_plan_agent,
     placement_agent,
     planning_agent,
+    shopping_agent,
 )
 from scene_builder.workflow.state import PlacementState, RoomUpdateState
 
@@ -129,21 +130,14 @@ class RoomDesignAgent(BaseNode[MainState]):
             room_to_design.objects.append(new_object)
         else:
             console.print(
-                "[bold green]Production mode: Designing room via LLM and real data.[/]"
+                "[bold green]Production mode: Designing room via LLM and graphics database.[/]"
             )
-            room_design_agent = Agent(
-                "openai:gpt-4o",
-                system_prompt="You are a room designer. Your goal is to add objects to the room based on the user's request. Use the provided tools to find appropriate objects.",
-                tools=[db.query],
-                response_model=list[Object],
-            )
-            prompt = f"Design the room '{room_to_design.category}' with id '{room_to_design.id}'. The overall user request is: '{ctx.state.user_input}'. The scene plan is: {ctx.state.plan}"
-            new_objects = await room_design_agent.run(prompt)
+            prompt = f"Design the room '{room_to_design.category}' with id '{room_to_design.id}'. The overall user request is: '{ctx.state.user_input}'. The scene plan is: {ctx.state.plan}. Use the search_assets tool to find appropriate 3D objects from the graphics database."
+            new_objects = await shopping_agent.run(prompt)
             room_to_design.objects.extend(new_objects)
             console.print(
                 f"[bold cyan]Added Objects:[/] {[obj.name for obj in new_objects]}"
             )
-            ctx.state.designed_room
 
         return UpdateScene()
 
