@@ -46,7 +46,7 @@ class Object(BaseModel):
     name: str
     id: str
     source: str
-    sourceId: str | None = None
+    source_id: str | None = None
     description: str
     position: Vector3
     rotation: Vector3

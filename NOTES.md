@@ -384,9 +384,9 @@ I will now create a detailed, step-by-step plan to build this system.
   The two modules are used in sequence to place an object in the scene:
 
    1. Search: An agent (like RoomDesignAgent) uses ObjectDatabase.query() to find objects that fit a description.
-   2. Select: The agent receives a list of potential objects and selects one. The most important piece of information it gets is the object's sourceId.
-   3. Store: This sourceId is stored in the Scene definition. At this point, no 3D model has been downloaded yet; you've only saved a reference to it.
-   4. Import: When it's time to build the scene in Blender, the blender_decoder reads the Scene definition. For each object, it takes the sourceId and passes it to objaverse_importer.import_object().
+   2. Select: The agent receives a list of potential objects and selects one. The most important piece of information it gets is the object's source_id.
+   3. Store: This source_id is stored in the Scene definition. At this point, no 3D model has been downloaded yet; you've only saved a reference to it.
+   4. Import: When it's time to build the scene in Blender, the blender_decoder reads the Scene definition. For each object, it takes the source_id and passes it to objaverse_importer.import_object().
    5. Decode: The objaverse_importer downloads the file and returns the local path, which blender_decoder then uses to import the model into the Blender scene.
 
   Summary Table

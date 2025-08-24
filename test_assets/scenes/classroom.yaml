@@ -21,7 +21,7 @@ rooms:
         name: teacher_desk
         description: ""
         source: template
-        sourceId: ""
+        source_id: ""
         position:
           x: 0.0244
           y: -0.344
@@ -40,7 +40,7 @@ rooms:
         name: bookcase
         description: ""
         source: template
-        sourceId: ""
+        source_id: ""
         position:
           x: -0.236
           y: 0.493
@@ -59,7 +59,7 @@ rooms:
         name: drawer
         description: ""
         source: template
-        sourceId: ""
+        source_id: ""
         position:
           x: 0.534
           y: 4.84
@@ -78,7 +78,7 @@ rooms:
         name: closet
         description: ""
         source: template
-        sourceId: ""
+        source_id: ""
         position:
           x: 2.81
           y: 5.01
@@ -97,7 +97,7 @@ rooms:
         name: table_chair
         description: ""
         source: template
-        sourceId: ""
+        source_id: ""
         position:
           x: -2.5
           y: 2.54
@@ -116,7 +116,7 @@ rooms:
         name: table_chair
         description: ""
         source: template
-        sourceId: ""
+        source_id: ""
         position:
           x: -1.5
           y: 2.54
@@ -135,7 +135,7 @@ rooms:
         name: table_chair
         description: ""
         source: template
-        sourceId: ""
+        source_id: ""
         position:
           x: -0.5
           y: 2.54
@@ -154,7 +154,7 @@ rooms:
         name: table_chair
         description: ""
         source: template
-        sourceId: ""
+        source_id: ""
         position:
           x: 0.5
           y: 2.54
@@ -173,7 +173,7 @@ rooms:
         name: table_chair
         description: ""
         source: template
-        sourceId: ""
+        source_id: ""
         position:
           x: 1.5
           y: 2.54
@@ -192,7 +192,7 @@ rooms:
         name: table_chair
         description: ""
         source: template
-        sourceId: ""
+        source_id: ""
         position:
           x: 2.5
           y: 2.54
@@ -211,7 +211,7 @@ rooms:
         name: table_chair
         description: ""
         source: template
-        sourceId: ""
+        source_id: ""
         position:
           x: -2.5
           y: 1.04
@@ -230,7 +230,7 @@ rooms:
         name: table_chair
         description: ""
         source: template
-        sourceId: ""
+        source_id: ""
         position:
           x: -1.5
           y: 1.04
@@ -249,7 +249,7 @@ rooms:
         name: table_chair
         description: ""
         source: template
-        sourceId: ""
+        source_id: ""
         position:
           x: -0.5
           y: 1.04
@@ -268,7 +268,7 @@ rooms:
         name: table_chair
         description: ""
         source: template
-        sourceId: ""
+        source_id: ""
         position:
           x: 0.5
           y: 1.04
@@ -287,7 +287,7 @@ rooms:
         name: table_chair
         description: ""
         source: template
-        sourceId: ""
+        source_id: ""
         position:
           x: 1.5
           y: 1.04
@@ -306,7 +306,7 @@ rooms:
         name: table_chair
         description: ""
         source: template
-        sourceId: ""
+        source_id: ""
         position:
           x: -2.5
           y: -0.46
@@ -325,7 +325,7 @@ rooms:
         name: table_chair
         description: ""
         source: template
-        sourceId: ""
+        source_id: ""
         position:
           x: -1.5
           y: -0.46
@@ -344,7 +344,7 @@ rooms:
         name: table_chair
         description: ""
         source: template
-        sourceId: ""
+        source_id: ""
         position:
           x: -0.5
           y: -0.46
@@ -363,7 +363,7 @@ rooms:
         name: table_chair
         description: ""
         source: template
-        sourceId: ""
+        source_id: ""
         position:
           x: 0.5
           y: -0.46
@@ -382,7 +382,7 @@ rooms:
         name: table_chair
         description: ""
         source: template
-        sourceId: ""
+        source_id: ""
         position:
           x: -2.5
           y: -1.96
@@ -401,7 +401,7 @@ rooms:
         name: table_chair
         description: ""
         source: template
-        sourceId: ""
+        source_id: ""
         position:
           x: -1.5
           y: -1.96

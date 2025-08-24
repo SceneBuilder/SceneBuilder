@@ -1,28 +1,28 @@
 category: residential
 tags:
-- modern
-- minimalist
+  - modern
+  - minimalist
 floorType: single
 rooms:
-- id: living_room_1
-  category: living_room
-  tags:
-  - main
-  objects:
-  - id: 000074a334c541878360457c672b6c2e
-    name: Modern Red Sofa
-    description: A comfortable red sofa with a modern design.
-    source: objaverse
-    sourceId: 000074a334c541878360457c672b6c2e
-    position:
-      x: 0
-      y: 0
-      z: 0
-    rotation:
-      x: 0
-      y: 0
-      z: 0
-    scale:
-      x: 1
-      y: 1
-      z: 1
+  - id: living_room_1
+    category: living_room
+    tags:
+      - main
+    objects:
+      - id: 000074a334c541878360457c672b6c2e
+        name: Modern Red Sofa
+        description: A comfortable red sofa with a modern design.
+        source: objaverse
+        source_id: 000074a334c541878360457c672b6c2e
+        position:
+          x: 0
+          y: 0
+          z: 0
+        rotation:
+          x: 0
+          y: 0
+          z: 0
+        scale:
+          x: 1
+          y: 1
+          z: 1

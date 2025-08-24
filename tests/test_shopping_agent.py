@@ -41,7 +41,7 @@ async def test_shopping_agent_real_api():
         assert hasattr(obj, "name")
         assert hasattr(obj, "id")
         assert hasattr(obj, "source")
-        assert hasattr(obj, "sourceId")
+        assert hasattr(obj, "source_id")
         assert hasattr(obj, "description")
         assert hasattr(obj, "position")
         assert hasattr(obj, "rotation")
@@ -59,7 +59,7 @@ async def test_shopping_agent_with_thumbnails():
     """Test ShoppingAgent with thumbnail viewing capabilities."""
     # Run the agent with a query that might trigger thumbnail viewing
     result = await shopping_agent.run("Find a wooden table and show me thumbnails")
-    
+
     objects = result.output
 
     # Verify the result is a list of Object instances

@@ -74,17 +74,17 @@ def _create_object(obj_data: dict[str, Any]):
     blender_obj = None
 
     if obj_data.get("source") == "objaverse":
-        source_id = obj_data.get("sourceId")
+        source_id = obj_data.get("source_id")
         if not source_id:
             raise ValueError(
-                f"Object '{object_name}' has source 'objaverse' but no 'sourceId'."
+                f"Object '{object_name}' has source 'objaverse' but no 'source_id'."
             )
 
         # Import the object from Objaverse
         object_path = objaverse_importer.import_object(source_id)
 
     elif obj_data.get("source") == "test_asset":
-        object_path = test_asset_importer.import_test_asset(obj_data.get("sourceId"))
+        object_path = test_asset_importer.import_test_asset(obj_data.get("source_id"))
 
     elif obj_data.get("source") == "template":
         return
@@ -111,7 +111,7 @@ def _create_object(obj_data: dict[str, Any]):
             )
     else:
         raise IOError(
-            f"Failed to import object '{object_name}' (sourceId: {source_id}). "
+            f"Failed to import object '{object_name}' (source_id: {source_id}). "
             f"The file path was not found or was not a .glb file. Path: '{object_path}'"
         )
 

@@ -52,7 +52,7 @@ class RoomDesignNode(BaseNode[RoomDesignState]):
                 name=sofa_data["name"],
                 description=sofa_data["description"],
                 source=sofa_data["source"],
-                sourceId=sofa_data["id"],
+                source_id=sofa_data["id"],
                 position=Vector3(x=0, y=0, z=0),
                 rotation=Vector3(x=0, y=0, z=0),
                 scale=Vector3(x=1, y=1, z=1),
