@@ -22,7 +22,8 @@ def get_filename(
         NotImplementedError: If an unsupported strategy is provided.
     """
     output_dir = Path(output_dir)
-    assert output_dir.exists(), f"Output directory does not exist: {output_dir}"
+    if not output_dir.exists():
+        output_dir.mkdir(exist_ok=True)
 
     if strategy == "increment":
         for i in range(1000):

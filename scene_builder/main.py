@@ -1,14 +1,16 @@
 import argparse
 import asyncio
+
+import yaml
 from rich.console import Console
 from rich.panel import Panel
 from rich.syntax import Syntax
 
 from scene_builder.decoder import blender
-from scene_builder.workflow.graph import app, MainState
-from scene_builder.utils.conversions import pydantic_to_dict
 from scene_builder.definition.scene import GlobalConfig
-import yaml
+from scene_builder.utils.conversions import pydantic_to_dict
+from scene_builder.workflow.graphs import main_graph
+from scene_builder.workflow.states import MainState
 
 console = Console()
 
@@ -52,7 +54,7 @@ def main():
     )
 
     # Run the graph asynchronously
-    final_scene = asyncio.run(app.run(initial_state))
+    final_scene = asyncio.run(main_graph.run(initial_state))
 
     # Convert the final scene Pydantic model to a dictionary for serialization
     scene_dict = pydantic_to_dict(final_scene)

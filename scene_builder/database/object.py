@@ -1,7 +1,14 @@
-import objaverse
+import requests
 from typing import Any
 
-from scene_builder.importer.test_asset_importer import TEST_ASSETS
+from pydantic import TypeAdapter, ValidationError
+from graphics_db_server.schemas.asset import Asset
+
+from scene_builder import API_BASE_URL
+from scene_builder.definition.scene import ObjectBlueprint
+
+
+AssetListAdapter = TypeAdapter(list[Asset])
 
 
 class ObjectDatabase:
@@ -10,20 +17,13 @@ class ObjectDatabase:
     operate in either debug (mock data) or production (real data) mode.
     """
 
-    def __init__(self, debug: bool = False):
+    def __init__(self):
         """
         Initializes the ObjectDatabase.
-        Args:
-            debug: If True, the database will return mock data.
         """
-        self.debug = debug
-        self._lvis_annotations = None
-        if not self.debug:
-            print("Initializing ObjectDatabase in production mode...")
-            self._lvis_annotations = objaverse.load_lvis_annotations()
-            print("LVIS annotations loaded.")
+        pass
 
-    def query(self, query: str) -> list[dict[str, Any]]:
+    def query(self, query: str) -> list[ObjectBlueprint]:
         """
         Queries the 3D object database.
 
@@ -31,45 +31,29 @@ class ObjectDatabase:
             query: The search query (e.g., "a red sofa").
 
         Returns:
-            A list of dictionaries, where each dictionary represents a found object.
+            A list object blueprints.
         """
-        if self.debug:
-            return self._query_mock(query)
-        else:
-            return self._query_real(query)
+        response = requests.get(
+            f"{API_BASE_URL}/v0/assets/search",
+            params={"query": query},
+        )
+        try:
+            assets = AssetListAdapter.validate_json(response.text)
+            results = []
+            for asset in assets:
+                results.append(
+                    ObjectBlueprint(
+                        id=asset.uid,
+                        # source=asset.source,
+                        source="objaverse",  # TEMP HACK
+                        description="",  # TODO: use VLM to add desc, or source from DB?
+                        extra_info={"tags": asset.tags},
+                    )
+                )
+        # TODO: replace exception messages with logger calls
+        except requests.exceptions.RequestException as e:
+            print(f"Request failed: {e}")
+        except ValidationError as e:
+            print(f"Data validation failed: {e}")
 
-    def _query_mock(self, query: str) -> list[dict[str, Any]]:
-        """
-        Simulates querying a 3D object database and returns mock data.
-        """
-        print(f"Simulating database query for: '{query}'")
-        for key, results in TEST_ASSETS.items():
-            if key in query:
-                return results
-        return []
-
-    def _query_real(self, query: str) -> list[dict[str, Any]]:
-        """
-        Performs a real query to the Objaverse database.
-        """
-        print(f"Performing real database query for: '{query}'")
-        matching_uids = []
-        for category, uids in self._lvis_annotations.items():
-            if query in category:
-                matching_uids.extend(uids)
-
-        # Limit the number of results to avoid overwhelming the user
-        matching_uids = matching_uids[:5]
-
-        results = []
-        for uid in matching_uids:
-            results.append(
-                {
-                    "id": uid,
-                    "name": f"Object: {uid}",
-                    "description": "Description not available in LVIS annotations.",
-                    "source": "objaverse",
-                    "tags": [query],
-                }
-            )
         return results

@@ -3,11 +3,15 @@
 title: app
 ---
 stateDiagram-v2
-  [*] --> MetadataAgent
-  MetadataAgent --> BuildingPlanAgent
-  BuildingPlanAgent --> FloorPlanAgent
-  FloorPlanAgent --> DesignLoopEntry
-  DesignLoopEntry --> [*]
-  RoomDesignAgent --> UpdateScene
-  UpdateScene --> DesignLoopEntry
+  [*] --> MetadataNode
+  MetadataNode --> BuildingPlanNode
+  BuildingPlanNode --> FloorPlanNode
+  FloorPlanNode --> DesignLoopRouter
+  DesignLoopRouter --> [*]
+  RoomDesignNode --> VisualFeedback
+  RoomDesignNode --> [*]
+  UpdateScene --> DesignLoopRouter
+  VisualFeedback --> PlacementNode
+  PlacementNode --> VisualFeedback
+  PlacementNode --> [*]
 ```
