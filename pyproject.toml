@@ -22,6 +22,7 @@ dependencies = [
   "pydantic-graph",
   "natsort",
   "pillow",
+  "scipy",
 ]
 
 [project.optional-dependencies]

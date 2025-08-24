@@ -30,7 +30,7 @@ TEST_ASSETS: Dict[str, List[Dict[str, Any]]] = {
         {
             "id": "00aacefe3ffc4934981bb2d1e9b5a076",
             "name": "Classroom Table-Chair",
-            "description": "",
+            "description": "A table-chair combo suitable for classrooms.",
             "source": "test_asset",
             "tags": ["table", "chair", "classroom"],
         }
@@ -80,7 +80,7 @@ def search_test_asset(object_category: str) -> ObjectBlueprint:
     object = relevant_objects[random_index]
 
     return ObjectBlueprint(
-        id=object["id"],
+        source_id=object["id"],
         name=object["name"],
         description=object["description"],
         source=object["source"],

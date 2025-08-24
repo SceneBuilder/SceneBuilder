@@ -3,6 +3,8 @@ import os
 
 from pydantic_ai import BinaryContent
 
+from scene_builder.logging import logger
+
 
 def read_media_file(file_path: str) -> BinaryContent:
     """
@@ -24,6 +26,8 @@ def read_media_file(file_path: str) -> BinaryContent:
     """
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"File not found at path: {file_path}")
+
+    logger.debug(f"[tool] Read media file: {file_path}")
 
     try:
         mime_type, _ = mimetypes.guess_type(file_path)

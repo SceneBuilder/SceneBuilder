@@ -112,7 +112,35 @@ def test_template_loading():
     blender.save_scene("tests/test_template_loading.blend")
 
 
+def test_isometric_render():
+    """
+    Tests that an isometric view can be rendered.
+    """
+    room = Room(
+        id="test_isometric_room",
+        category="office",
+        boundary=[],
+        viz=[],
+        objects=[
+            Object(
+                id="desk",
+                name="Modern Desk",
+                description="A simple desk",
+                source="objaverse",
+                sourceId="000074a334c541878360457c672b6c2e",  # Using the same sofa for simplicity
+                position=Vector3(x=0, y=0, z=0),
+                rotation=Vector3(x=0, y=0, z=0),
+                scale=Vector3(x=1, y=1, z=1),
+            )
+        ],
+    )
+    blender.parse_room_definition(room.to_dict(), clear=True)
+    output_path = blender.create_scene_visualization(view="isometric")
+    assert output_path.exists()
+
+
 if __name__ == "__main__":
     test_visual_feedback_renders_png()
     test_template_loading()
+    test_isometric_render()
 
