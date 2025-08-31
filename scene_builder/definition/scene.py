@@ -31,7 +31,7 @@ class Vector3(BaseModel):
 
 
 class ObjectBlueprint(BaseModel):
-    name: str | None
+    name: str | None = None
     source_id: str
     source: str
     description: str
