@@ -6,6 +6,7 @@ from graphics_db_server.schemas.asset import Asset
 
 from scene_builder import API_BASE_URL
 from scene_builder.definition.scene import ObjectBlueprint
+from scene_builder.utils.conversions import rename_key
 
 
 AssetListAdapter = TypeAdapter(list[Asset])
@@ -35,15 +36,19 @@ class ObjectDatabase:
         """
         response = requests.get(
             f"{API_BASE_URL}/v0/assets/search",
-            params={"query": query},
+            params={"query": query,
+                    "validate_scale": True},
         )
         try:
             assets = AssetListAdapter.validate_json(response.text)
+            # assets = AssetListAdapter.validate_json(response.text.replace("uid", "source_id"))
             results = []
             for asset in assets:
                 results.append(
                     ObjectBlueprint(
-                        id=asset.uid,
+                        # name=None,
+                        name=asset.uid,  # TEMP HACK
+                        source_id=asset.uid,
                         # source=asset.source,
                         source="objaverse",  # TEMP HACK
                         description="",  # TODO: use VLM to add desc, or source from DB?
