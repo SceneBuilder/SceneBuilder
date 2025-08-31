@@ -9,8 +9,10 @@ import numpy as np
 import yaml
 from scipy.spatial.transform import Rotation
 
+from scene_builder.definition.scene import Object, Room, Scene
 from scene_builder.importer import objaverse_importer, test_asset_importer
 from scene_builder.logging import logger
+from scene_builder.utils.conversions import pydantic_to_dict
 from scene_builder.utils.file import get_filename
 
 
@@ -22,6 +24,9 @@ def parse_scene_definition(scene_data: dict[str, Any]):
         scene_data: A dictionary representing the scene, loaded from the YAML file.
     """
     logger.debug("Parsing scene definition and creating scene in Blender...")
+
+    if isinstance(scene_data, Scene):
+        scene_data = pydantic_to_dict(scene_data)
 
     # Clear the existing scene
     _clear_scene()
@@ -41,6 +46,9 @@ def parse_room_definition(room_data: dict[str, Any], clear=False):
     # NOTE: not sure if it's good for `clear` to default to True; (it was for testing)
     """
     logger.debug("Parsing room definition and creating scene in Blender...")
+
+    if isinstance(room_data, Room):
+        room_data = pydantic_to_dict(room_data)
 
     # Clear the existing scene
     if clear:
@@ -68,6 +76,9 @@ def _create_object(obj_data: dict[str, Any]):
     Creates a single object in the Blender scene.
     Raises an IOError if the object cannot be imported.
     """
+    if isinstance(obj_data, Object):
+        obj_data = pydantic_to_dict(obj_data)
+
     object_name = obj_data.get("name", "Unnamed Object")
     logger.debug(f"Creating object: {object_name}")
 
