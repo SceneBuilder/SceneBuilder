@@ -6,7 +6,7 @@ from graphics_db_server.schemas.asset import Asset
 
 from scene_builder import API_BASE_URL
 from scene_builder.definition.scene import ObjectBlueprint
-from scene_builder.utils.conversions import rename_key
+# from scene_builder.utils.conversions import rename_key
 
 
 AssetListAdapter = TypeAdapter(list[Asset])

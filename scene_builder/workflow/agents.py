@@ -18,6 +18,8 @@ from scene_builder.workflow.states import (
     PlacementState,
     PlacementAction,
     PlacementResponse,
+    RoomDesignState,
+    RoomDesignResponse,
 )
 
 
@@ -66,7 +68,14 @@ shopping_agent = Agent(
 
 room_design_agent = Agent(
     model,
+    deps_type=RoomDesignState,
     system_prompt=ROOM_DESIGN_AGENT_PROMPT,
-    output_type=list[Object],
+    output_type=RoomDesignResponse,
     tools=[read_media_file],
 )
+
+@room_design_agent.system_prompt
+async def add_room_design_state(ctx: RunContext[RoomDesignState]) -> str:
+    room_design_state = ctx.deps
+    return f"The current placement state:\n {room_design_state}"
+    # NOTE: see note in `add_placement_state()`

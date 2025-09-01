@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from pydantic import BaseModel, Field
 from pydantic_graph import BaseNode, End, Graph, GraphRunContext
 from rich.console import Console
@@ -8,16 +10,18 @@ from scene_builder.decoder import blender
 from scene_builder.definition.scene import Object, Room, Scene, Vector3
 # from scene_builder.nodes.feedback import VisualFeedback
 # from scene_builder.nodes.placement import PlacementNode, VisualFeedback
-from scene_builder.nodes.placement import PlacementNode, VisualFeedback, placement_graph
+# from scene_builder.nodes.placement import PlacementNode, VisualFeedback, placement_graph
+from scene_builder.nodes.placement import PlacementNode, placement_graph
 # from scene_builder.nodes.routing import DesignLoopRouter
 from scene_builder.workflow.agents import room_design_agent, shopping_agent
 # from scene_builder.workflow.graphs import placement_graph # hopefully no circular import... -> BRUH.
 # from scene_builder.workflow.states import PlacementState, RoomDesignState
 from scene_builder.workflow.states import PlacementState, RoomDesignState, MainState
 
-# DEBUG = True
-DEBUG = False
+DEBUG = True
+# DEBUG = False
 console = Console()
+obj_db = ObjectDatabase()
 
 
 class DesignLoopRouter(BaseNode[MainState]):
@@ -39,16 +43,16 @@ class DesignLoopRouter(BaseNode[MainState]):
 class RoomDesignNode(BaseNode[RoomDesignState]):
     async def run(
         self, ctx: GraphRunContext[RoomDesignState]
-    ) -> VisualFeedback | End[Room]:
+    ) -> RoomDesignVisualFeedback | End[Room]:
         console.print("[bold cyan]Executing Node:[/] RoomDesignNode")
-        is_debug = ctx.state.global_config.debug
-        db = ObjectDatabase(debug=is_debug)
+        # is_debug = ctx.state.global_config.debug
+        is_debug = False  # TEMP HACK
 
         room = ctx.state.room
 
         if is_debug:  # mock data
             console.print("[bold yellow]Debug mode: Using hardcoded object data.[/]")
-            sofa_data = db.query("a modern sofa")[0]
+            sofa_data = obj_db.query("a modern sofa")[0]
             new_object = Object(
                 id=sofa_data["id"],
                 name=sofa_data["name"],
@@ -61,7 +65,7 @@ class RoomDesignNode(BaseNode[RoomDesignState]):
             )
             room.objects.append(new_object)
         else:  # prod: real data
-            response = await room_design_agent.run()
+            response = await room_design_agent.run(deps=ctx.state)
 
             if DEBUG:
                 print(f"[RoomDesignNode]: {response.output.decision}")
@@ -72,7 +76,7 @@ class RoomDesignNode(BaseNode[RoomDesignState]):
             shopping_user_prompt = (
                 f"Room id: '{room.id}'.",
                 f"Room category: '{room.category}'.",
-                f"Room plan: {ctx.state.plan}.",
+                f"Room plan: {ctx.state.room_plan}.",
                 f"Existing items in the shopping cart: {ctx.state.shopping_cart}",
             )
             # NOTE: It may be beneficial to add a state variable to control whether shopping_agent can / should be invoked,
@@ -85,7 +89,8 @@ class RoomDesignNode(BaseNode[RoomDesignState]):
             #       What this ultimately means is that there are probably certain parts that are to be invoked once,
             #       and certain parts that are meant to run repetitively. It's useful to model the human design process.
 
-            shopping_cart = await shopping_agent.run(shopping_user_prompt)
+            shopping_agent_response = await shopping_agent.run(shopping_user_prompt)
+            shopping_cart = shopping_agent_response.output
             console.print(
                 f"[bold cyan]Added Objects:[/] {[obj.name for obj in shopping_cart]}"
             )
@@ -117,14 +122,14 @@ class RoomDesignNode(BaseNode[RoomDesignState]):
             )
             new_placement_state: PlacementState = placement_subgraph_response.output
             ctx.state.room = new_placement_state.room
-            ctx.state.room_history += new_placement_state.room_history
+            # ctx.state.room_history += new_placement_state.room_history
 
             # TODO: use VisualFeedback and ShoppingCart to decide if room needs more objects or end
             # NOTE: the logic should be: the room is fed to a visual feedback agent, along with information
             #       such as the remaining items in the shopping cart (that is "explorable" in terms of detail,
             #       meaning it can be as simple as how many objects are left and their names, or their thumbnails & sizes),
 
-            return VisualFeedback
+            return RoomDesignVisualFeedback()
 
             # TODO: decide whether to finalize the scene, or to continue designing.
             # TODO: if deciding to continue, choose what to place next.

@@ -27,9 +27,13 @@ PLACEMENT_AGENT_PROMPT = (
 
 ROOM_DESIGN_AGENT_PROMPT = (
     "You are a room designer.",
-    "Your goal is to add objects to the room based on the plan.",
-    "Please utilize `PlacementAgent` to populate the room with objects from the `ShoppingCart`,",
-    "until you are satisfied with the room.",
+    # "Your goal is to add objects to the room based on the plan.",
+    # "Please utilize `PlacementAgent` to populate the room with objects from the `ShoppingCart`,",
+    # "until you are satisfied with the room.",
+    "Please output whether to continue designing the room, or to finalize it, based on the visual ",
+    "feedback and the room plan given to you as text."
+    "Images: You may be given paths to image files. You are equipped with a `read_media_file` tool to view them.",
+    "**If you are given images, please view all of them before answering.**",
 )
 
 SHOPPING_AGENT_PROMPT = (

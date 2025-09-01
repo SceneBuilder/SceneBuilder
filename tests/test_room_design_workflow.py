@@ -9,9 +9,8 @@ from scene_builder.decoder import blender
 from scene_builder.definition.scene import Object, ObjectBlueprint, Room, Vector2, Scene
 from scene_builder.definition.plan import RoomPlan
 from scene_builder.importer.test_asset_importer import search_test_asset
-from scene_builder.nodes.design import RoomDesignNode, room_design_graph
+from scene_builder.nodes.design import RoomDesignNode, RoomDesignVisualFeedback, room_design_graph
 from scene_builder.nodes.placement import PlacementNode, placement_graph, VisualFeedback
-
 # from scene_builder.nodes.feedback import VisualFeedback
 from scene_builder.utils.conversions import pydantic_from_yaml
 from scene_builder.utils.image import create_gif_from_images
@@ -19,7 +18,7 @@ from scene_builder.utils.image import create_gif_from_images
 #     room_design_graph,
 #     placement_graph,
 # )
-from scene_builder.workflow.states import PlacementState
+from scene_builder.workflow.states import GlobalConfig, PlacementState, RoomDesignState
 
 # Params
 SAVE_DIR = "assets"
@@ -103,7 +102,7 @@ def test_single_object_placement(hardcoded_object=True):
     create_gif_from_images(
         room_vizs, f"test_output/single_object_placement_{hardcoded_object=}.gif"
     )
-    blender.save_scene(f"test_output/single_object_placement_{hardcoded_object=}.gif")
+    blender.save_scene(f"test_output/single_object_placement_{hardcoded_object=}.blend")
 
 
 def test_partial_room_completion():
@@ -123,9 +122,7 @@ def test_partial_room_completion():
         what_to_place=search_test_asset("classroom_table"),
     )
 
-    blender.load_template(
-        "test_assets/scenes/classroom.blend", clear_scene=True
-    )
+    blender.load_template("test_assets/scenes/classroom.blend", clear_scene=True)
 
     async def run_graph():
         return await placement_graph.run(VisualFeedback(), state=initial_state)
@@ -144,11 +141,25 @@ def test_partial_room_completion():
 
 
 def test_room_design_workflow():
-    RoomDesignNode
+    initial_room_state = RoomDesignState(
+        room=Room(
+            id="classroom-01",
+            boundary=SMALL_RECTANGULAR_BOUNDARY,
+        ),
+        room_plan=RoomPlan(room_description=CLASSROOM_ROOM_DESCRIPTION),
+        global_config=GlobalConfig(debug=False),
+    )
+
+    async def run_graph():
+        # return await room_design_graph.run(RoomDesignNode(), state=initial_room_state)
+        return await room_design_graph.run(RoomDesignVisualFeedback(), state=initial_room_state)
+    
+    result: RoomDesignState = asyncio.run(run_graph())
+    blender.save_scene(f"test_output/test_room_design_workflow.blend")
 
 
 if __name__ == "__main__":
-    test_single_object_placement(hardcoded_object=True)
-    test_single_object_placement(hardcoded_object=False)
-    test_partial_room_completion()
-    # test_room_design_workflow()
+    # test_single_object_placement(hardcoded_object=True)
+    # test_single_object_placement(hardcoded_object=False)
+    # test_partial_room_completion()
+    test_room_design_workflow()
