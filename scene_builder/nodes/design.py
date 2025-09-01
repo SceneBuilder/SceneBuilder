@@ -4,22 +4,20 @@ from pydantic import BaseModel, Field
 from pydantic_graph import BaseNode, End, Graph, GraphRunContext
 from rich.console import Console
 
+from scene_builder.config import DEBUG
 from scene_builder.database.object import ObjectDatabase
 from scene_builder.decoder import blender
 # from scene_builder.definition.scene import Object, Room, Vector3
 from scene_builder.definition.scene import Object, Room, Scene, Vector3
 # from scene_builder.nodes.feedback import VisualFeedback
 # from scene_builder.nodes.placement import PlacementNode, VisualFeedback
-# from scene_builder.nodes.placement import PlacementNode, VisualFeedback, placement_graph
-from scene_builder.nodes.placement import PlacementNode, placement_graph
+from scene_builder.nodes.placement import PlacementNode, PlacementVisualFeedback, placement_graph
 # from scene_builder.nodes.routing import DesignLoopRouter
 from scene_builder.workflow.agents import room_design_agent, shopping_agent
 # from scene_builder.workflow.graphs import placement_graph # hopefully no circular import... -> BRUH.
 # from scene_builder.workflow.states import PlacementState, RoomDesignState
 from scene_builder.workflow.states import PlacementState, RoomDesignState, MainState
 
-DEBUG = True
-# DEBUG = False
 console = Console()
 obj_db = ObjectDatabase()
 
@@ -45,97 +43,79 @@ class RoomDesignNode(BaseNode[RoomDesignState]):
         self, ctx: GraphRunContext[RoomDesignState]
     ) -> RoomDesignVisualFeedback | End[Room]:
         console.print("[bold cyan]Executing Node:[/] RoomDesignNode")
-        # is_debug = ctx.state.global_config.debug
-        is_debug = False  # TEMP HACK
-
         room = ctx.state.room
+        response = await room_design_agent.run(deps=ctx.state)
 
-        if is_debug:  # mock data
-            console.print("[bold yellow]Debug mode: Using hardcoded object data.[/]")
-            sofa_data = obj_db.query("a modern sofa")[0]
-            new_object = Object(
-                id=sofa_data["id"],
-                name=sofa_data["name"],
-                description=sofa_data["description"],
-                source=sofa_data["source"],
-                source_id=sofa_data["id"],
-                position=Vector3(x=0, y=0, z=0),
-                rotation=Vector3(x=0, y=0, z=0),
-                scale=Vector3(x=1, y=1, z=1),
-            )
-            room.objects.append(new_object)
-        else:  # prod: real data
-            response = await room_design_agent.run(deps=ctx.state)
+        if DEBUG:
+            print(f"[RoomDesignNode]: {response.output.decision}")
+            print(f"[RoomDesignNode]: {response.output.reasoning}")
+        if response.output.decision == "finalize":
+            return End(ctx.state.room)
 
-            if DEBUG:
-                print(f"[RoomDesignNode]: {response.output.decision}")
-                print(f"[RoomDesignNode]: {response.output.reasoning}")
-            if response.output.decision == "finalize":
-                return End(ctx.state.room)
+        # else:
+        shopping_user_prompt = (
+            f"Room id: '{room.id}'.",
+            f"Room category: '{room.category}'.",
+            f"Room plan: {ctx.state.room_plan}.",
+            f"Existing items in the shopping cart: {ctx.state.shopping_cart}",
+        )
+        # NOTE: It may be beneficial to add a state variable to control whether shopping_agent can / should be invoked,
+        #       to allow for "waterfall"-style selection → placement sequence.
+        # NOTE: For example, it can be beneficial to think of "design" and "build" separately,
+        #       where design consists of shopping and planning, and building consists of going back-and-forth
+        #       between the placement node/agent, doing quality checks via visual feedback (potentially giving
+        #       the PlacementNode some advice, although it has feedback of its own), or re-initiating motion
+        #       of certain already-place items, and then finalizing the room to end the process.
+        #       What this ultimately means is that there are probably certain parts that are to be invoked once,
+        #       and certain parts that are meant to run repetitively. It's useful to model the human design process.
 
-            shopping_user_prompt = (
-                f"Room id: '{room.id}'.",
-                f"Room category: '{room.category}'.",
-                f"Room plan: {ctx.state.room_plan}.",
-                f"Existing items in the shopping cart: {ctx.state.shopping_cart}",
-            )
-            # NOTE: It may be beneficial to add a state variable to control whether shopping_agent can / should be invoked,
-            #       to allow for "waterfall"-style selection → placement sequence.
-            # NOTE: For example, it can be beneficial to think of "design" and "build" separately,
-            #       where design consists of shopping and planning, and building consists of going back-and-forth
-            #       between the placement node/agent, doing quality checks via visual feedback (potentially giving
-            #       the PlacementNode some advice, although it has feedback of its own), or re-initiating motion
-            #       of certain already-place items, and then finalizing the room to end the process.
-            #       What this ultimately means is that there are probably certain parts that are to be invoked once,
-            #       and certain parts that are meant to run repetitively. It's useful to model the human design process.
+        shopping_agent_response = await shopping_agent.run(shopping_user_prompt)
+        shopping_cart = shopping_agent_response.output
+        console.print(
+            f"[bold cyan]Added Objects:[/] {[obj.name for obj in shopping_cart]}"
+        )
+        ctx.state.shopping_cart.extend(shopping_cart)
+        # NOTE: may need to diff the shopping cart content or something, if shopping
+        #       is anything other than shopping a singular object that is immediately needed.
+        # NOTE: not sure if VLM is going to repeat existing stuff in the ShoppingCart
+        #       or skip them. (probably need to explicitly prompt to "pin" this behavior.)
 
-            shopping_agent_response = await shopping_agent.run(shopping_user_prompt)
-            shopping_cart = shopping_agent_response.output
-            console.print(
-                f"[bold cyan]Added Objects:[/] {[obj.name for obj in shopping_cart]}"
-            )
-            ctx.state.shopping_cart.extend(shopping_cart)
-            # NOTE: may need to diff the shopping cart content or something, if shopping
-            #       is anything other than shopping a singular object that is immediately needed.
-            # NOTE: not sure if VLM is going to repeat existing stuff in the ShoppingCart
-            #       or skip them. (probably need to explicitly prompt to "pin" this behavior.)
+        # TODO: ask VLM what to deliberately think about what to place first
+        # (in general, larger "anchor" objects first, so that other objects can
+        # be placed relative to it.)
+        # "Please choose what to place next."
+        # what_to_place = NotImplementedError()
 
-            # TODO: ask VLM what to deliberately think about what to place first
-            # (in general, larger "anchor" objects first, so that other objects can
-            # be placed relative to it.)
-            # "Please choose what to place next."
-            # what_to_place = NotImplementedError()
+        # TEMP: choose the first item in the shopping cart
+        what_to_place = shopping_cart[0]
 
-            # TEMP: choose the first item in the shopping cart
-            what_to_place = shopping_cart[0]
+        # NOTE: It would be interesting if the room design agent can "think" of
+        #       certain opinions and feed it to PlacementNode as text guidance.
+        placement_state = PlacementState(
+            room=room,
+            room_plan=ctx.state.room_plan,
+            what_to_place=what_to_place,
+        )
 
-            # NOTE: It would be interesting if the room design agent can "think" of
-            #       certain opinions and feed it to PlacementNode as text guidance.
-            placement_state = PlacementState(
-                room=room,
-                room_plan=ctx.state.room_plan,
-                what_to_place=what_to_place,
-            )
+        placement_subgraph_response = await placement_graph.run(
+            PlacementNode(), state=placement_state
+        )
+        updated_room: Room = placement_subgraph_response.output
+        ctx.state.room = updated_room
+        # ctx.state.room_history += new_placement_state.room_history
 
-            placement_subgraph_response = await placement_graph.run(
-                PlacementNode(), state=placement_state
-            )
-            updated_room: Room = placement_subgraph_response.output
-            ctx.state.room = updated_room
-            # ctx.state.room_history += new_placement_state.room_history
+        # TODO: use VisualFeedback and ShoppingCart to decide if room needs more objects or end
+        # NOTE: the logic should be: the room is fed to a visual feedback agent, along with information
+        #       such as the remaining items in the shopping cart (that is "explorable" in terms of detail,
+        #       meaning it can be as simple as how many objects are left and their names, or their thumbnails & sizes),
 
-            # TODO: use VisualFeedback and ShoppingCart to decide if room needs more objects or end
-            # NOTE: the logic should be: the room is fed to a visual feedback agent, along with information
-            #       such as the remaining items in the shopping cart (that is "explorable" in terms of detail,
-            #       meaning it can be as simple as how many objects are left and their names, or their thumbnails & sizes),
+        return RoomDesignVisualFeedback()
 
-            return RoomDesignVisualFeedback()
+        # TODO: decide whether to finalize the scene, or to continue designing.
+        # TODO: if deciding to continue, choose what to place next.
 
-            # TODO: decide whether to finalize the scene, or to continue designing.
-            # TODO: if deciding to continue, choose what to place next.
-
-            # NOTE: don't return `UpdateScene` directly; return a room to caller (DesignLoopRouter)
-            #       and let it take care of coalescing it with the entire Scene.
+        # NOTE: don't return `UpdateScene` directly; return a room to caller (DesignLoopRouter)
+        #       and let it take care of coalescing it with the entire Scene.
 
         # IDEA: It would be cool to visualize the conversations and back-and-forths between the different "agents"
         #       in the time-lapse scene building video, along with locations (just randomized movements around the room/
@@ -155,7 +135,9 @@ class RoomDesignVisualFeedback(BaseNode[RoomDesignState]):
     async def run(self, ctx: GraphRunContext[RoomDesignState]) -> RoomDesignNode:
         blender.parse_room_definition(ctx.state.room)
         top_down_render = blender.create_scene_visualization(output_dir="test_output")
-        isometric_render = blender.create_scene_visualization(output_dir="test_output", view="isometric")
+        isometric_render = blender.create_scene_visualization(
+            output_dir="test_output", view="isometric"
+        )
         ctx.state.viz.append([top_down_render, isometric_render])
         return RoomDesignNode()
 

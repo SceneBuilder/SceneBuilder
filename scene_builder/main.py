@@ -6,8 +6,8 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.syntax import Syntax
 
+from scene_builder.config import GenerationConfig
 from scene_builder.decoder import blender
-from scene_builder.definition.scene import GlobalConfig
 from scene_builder.utils.conversions import pydantic_to_dict
 from scene_builder.workflow.graphs import main_graph
 from scene_builder.workflow.states import MainState
@@ -28,7 +28,6 @@ def main():
     parser.add_argument(
         "--debug",
         action="store_true",
-        help="Enable debug mode to use mock data and hardcoded plans.",
     )
     parser.add_argument(
         "-o",
@@ -50,7 +49,6 @@ def main():
     # Initial state for the graph
     initial_state = MainState(
         user_input=args.prompt,
-        global_config=GlobalConfig(debug=args.debug),
     )
 
     # Run the graph asynchronously

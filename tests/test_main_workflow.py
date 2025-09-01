@@ -5,8 +5,8 @@ from rich.console import Console
 from rich.panel import Panel
 
 from scene_builder.decoder import blender
-from scene_builder.definition.scene import GlobalConfig
 from scene_builder.nodes.general import MetadataNode
+from scene_builder.utils.conversions import pydantic_to_dict
 from scene_builder.workflow.graphs import main_graph
 from scene_builder.workflow.states import MainState
 
@@ -16,7 +16,6 @@ def test_main_workflow():
     console.print(Panel("[bold green]Running SceneBuilder Workflow[/]", expand=False))
     initial_state = MainState(
         user_input="Create a modern, minimalist living room.",
-        global_config=GlobalConfig(debug=True),
     )
 
     async def run_graph():
@@ -28,7 +27,6 @@ def test_main_workflow():
         final_scene = result.output
         console.print(Panel("[bold green]Exporting to Blender[/]", expand=False))
         # Convert from BaseModel to dict for blender_decoder
-        from scene_builder.utils.conversions import pydantic_to_dict
         scene_dict = pydantic_to_dict(final_scene)
 
         output_dir = Path("scenes")

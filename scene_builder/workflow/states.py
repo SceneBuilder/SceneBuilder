@@ -6,8 +6,8 @@ from pydantic import BaseModel, Field
 from pydantic_ai.messages import ModelMessage
 
 
+from scene_builder.config import GenerationConfig
 from scene_builder.definition.scene import (
-    GlobalConfig,
     Object,
     ObjectBlueprint,
     Room,
@@ -23,7 +23,7 @@ class MainState(BaseModel):
     plan: str | None = None
     messages: list[ModelMessage] = Field(default_factory=list)
     current_room_index: int = 0
-    global_config: GlobalConfig | None = None
+    generation_config: GenerationConfig | None = None
 
 
 class KeepEditingOrFinalize(BaseModel):

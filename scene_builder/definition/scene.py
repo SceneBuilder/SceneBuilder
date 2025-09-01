@@ -4,13 +4,6 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 
-class GlobalConfig(BaseModel):
-    """Global configuration for the generation process."""
-
-    debug: bool = False
-    previewAfterAction: bool = False
-
-
 class GenericPlan(BaseModel):
     pass
 

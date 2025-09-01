@@ -9,9 +9,13 @@ from scene_builder.decoder import blender
 from scene_builder.definition.scene import Object, ObjectBlueprint, Room, Vector2, Scene
 from scene_builder.definition.plan import RoomPlan
 from scene_builder.importer.test_asset_importer import search_test_asset
-from scene_builder.nodes.design import RoomDesignNode, RoomDesignVisualFeedback, room_design_graph
+from scene_builder.nodes.design import (
+    RoomDesignNode,
+    RoomDesignVisualFeedback,
+    room_design_graph,
+)
 # from scene_builder.nodes.placement import PlacementNode, placement_graph, VisualFeedback
-from scene_builder.nodes.placement import PlacementNode, placement_graph
+from scene_builder.nodes.placement import PlacementNode, PlacementVisualFeedback, placement_graph
 # from scene_builder.nodes.feedback import VisualFeedback
 from scene_builder.utils.conversions import pydantic_from_yaml
 from scene_builder.utils.image import create_gif_from_images
@@ -19,7 +23,7 @@ from scene_builder.utils.image import create_gif_from_images
 #     room_design_graph,
 #     placement_graph,
 # )
-from scene_builder.workflow.states import GlobalConfig, PlacementState, RoomDesignState
+from scene_builder.workflow.states import PlacementState, RoomDesignState
 
 # Params
 SAVE_DIR = "assets"
@@ -126,7 +130,7 @@ def test_partial_room_completion():
     blender.load_template("test_assets/scenes/classroom.blend", clear_scene=True)
 
     async def run_graph():
-        return await placement_graph.run(VisualFeedback(), state=initial_state)
+        return await placement_graph.run(PlacementVisualFeedback(), state=initial_state)
 
     # TODO: log each step, save info GIF, video, or markdown(?).
 
@@ -148,13 +152,14 @@ def test_room_design_workflow():
             boundary=SMALL_RECTANGULAR_BOUNDARY,
         ),
         room_plan=RoomPlan(room_description=CLASSROOM_ROOM_DESCRIPTION),
-        global_config=GlobalConfig(debug=False),
     )
 
     async def run_graph():
         # return await room_design_graph.run(RoomDesignNode(), state=initial_room_state)
-        return await room_design_graph.run(RoomDesignVisualFeedback(), state=initial_room_state)
-    
+        return await room_design_graph.run(
+            RoomDesignVisualFeedback(), state=initial_room_state
+        )
+
     result: RoomDesignState = asyncio.run(run_graph())
     blender.save_scene(f"test_output/test_room_design_workflow.blend")
 

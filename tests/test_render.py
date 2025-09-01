@@ -5,7 +5,7 @@ import unittest.mock as mock
 # bpy = pytest.importorskip("bpy", reason="Blender bpy not available")
 from scene_builder.decoder import blender
 from scene_builder.importer.test_asset_importer import search_test_asset
-from scene_builder.workflow.graphs import VisualFeedback
+from scene_builder.nodes.placement import PlacementVisualFeedback
 from scene_builder.workflow.states import PlacementState
 from scene_builder.definition.scene import Room, Object, Vector2, Vector3
 from scene_builder.definition.plan import RoomPlan
@@ -49,7 +49,7 @@ def test_visual_feedback_renders_png():
     ctx.state = state
 
     async def run():
-        node = VisualFeedback()
+        node = PlacementVisualFeedback()
         await node.run(ctx)
 
     import asyncio
@@ -99,7 +99,7 @@ def test_template_loading():
     blender.load_template(template_path, clear_scene=True)
 
     async def run():
-        node = VisualFeedback()
+        node = PlacementVisualFeedback()
         await node.run(ctx)
 
     import asyncio
