@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import Literal
 
 from graphics_db_server.schemas.asset import Asset
@@ -52,12 +53,17 @@ class RoomDesignState(BaseModel):
     room: Room
     room_plan: RoomPlan
     shopping_cart: list[ObjectBlueprint]
+    viz: list[Path]
     # NOTE: It's possible to put room_history here as well...
     # TODO (yunho-c): make a decision on ^.
 
 
+# class RoomDesignAction(BaseModel):
+#     updated_room: Room
+
+
 class RoomDesignResponse(BaseModel):
-    # placement_action: PlacementAction
+    # room_design_action: RoomDesignAction
     decision: KeepEditingOrFinalize
     reasoning: str
 

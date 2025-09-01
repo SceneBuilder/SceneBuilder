@@ -11,6 +11,8 @@ from scene_builder.workflow.prompts import (
     BUILDING_PLAN_AGENT_PROMPT,
     FLOOR_PLAN_AGENT_PROMPT,
     PLACEMENT_AGENT_PROMPT,
+    ROOM_DESIGN_AGENT_PROMPT,
+    SHOPPING_AGENT_PROMPT,
 )
 from scene_builder.workflow.states import (
     PlacementState,
@@ -22,7 +24,6 @@ from scene_builder.workflow.states import (
 model = GoogleModel("gemini-2.5-flash")
 # model = OpenAIModel("gpt-5-mini")
 # model = OpenAIModel("gpt-5-nano")
-# model = "openai:gpt-4o"
 
 floor_plan_agent = Agent(
     model,
@@ -57,15 +58,15 @@ planning_agent = Agent(
 # Shopping agent for finding 3D assets from graphics database
 shopping_agent = Agent(
     model,
-    system_prompt="You are a shopping assistant for 3D assets. Your goal is to help find the most appropriate 3D objects from the graphics database based on the user's description. Use the search_assets tool to find relevant assets. You can use get_asset_thumbnail to view thumbnails of assets and read_media_file to view any other media files. When returning objects, convert Asset data to Object format: use Asset.uid for Object.source_id, Asset.url for Object.source, and generate appropriate names and descriptions based on the asset tags and metadata. Set initial position, rotation, and scale to default values (position: x=0,y=0,z=0; rotation: x=0,y=0,z=0; scale: x=1,y=1,z=1).",
+    system_prompt=SHOPPING_AGENT_PROMPT,
     tools=[search_assets, get_asset_thumbnail],
     output_type=list[ObjectBlueprint],
 )
 
 
 room_design_agent = Agent(
-    "openai:gpt-4o",
-    system_prompt="You are a room designer. Your goal is to add objects to the room based on the plan. Please utilize `PlacementAgent` to populate the room with objects from the `ShoppingCart`, until you are satisfied with the room.",
-    tools=[],
+    model,
+    system_prompt=ROOM_DESIGN_AGENT_PROMPT,
     output_type=list[Object],
+    tools=[read_media_file],
 )
