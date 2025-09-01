@@ -3,11 +3,14 @@ import requests
 from graphics_db_server.schemas.asset import Asset
 from pydantic_ai import BinaryContent
 
+from scene_builder.database.object import ObjectDatabase
 from scene_builder.definition.scene import Object, Vector3
 from scene_builder.workflow.agents import shopping_agent
 
 
 API_BASE_URL = "http://localhost:2692/api/v0"
+
+obj_db = ObjectDatabase()
 
 
 def is_graphics_db_available():
@@ -73,10 +76,9 @@ async def test_shopping_agent_with_thumbnails():
 @pytest.mark.skipif(not is_graphics_db_available())
 def test_asset_search_tool_directly():
     """Test the search_assets tool directly with real API."""
-    from scene_builder.tools.asset_search import search_assets
 
     # Test basic search
-    assets = search_assets("chair", top_k=3)
+    assets = obj_db.query("chair", top_k=3)
 
     # Verify the result
     assert isinstance(assets, list)
@@ -93,15 +95,14 @@ def test_asset_search_tool_directly():
 )
 def test_asset_thumbnail_tool_directly():
     """Test the get_asset_thumbnail tool directly with real API."""
-    from scene_builder.tools.asset_search import get_asset_thumbnail, search_assets
 
     # First search for some assets to get UIDs
-    assets = search_assets("chair", top_k=1)
+    assets = obj_db.query("chair", top_k=1)
     if not assets:
         pytest.skip("No assets found to test thumbnails")
 
     # Test thumbnail retrieval for the first asset
-    thumbnail = get_asset_thumbnail(assets[0].uid)
+    thumbnail = obj_db.get_asset_thumbnail(assets[0].source_id)
 
     # Verify the result is BinaryContent
     assert isinstance(thumbnail, BinaryContent)

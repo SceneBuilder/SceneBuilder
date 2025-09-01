@@ -23,6 +23,7 @@ PLACEMENT_AGENT_PROMPT = (
     "**If you are given images, please view all of them before answering.**",
     "Output formatting: You may be given callable tools that can be used edit the state of the scene/room.",
     "If so, please utilize them. Otherwise, return an updated instance of the input scene/room state.",
+    "Note that some objects are extremely overscaled, and you may need to scale them down appropriately."
 )
 
 ROOM_DESIGN_AGENT_PROMPT = (

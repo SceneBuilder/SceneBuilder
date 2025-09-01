@@ -5,7 +5,7 @@ from pydantic_ai.providers.google import GoogleProvider
 
 from scene_builder.definition.scene import Room, Object, ObjectBlueprint
 from scene_builder.tools.read_file import read_media_file
-from scene_builder.tools.asset_search import search_assets, get_asset_thumbnail
+from scene_builder.database.object import ObjectDatabase
 from scene_builder.utils.pai import transform_paths_to_binary
 from scene_builder.workflow.prompts import (
     BUILDING_PLAN_AGENT_PROMPT,
@@ -23,9 +23,12 @@ from scene_builder.workflow.states import (
 )
 
 
+# model = GoogleModel("gemini-2.5-pro")
 model = GoogleModel("gemini-2.5-flash")
 # model = OpenAIModel("gpt-5-mini")
 # model = OpenAIModel("gpt-5-nano")
+
+obj_db = ObjectDatabase()
 
 floor_plan_agent = Agent(
     model,
@@ -61,7 +64,7 @@ planning_agent = Agent(
 shopping_agent = Agent(
     model,
     system_prompt=SHOPPING_AGENT_PROMPT,
-    tools=[search_assets, get_asset_thumbnail],
+    tools=[obj_db.query, obj_db.get_asset_thumbnail],
     output_type=list[ObjectBlueprint],
 )
 

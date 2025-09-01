@@ -10,7 +10,8 @@ from scene_builder.definition.scene import Object, ObjectBlueprint, Room, Vector
 from scene_builder.definition.plan import RoomPlan
 from scene_builder.importer.test_asset_importer import search_test_asset
 from scene_builder.nodes.design import RoomDesignNode, RoomDesignVisualFeedback, room_design_graph
-from scene_builder.nodes.placement import PlacementNode, placement_graph, VisualFeedback
+# from scene_builder.nodes.placement import PlacementNode, placement_graph, VisualFeedback
+from scene_builder.nodes.placement import PlacementNode, placement_graph
 # from scene_builder.nodes.feedback import VisualFeedback
 from scene_builder.utils.conversions import pydantic_from_yaml
 from scene_builder.utils.image import create_gif_from_images

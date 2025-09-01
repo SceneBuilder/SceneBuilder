@@ -120,8 +120,8 @@ class RoomDesignNode(BaseNode[RoomDesignState]):
             placement_subgraph_response = await placement_graph.run(
                 PlacementNode(), state=placement_state
             )
-            new_placement_state: PlacementState = placement_subgraph_response.output
-            ctx.state.room = new_placement_state.room
+            updated_room: Room = placement_subgraph_response.output
+            ctx.state.room = updated_room
             # ctx.state.room_history += new_placement_state.room_history
 
             # TODO: use VisualFeedback and ShoppingCart to decide if room needs more objects or end
@@ -154,8 +154,9 @@ class RoomDesignVisualFeedback(BaseNode[RoomDesignState]):
     # NOTE: see PlacementVisualFeedback in `placement.py` for notes and design decisions.
     async def run(self, ctx: GraphRunContext[RoomDesignState]) -> RoomDesignNode:
         blender.parse_room_definition(ctx.state.room)
-        renders = blender.create_scene_visualization(output_dir="test_output")
-        ctx.state.viz.append(renders)
+        top_down_render = blender.create_scene_visualization(output_dir="test_output")
+        isometric_render = blender.create_scene_visualization(output_dir="test_output", view="isometric")
+        ctx.state.viz.append([top_down_render, isometric_render])
         return RoomDesignNode()
 
 

@@ -46,7 +46,8 @@ class Object(BaseModel):
     name: str
     id: str
     source: str
-    source_id: str | None = None
+    # source_id: str | None = None
+    source_id: str  # TEMP: to resolve ObjectBlueprint → Object adapter mistake
     description: str
     position: Vector3
     rotation: Vector3
