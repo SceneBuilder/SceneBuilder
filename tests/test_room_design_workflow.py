@@ -9,6 +9,7 @@ from scene_builder.decoder import blender
 from scene_builder.definition.scene import Object, ObjectBlueprint, Room, Vector2, Scene
 from scene_builder.definition.plan import RoomPlan
 from scene_builder.importer.test_asset_importer import search_test_asset
+from scene_builder.logging import configure_logging
 from scene_builder.nodes.design import (
     RoomDesignNode,
     RoomDesignVisualFeedback,
@@ -24,6 +25,8 @@ from scene_builder.utils.image import create_gif_from_images
 #     placement_graph,
 # )
 from scene_builder.workflow.states import PlacementState, RoomDesignState
+
+configure_logging(level="DEBUG")
 
 # Params
 SAVE_DIR = "assets"
@@ -153,6 +156,7 @@ def test_room_design_workflow():
         ),
         room_plan=RoomPlan(room_description=CLASSROOM_ROOM_DESCRIPTION),
     )
+    blender._clear_scene()
 
     async def run_graph():
         # return await room_design_graph.run(RoomDesignNode(), state=initial_room_state)
