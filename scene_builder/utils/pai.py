@@ -142,8 +142,8 @@ if __name__ == "__main__":
 
     print("\n--- Transformed Pydantic Model ---")
     # Note: The output will now show BinaryContent objects instead of paths.
-    # Pydantic's default __repr__ for the model will be used.
-    print(transformed_project)
+    print(transformed_project.model_dump_json(indent=2))
+    # print(transformed_project)  # Pydantic's default __repr__ (non-indented)
 
     print("\n--- Verifying Transformed Content ---")
     print(f"Owner's Avatar: {transformed_project.owner.avatar_path}")
