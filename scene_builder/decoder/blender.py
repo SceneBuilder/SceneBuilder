@@ -45,7 +45,7 @@ def parse_room_definition(room_data: dict[str, Any], clear=False):
 
     # NOTE: not sure if it's good for `clear` to default to True; (it was for testing)
     """
-    logger.debug("Parsing room definition and creating scene in Blender...")
+    logger.debug("Parsing room definition and creating scene")
 
     if isinstance(room_data, Room):
         room_data = pydantic_to_dict(room_data)
@@ -71,10 +71,15 @@ def _create_room(room_data: dict[str, Any]):
         _create_object(obj_data)
 
 
-def _create_object(obj_data: dict[str, Any]):
+def _create_object(obj_data: dict[str, Any], parent_location: str = "origin"):
     """
     Creates a single object in the Blender scene.
     Raises an IOError if the object cannot be imported.
+
+    Args:
+        obj_data: Dictionary containing object data
+        parent_location: Strategy for placing the parent Empty object.
+                        Options: "first_object", "median", "origin"
     """
     if isinstance(obj_data, Object):
         obj_data = pydantic_to_dict(obj_data)
@@ -112,10 +117,57 @@ def _create_object(obj_data: dict[str, Any]):
     # Import the .glb file
     if object_path and object_path.endswith(".glb"):
         try:
+            # Deselect all objects before import to ensure clean selection
+            bpy.ops.object.select_all(action='DESELECT')
+
+            # Import the GLTF file - imported objects will be selected
             bpy.ops.import_scene.gltf(filepath=object_path)
-            # The imported object is the newly selected one
-            blender_obj = bpy.context.selected_objects[0]
+
+            # Get all imported objects
+            imported_objects = bpy.context.selected_objects
+
+            if not imported_objects:
+                raise IOError(f"No objects were imported from '{object_path}'")
+
+            # Create an Empty parent object to group all imported parts
+            # Determine parent location based on strategy
+            if parent_location == "first_object" and imported_objects:
+                bpy.context.view_layer.objects.active = imported_objects[0]
+                empty_location = imported_objects[0].location
+            elif parent_location == "median" and imported_objects:
+                # Calculate median position of all imported objects
+                locations = [obj.location for obj in imported_objects]
+                x_coords = sorted([loc.x for loc in locations])
+                y_coords = sorted([loc.y for loc in locations])
+                z_coords = sorted([loc.z for loc in locations])
+
+                # Get median values
+                n = len(locations)
+                if n % 2 == 0:
+                    median_x = (x_coords[n//2 - 1] + x_coords[n//2]) / 2
+                    median_y = (y_coords[n//2 - 1] + y_coords[n//2]) / 2
+                    median_z = (z_coords[n//2 - 1] + z_coords[n//2]) / 2
+                else:
+                    median_x = x_coords[n//2]
+                    median_y = y_coords[n//2]
+                    median_z = z_coords[n//2]
+
+                empty_location = (median_x, median_y, median_z)
+            elif parent_location == "origin":
+                empty_location = (0, 0, 0)
+            else:
+                # Fallback to origin if invalid option or no objects
+                empty_location = (0, 0, 0)
+
+            # Create Empty at the calculated location
+            bpy.ops.object.empty_add(type='PLAIN_AXES', location=empty_location)
+            blender_obj = bpy.context.active_object
             blender_obj.name = object_name
+
+            # Parent all imported objects to the Empty
+            for obj in imported_objects:
+                obj.parent = blender_obj
+
         except Exception as e:
             raise IOError(
                 f"Failed to import GLB file for '{object_name}' from '{object_path}'. Blender error: {e}"
@@ -129,7 +181,10 @@ def _create_object(obj_data: dict[str, Any]):
     # Set position, rotation, and scale from the object data
     pos = obj_data.get("position", {"x": 0, "y": 0, "z": 0})
     rot = obj_data.get("rotation", {"x": 0, "y": 0, "z": 0})
-    scl = obj_data.get("scale", {"x": 1, "y": 1, "z": 1})
+    # scl = obj_data.get("scale", {"x": 1, "y": 1, "z": 1})
+    # NOTE: I think LLMs think scale to be a size (dimensions) attribute in meters,
+    #       not the scaling factor (0-1.0 float). Probs bc they're not fed with dims.
+    scl = {"x": 1, "y": 1, "z": 1}  # TEMP HACK
 
     blender_obj.location = (pos["x"], pos["y"], pos["z"])
     blender_obj.scale = (scl["x"], scl["y"], scl["z"])
