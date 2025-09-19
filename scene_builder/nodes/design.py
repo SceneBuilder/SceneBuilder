@@ -87,7 +87,7 @@ class RoomDesignNode(BaseNode[RoomDesignState]):
         # what_to_place = NotImplementedError()
 
         # TEMP: choose the first item in the shopping cart
-        what_to_place = shopping_cart[0]
+        what_to_place = ctx.state.shopping_cart[0]
 
         # NOTE: It would be interesting if the room design agent can "think" of
         #       certain opinions and feed it to PlacementNode as text guidance.
