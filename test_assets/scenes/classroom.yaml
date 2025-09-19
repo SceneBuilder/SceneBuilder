@@ -1,0 +1,418 @@
+category: education
+tags:
+# -
+floorType: single
+rooms:
+  - id: classroom_1
+    category: classroom
+    boundary:
+      - x: 4
+        y: 2
+      - x: -4
+        y: 2
+      - x: -4
+        y: -2
+      - x: 4
+        y: -2
+    tags:
+    # -
+    objects:
+      - id: template_object_1
+        name: teacher_desk
+        description: ""
+        source: template
+        source_id: ""
+        position:
+          x: 0.0244
+          y: -0.344
+          z: -0.00381
+        rotation:
+          x: 0
+          y: 0
+          z: 0
+        scale:
+          x: 1
+          y: 1
+          z: 1
+        tags:
+          - immutable
+      - id: template_object_2
+        name: bookcase
+        description: ""
+        source: template
+        source_id: ""
+        position:
+          x: -0.236
+          y: 0.493
+          z: 000.215
+        rotation:
+          x: 0
+          y: 0
+          z: 0
+        scale:
+          x: 1
+          y: 1
+          z: 1
+        tags:
+          - immutable
+      - id: template_object_3
+        name: drawer
+        description: ""
+        source: template
+        source_id: ""
+        position:
+          x: 0.534
+          y: 4.84
+          z: 0.40
+        rotation:
+          x: 0
+          y: 0
+          z: 0
+        scale:
+          x: 1
+          y: 1
+          z: 1
+        tags:
+          - immutable
+      - id: template_object_4
+        name: closet
+        description: ""
+        source: template
+        source_id: ""
+        position:
+          x: 2.81
+          y: 5.01
+          z: 0.0047
+        rotation:
+          x: 0
+          y: 0
+          z: 0
+        scale:
+          x: 1
+          y: 1
+          z: 1
+        tags:
+          - immutable
+      - id: template_object_6
+        name: table_chair
+        description: ""
+        source: template
+        source_id: ""
+        position:
+          x: -2.5
+          y: 2.54
+          z: 0
+        rotation:
+          x: 0
+          y: 0
+          z: 0
+        scale:
+          x: 1
+          y: 1
+          z: 1
+        tags:
+          - immutable
+      - id: template_object_7
+        name: table_chair
+        description: ""
+        source: template
+        source_id: ""
+        position:
+          x: -1.5
+          y: 2.54
+          z: 0
+        rotation:
+          x: 0
+          y: 0
+          z: 0
+        scale:
+          x: 1
+          y: 1
+          z: 1
+        tags:
+          - immutable
+      - id: template_object_8
+        name: table_chair
+        description: ""
+        source: template
+        source_id: ""
+        position:
+          x: -0.5
+          y: 2.54
+          z: 0
+        rotation:
+          x: 0
+          y: 0
+          z: 0
+        scale:
+          x: 1
+          y: 1
+          z: 1
+        tags:
+          - immutable
+      - id: template_object_9
+        name: table_chair
+        description: ""
+        source: template
+        source_id: ""
+        position:
+          x: 0.5
+          y: 2.54
+          z: 0
+        rotation:
+          x: 0
+          y: 0
+          z: 0
+        scale:
+          x: 1
+          y: 1
+          z: 1
+        tags:
+          - immutable
+      - id: template_object_10
+        name: table_chair
+        description: ""
+        source: template
+        source_id: ""
+        position:
+          x: 1.5
+          y: 2.54
+          z: 0
+        rotation:
+          x: 0
+          y: 0
+          z: 0
+        scale:
+          x: 1
+          y: 1
+          z: 1
+        tags:
+          - immutable
+      - id: template_object_11
+        name: table_chair
+        description: ""
+        source: template
+        source_id: ""
+        position:
+          x: 2.5
+          y: 2.54
+          z: 0
+        rotation:
+          x: 0
+          y: 0
+          z: 0
+        scale:
+          x: 1
+          y: 1
+          z: 1
+        tags:
+          - immutable
+      - id: template_object_12
+        name: table_chair
+        description: ""
+        source: template
+        source_id: ""
+        position:
+          x: -2.5
+          y: 1.04
+          z: 0
+        rotation:
+          x: 0
+          y: 0
+          z: 0
+        scale:
+          x: 1
+          y: 1
+          z: 1
+        tags:
+          - immutable
+      - id: template_object_13
+        name: table_chair
+        description: ""
+        source: template
+        source_id: ""
+        position:
+          x: -1.5
+          y: 1.04
+          z: 0
+        rotation:
+          x: 0
+          y: 0
+          z: 0
+        scale:
+          x: 1
+          y: 1
+          z: 1
+        tags:
+          - immutable
+      - id: template_object_14
+        name: table_chair
+        description: ""
+        source: template
+        source_id: ""
+        position:
+          x: -0.5
+          y: 1.04
+          z: 0
+        rotation:
+          x: 0
+          y: 0
+          z: 0
+        scale:
+          x: 1
+          y: 1
+          z: 1
+        tags:
+          - immutable
+      - id: template_object_15
+        name: table_chair
+        description: ""
+        source: template
+        source_id: ""
+        position:
+          x: 0.5
+          y: 1.04
+          z: 0
+        rotation:
+          x: 0
+          y: 0
+          z: 0
+        scale:
+          x: 1
+          y: 1
+          z: 1
+        tags:
+          - immutable
+      - id: template_object_16
+        name: table_chair
+        description: ""
+        source: template
+        source_id: ""
+        position:
+          x: 1.5
+          y: 1.04
+          z: 0
+        rotation:
+          x: 0
+          y: 0
+          z: 0
+        scale:
+          x: 1
+          y: 1
+          z: 1
+        tags:
+          - immutable
+      - id: template_object_17
+        name: table_chair
+        description: ""
+        source: template
+        source_id: ""
+        position:
+          x: -2.5
+          y: -0.46
+          z: 0
+        rotation:
+          x: 0
+          y: 0
+          z: 0
+        scale:
+          x: 1
+          y: 1
+          z: 1
+        tags:
+          - immutable
+      - id: template_object_18
+        name: table_chair
+        description: ""
+        source: template
+        source_id: ""
+        position:
+          x: -1.5
+          y: -0.46
+          z: 0
+        rotation:
+          x: 0
+          y: 0
+          z: 0
+        scale:
+          x: 1
+          y: 1
+          z: 1
+        tags:
+          - immutable
+      - id: template_object_19
+        name: table_chair
+        description: ""
+        source: template
+        source_id: ""
+        position:
+          x: -0.5
+          y: -0.46
+          z: 0
+        rotation:
+          x: 0
+          y: 0
+          z: 0
+        scale:
+          x: 1
+          y: 1
+          z: 1
+        tags:
+          - immutable
+      - id: template_object_20
+        name: table_chair
+        description: ""
+        source: template
+        source_id: ""
+        position:
+          x: 0.5
+          y: -0.46
+          z: 0
+        rotation:
+          x: 0
+          y: 0
+          z: 0
+        scale:
+          x: 1
+          y: 1
+          z: 1
+        tags:
+          - immutable
+      - id: template_object_21
+        name: table_chair
+        description: ""
+        source: template
+        source_id: ""
+        position:
+          x: -2.5
+          y: -1.96
+          z: 0
+        rotation:
+          x: 0
+          y: 0
+          z: 0
+        scale:
+          x: 1
+          y: 1
+          z: 1
+        tags:
+          - immutable
+      - id: template_object_22
+        name: table_chair
+        description: ""
+        source: template
+        source_id: ""
+        position:
+          x: -1.5
+          y: -1.96
+          z: 0
+        rotation:
+          x: 0
+          y: 0
+          z: 0
+        scale:
+          x: 1
+          y: 1
+          z: 1
+        tags:
+          - immutable

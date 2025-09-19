@@ -5,7 +5,9 @@ from rich.console import Console
 from rich.panel import Panel
 
 from scene_builder.definition.scene import GlobalConfig
-from scene_builder.workflow.graph import app, MainState, MetadataAgent
+from scene_builder.nodes.general import MetadataNode
+from scene_builder.workflow.graphs import main_graph
+from scene_builder.workflow.states import MainState
 
 
 def test_scene_generation():
@@ -17,7 +19,7 @@ def test_scene_generation():
     )
 
     async def run_graph():
-        return await app.run(MetadataAgent(), state=initial_state)
+        return await main_graph.run(MetadataNode(), state=initial_state)
 
     result = asyncio.run(run_graph())
 

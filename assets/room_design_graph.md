@@ -1,16 +1,12 @@
 ```mermaid
 ---
-title: app
+title: room_design_graph
 ---
 stateDiagram-v2
-  [*] --> MetadataNode
-  MetadataNode --> BuildingPlanNode
-  BuildingPlanNode --> FloorPlanNode
-  FloorPlanNode --> DesignLoopRouter
+  [*] --> DesignLoopRouter
   DesignLoopRouter --> [*]
   RoomDesignNode --> VisualFeedback
   RoomDesignNode --> [*]
-  UpdateScene --> DesignLoopRouter
   VisualFeedback --> PlacementNode
   PlacementNode --> VisualFeedback
   PlacementNode --> [*]

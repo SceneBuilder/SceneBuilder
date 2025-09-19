@@ -31,7 +31,8 @@ class Vector3(BaseModel):
 
 
 class ObjectBlueprint(BaseModel):
-    id: str
+    name: str | None = None
+    source_id: str
     source: str
     description: str
     extra_info: Any | None = (
@@ -45,11 +46,12 @@ class Object(BaseModel):
     name: str
     id: str
     source: str
-    sourceId: str | None = None
+    source_id: str | None = None
     description: str
     position: Vector3
     rotation: Vector3
     scale: Vector3
+    tags: list[str] | None = None
 
 
 class Section(BaseModel):
@@ -85,7 +87,7 @@ class Room(BaseModel):
     boundary: list[Vector2] | None = None
     floor_dimensions: FloorDimensions | None = None
     viz: list[Path] = []
-    objects: list[Object] | None = None
+    objects: list[Object] = []
     # objects: list[Object] = Field(default_factory=list)
     # objects: list[Object | Section] = Field(default_factory=list)
 
