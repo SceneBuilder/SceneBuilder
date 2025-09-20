@@ -123,8 +123,8 @@ def _create_object(obj_data: dict[str, Any], parent_location: str = "origin"):
             # Import the GLTF file - imported objects will be selected
             bpy.ops.import_scene.gltf(filepath=object_path)
 
-            # Get all imported objects
-            imported_objects = bpy.context.selected_objects
+            # Get only top-level imported objects (no parents) to preserve hierarchy
+            imported_objects = [obj for obj in bpy.context.selected_objects if obj.parent is None]
 
             if not imported_objects:
                 raise IOError(f"No objects were imported from '{object_path}'")
