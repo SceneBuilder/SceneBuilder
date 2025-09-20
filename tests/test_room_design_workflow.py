@@ -54,12 +54,32 @@ Opposite the quiet grotto, along the wall with the room's only sink, is the zone
 The remaining wall space is dedicated to storage and identity. It is a vertical landscape. Large cork bulletin boards, with their distinct, earthy smell and porous texture, await staples and thumbtacks. Their surfaces are a chaotic collage of papers. Below them, a long, low bank of cubbies or shelving is needed—a place for the personal clutter of backpacks and lunchboxes. These surfaces should be tough and scratch-resistant. This is the room's skin, holding its memories and its tools.
 """
 
+GARAGE_ROOM_DESCRIPTION = """\
+### A sportscar garage
+
+The garage has a diverse set of sports car in a grid layout. 
+"""
+
 SMALL_RECTANGULAR_BOUNDARY = [
     Vector2(x=4.0, y=2.0),
     Vector2(x=-4.0, y=2.0),
     Vector2(x=-4.0, y=-2.0),
     Vector2(x=4.0, y=-2.0),
 ]
+
+# Test cases dictionary mapping case names to room descriptions and boundaries
+TEST_CASES = {
+    "classroom": {
+        "description": CLASSROOM_ROOM_DESCRIPTION,
+        "boundary": SMALL_RECTANGULAR_BOUNDARY,
+        "room_id": "classroom-01",
+    },
+    "garage": {
+        "description": GARAGE_ROOM_DESCRIPTION,
+        "boundary": SMALL_RECTANGULAR_BOUNDARY,
+        "room_id": "garage-01",
+    }
+}
 
 obj_db = ObjectDatabase()
 
@@ -148,13 +168,18 @@ def test_partial_room_completion():
     blender.save_scene("tests/test_partial_room_completion.blend")
 
 
-def test_room_design_workflow():
+def test_room_design_workflow(case: str):
+    if case not in TEST_CASES:
+        raise ValueError(f"Unknown test case: {case}. Available cases: {list(TEST_CASES.keys())}")
+
+    test_data = TEST_CASES[case]
+
     initial_room_state = RoomDesignState(
         room=Room(
-            id="classroom-01",
-            boundary=SMALL_RECTANGULAR_BOUNDARY,
+            id=test_data["room_id"],
+            boundary=test_data["boundary"],
         ),
-        room_plan=RoomPlan(room_description=CLASSROOM_ROOM_DESCRIPTION),
+        room_plan=RoomPlan(room_description=test_data["description"]),
     )
     blender._clear_scene()
 
@@ -165,11 +190,12 @@ def test_room_design_workflow():
         )
 
     result: RoomDesignState = asyncio.run(run_graph())
-    blender.save_scene(f"test_output/test_room_design_workflow.blend")
+    blender.save_scene(f"test_output/test_room_design_workflow_{case}.blend")
 
 
 if __name__ == "__main__":
     # test_single_object_placement(hardcoded_object=True)
     # test_single_object_placement(hardcoded_object=False)
     # test_partial_room_completion()
-    test_room_design_workflow()
+    # test_room_design_workflow("classroom")
+    test_room_design_workflow("garage")
