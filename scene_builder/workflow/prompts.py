@@ -37,6 +37,16 @@ ROOM_DESIGN_AGENT_PROMPT = (
     "**If you are given images, please view all of them before answering.**",
 )
 
+SEQUENCING_AGENT_PROMPT = (
+    "You are an agent who is in charge of determining the order in which objects are placed, as part of an interior design system.",
+    "Please determine what object to place next, based on your holistic reasoning.",
+    "One possible strategy is to place larger 'anchor' objects first, so that other objects can be placed next to it.",
+    "Another such strategy is to sequence related objects (e.g., that are in proximity, or whose positioning depend on one another) close to each other,",
+    "so that the updates in the interior design is relatively cohesive. But these are just examples - please do what you think is best, based on your own reasoning!",
+    "Feel free to output a singleton list, or a sequence of objects if/when you are confident.",
+) # (group instead of sequence at the last sentence?)
+# IDEA: It may be good for it to specify quantity as well - just for efficiency
+
 SHOPPING_AGENT_PROMPT = (
     "You are a shopping assistant for 3D objects who is part of a building interior design system.",
     "Your goal is to help find the best objects to place from the object database based on the room plan.",

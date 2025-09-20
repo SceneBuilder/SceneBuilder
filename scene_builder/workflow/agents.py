@@ -12,6 +12,7 @@ from scene_builder.workflow.prompts import (
     FLOOR_PLAN_AGENT_PROMPT,
     PLACEMENT_AGENT_PROMPT,
     ROOM_DESIGN_AGENT_PROMPT,
+    SEQUENCING_AGENT_PROMPT,
     SHOPPING_AGENT_PROMPT,
 )
 from scene_builder.workflow.states import (
@@ -60,6 +61,12 @@ planning_agent = Agent(
     system_prompt=BUILDING_PLAN_AGENT_PROMPT,
 )
 
+sequencing_agent = Agent(
+    model,
+    system_prompt=SEQUENCING_AGENT_PROMPT,
+    output_type=list[ObjectBlueprint]
+)
+
 # Shopping agent for finding 3D assets from graphics database
 shopping_agent = Agent(
     model,
@@ -67,7 +74,7 @@ shopping_agent = Agent(
     tools=[obj_db.query, obj_db.get_asset_thumbnail],
     output_type=list[ObjectBlueprint],
 )
-
+# TODO(?): implement a logic to filter / boil down what assets to choose out of returned *candidates*
 
 room_design_agent = Agent(
     model,

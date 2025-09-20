@@ -13,7 +13,7 @@ from scene_builder.definition.scene import Object, Room, Scene, Vector3
 # from scene_builder.nodes.placement import PlacementNode, VisualFeedback
 from scene_builder.nodes.placement import PlacementNode, PlacementVisualFeedback, placement_graph
 # from scene_builder.nodes.routing import DesignLoopRouter
-from scene_builder.workflow.agents import room_design_agent, shopping_agent
+from scene_builder.workflow.agents import room_design_agent, sequencing_agent, shopping_agent
 # from scene_builder.workflow.graphs import placement_graph # hopefully no circular import... -> BRUH.
 # from scene_builder.workflow.states import PlacementState, RoomDesignState
 from scene_builder.workflow.states import PlacementState, RoomDesignState, MainState
@@ -80,14 +80,25 @@ class RoomDesignNode(BaseNode[RoomDesignState]):
         # NOTE: not sure if VLM is going to repeat existing stuff in the ShoppingCart
         #       or skip them. (probably need to explicitly prompt to "pin" this behavior.)
 
-        # TODO: ask VLM what to deliberately think about what to place first
-        # (in general, larger "anchor" objects first, so that other objects can
-        # be placed relative to it.)
-        # "Please choose what to place next."
-        # what_to_place = NotImplementedError()
+        # # TEMP: choose the first item in the shopping cart
+        # what_to_place = ctx.state.shopping_cart[0]
 
-        # TEMP: choose the first item in the shopping cart
-        what_to_place = ctx.state.shopping_cart[0]
+        sequencing_user_prompt = (
+            str(ctx.state.shopping_cart)
+        )  # stuff to include:
+        # shopping cart content: names, thumbnails, metadata
+        # scene vizs that show room evolution history (?),
+        # ^ maybe some text that describe what was changed (like a commmit msg) is helpful?
+        # probably the room plan, 
+        # probably the visual feedback content (text) from prev iter
+        sequencing_response = await sequencing_agent.run(sequencing_user_prompt)
+        sequence = sequencing_response.output
+        what_to_place = sequence[0]
+        # NOTE: if it gives a multi-length sequence, maybe let's consume it all before consulting it again
+        #       (as long as it's not unreasonable - like it specifies the whole damn shopping cart. we can do sanity checks.)
+        console.print(
+            f"[bold cyan]Placing Next:[/] {what_to_place}"
+        )
 
         # NOTE: It would be interesting if the room design agent can "think" of
         #       certain opinions and feed it to PlacementNode as text guidance.
