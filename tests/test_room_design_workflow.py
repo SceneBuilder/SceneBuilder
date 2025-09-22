@@ -384,4 +384,6 @@ if __name__ == "__main__":
     # test_single_object_placement(hardcoded_object=False)
     # test_partial_room_completion()
     # test_room_design_workflow("classroom")
-    test_room_design_workflow("garage")
+    # test_room_design_workflow("garage")
+    # test_room_design_workflow("laboratory")
+    test_room_design_workflow("library")

@@ -37,6 +37,7 @@ class PlacementState(BaseModel):
         Object | ObjectBlueprint | Section
     )  # NOTE: maybe rename to `placeable`
     room_history: list[Room] = []  # NOTE: maybe rename to `history`
+    run_count: int = 0  # DEBUG - track iterations
 
 
 class PlacementAction(BaseModel):
