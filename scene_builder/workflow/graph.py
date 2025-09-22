@@ -7,11 +7,11 @@ from pydantic_ai.messages import ModelMessage
 
 from rich.console import Console
 
-from scene_builder.decoder import blender_decoder
+from scene_builder.decoder import blender
 from scene_builder.database.object import ObjectDatabase
 from scene_builder.definition.scene import Scene, Room, Object, Vector3, GlobalConfig
 from scene_builder.utils.conversions import pydantic_to_dict
-from scene_builder.workflow.agent import (
+from scene_builder.workflow.agents import (
     floor_plan_agent,
     floor_size_agent,
     placement_agent,
@@ -216,8 +216,8 @@ class PlacementAgent(BaseNode[PlacementState]):
 class VisualFeedback(BaseNode[PlacementState]):
     async def run(self, ctx: GraphRunContext[PlacementState]) -> PlacementAgent:
         room_data = pydantic_to_dict(ctx.state.room)
-        blender_decoder.parse_room_definition(room_data)
-        renders = blender_decoder.render_top_down()
+        blender.parse_room_definition(room_data)
+        renders = blender.render_top_down()
         prev_room = ctx.state.room
         prev_room.viz.append(renders)
         ctx.state.room_history.append(prev_room)

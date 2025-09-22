@@ -58,18 +58,18 @@ async def test_floor_plan_agent_rectangular_classroom():
                 # Create visual output with floor and walls
                 print(f"\n✓ Creating Blender scene with floor and walls...")
                 try:
-                    from scene_builder.decoder import blender_decoder
+                    from scene_builder.decoder import blender
                     from scene_builder.utils.conversions import pydantic_to_dict
 
                     room_data = pydantic_to_dict(room)
-                    blender_decoder.parse_room_definition(room_data)
+                    blender.parse_room_definition(room_data)
 
                     # Render top-down view
-                    render_path = blender_decoder.render_top_down("./")
+                    render_path = blender.render_top_down("./")
                     print(f"✓ Rendered image saved to: {render_path}")
 
                     # Save Blender scene
-                    blender_decoder.save_scene(f"{room.id}_with_walls.blend")
+                    blender.save_scene(f"{room.id}_with_walls.blend")
                     print(f"✓ Blender scene saved as: {room.id}_with_walls.blend")
 
                 except Exception as e:

@@ -10,7 +10,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from scene_builder.definition.scene import Vector2
-from scene_builder.decoder import blender_decoder
+from scene_builder.decoder import blender
 from scene_builder.tools.material_workflow import MaterialWorkflow, apply_floor_material
 
 
@@ -20,7 +20,7 @@ def test_material_workflow_integration():
     print("=== Testing Material Workflow Integration ===")
 
     # Clear any existing scene objects first
-    blender_decoder._clear_scene()
+    blender._clear_scene()
 
     # Create a floor mesh (same as test_floor_mesh.py)
     boundary = [
@@ -30,7 +30,7 @@ def test_material_workflow_integration():
         Vector2(x=4, y=-2),
     ]
 
-    floor_result = blender_decoder._create_floor_mesh(boundary, "test_material_room")
+    floor_result = blender._create_floor_mesh(boundary, "test_material_room")
     assert floor_result.get("status") == "success", "Floor mesh creation should succeed"
     print(f"✅ Floor mesh created successfully")
 
@@ -65,12 +65,12 @@ def test_material_workflow_integration():
         # This is expected if Graphics-DB server is not running
 
     # Save scene for inspection
-    blender_decoder.save_scene("test_material_workflow.blend")
+    blender.save_scene("test_material_workflow.blend")
     print("✅ Test scene saved")
 
     # Render top-down view
     try:
-        render_path = blender_decoder.render_top_down(".")
+        render_path = blender.render_top_down(".")
         print(f"✅ Top-down render saved: {render_path}")
     except Exception as e:
         print(f"⚠️  Top-down render failed: {e}")
@@ -120,7 +120,7 @@ def test_material_applicator_components():
     print("\n=== Testing Material Applicator Components ===")
 
     # Clear any existing scene objects first
-    blender_decoder._clear_scene()
+    blender._clear_scene()
 
     # Create a test floor first
     boundary = [
@@ -129,7 +129,7 @@ def test_material_applicator_components():
         Vector2(x=-2, y=-2),
         Vector2(x=2, y=-2),
     ]
-    floor_result = blender_decoder._create_floor_mesh(boundary, "test_applicator")
+    floor_result = blender._create_floor_mesh(boundary, "test_applicator")
 
     assert floor_result.get("status") == "success", "Test floor should be created"
 

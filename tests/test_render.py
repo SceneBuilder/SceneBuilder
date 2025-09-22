@@ -92,8 +92,8 @@ def test_template_loading():
     template_path = "test_assets/scenes/classroom.blend"
     assert Path(template_path).exists()
 
-    # with mock.patch("scene_builder.decoder.blender_decoder.load_template") as mock_load:
-    #     blender_decoder.load_template(template_path, clear_scene=True)
+    # with mock.patch("scene_builder.decoder.blender.load_template") as mock_load:
+    #     blender.load_template(template_path, clear_scene=True)
     #     mock_load.assert_called_once_with(template_path, clear_scene=True)
 
     blender.load_template(template_path, clear_scene=True)
