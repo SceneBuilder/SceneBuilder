@@ -41,7 +41,7 @@ class ObjectDatabase:
         """
         logger.debug(f"ObjectDatabase.query called with query='{query}', top_k={top_k}")
         response = requests.get(
-            f"{GDB_API_BASE_URL}/v0/assets/search",
+            f"{GDB_API_BASE_URL}/v0/objects/search",
             params={"query": query,
                     "top_k": top_k,
                     "validate_scale": True},
@@ -52,7 +52,7 @@ class ObjectDatabase:
             assets = AssetListAdapter.validate_json(response.text)
             # assets = AssetListAdapter.validate_json(response.text.replace("uid", "source_id"))
             thumbnails = requests.post(
-                f"{GDB_API_BASE_URL}/v0/assets/thumbnails",
+                f"{GDB_API_BASE_URL}/v0/objects/thumbnails",
                 json={"asset_uids": [asset.uid for asset in assets]},
             ).json()
             results = []
@@ -91,7 +91,7 @@ class ObjectDatabase:
         logger.debug(f"ObjectDatabase.get_asset_thumbnails called with {len(asset_uids)} asset_uids: {asset_uids}")
         try:
             response = requests.post(
-                f"{GDB_API_BASE_URL}/v0/assets/thumbnails",
+                f"{GDB_API_BASE_URL}/v0/objects/thumbnails",
                 json={"asset_uids": asset_uids},
                 timeout=30
             )
@@ -140,7 +140,7 @@ class ObjectDatabase:
         """
         # Search for assets
         assets_response = requests.get(
-            f"{GDB_API_BASE_URL}/v0/assets/search",
+            f"{GDB_API_BASE_URL}/v0/objects/search",
             params={"query": query_text},
         )
         # logger.debug(f"Query: {query_text}. Response: {assets_response}")
@@ -148,7 +148,7 @@ class ObjectDatabase:
 
         # Create report (with thumbnails and metadata to help VLM's decision making)
         report_response = requests.get(
-            f"{GDB_API_BASE_URL}/v0/assets/report",
+            f"{GDB_API_BASE_URL}/v0/objects/report",
             params={"asset_uids": [asset["uid"] for asset in assets],
                     "image_format": "path"},  # this probably renders `flatten_markdown_images()` useless
         )
@@ -175,7 +175,7 @@ class ObjectDatabase:
         try:
             # WARN: the by_uids endpoint does not exist in `graphics-db`. 
             # response = requests.post(
-            #     f"{API_BASE_URL}/v0/assets/by_uids",
+            #     f"{API_BASE_URL}/v0/objects/by_uids",
             #     json={"asset_uids": uids},
             #     timeout=30
             # )

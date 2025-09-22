@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from pydantic_ai import Agent
 from pydantic_ai.messages import BinaryContent
 
+from scene_builder.config import TEST_ASSET_DIR
 from scene_builder.utils.pai import (
     transform_paths_to_binary,
     transform_markdown_to_messages,
@@ -23,7 +24,7 @@ def test_transform_paths_to_binary_with_pydantic_ai(llm_agent: Agent):
     agent = llm_agent
 
     # Define the query with a path to our dummy image
-    image_path = Path("test_assets/images/red_pixel.png")
+    image_path = Path(f"{TEST_ASSET_DIR}/images/red_pixel.png")
     query = ImageQuery(
         image_path=image_path,
         prompt="What color is this image?",

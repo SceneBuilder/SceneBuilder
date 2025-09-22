@@ -20,7 +20,7 @@ def import_object(object_uid: str, source="cache") -> str:
 
     if source == "cache":
         response = requests.get(
-            f"{GDB_API_BASE_URL}/v0/assets/locate/{object_uid}/glb",
+            f"{GDB_API_BASE_URL}/v0/objects/locate/{object_uid}/glb",
         )
         path = response.json()["path"]
         assert Path(path).exists()
