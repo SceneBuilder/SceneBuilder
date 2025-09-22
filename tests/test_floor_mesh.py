@@ -1,11 +1,5 @@
 import pytest
 from pathlib import Path
-# from scene_builder.workflow.graph import VisualFeedback
-# from scene_builder.workflow.state import PlacementState
-# from scene_builder.definition.scene import Room, Object, Vector2, Vector3
-# from scene_builder.definition.plan import RoomPlan
-# from scene_builder.decoder import blender
-
 from scene_builder.definition.scene import Vector2
 from scene_builder.decoder import blender
 

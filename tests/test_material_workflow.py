@@ -19,29 +19,41 @@ def test_material_workflow_integration():
 
     print("=== Testing Material Workflow Integration ===")
 
-    # Clear any existing scene objects first
     blender._clear_scene()
 
-    # Create a floor mesh (same as test_floor_mesh.py)
     boundary = [
-        Vector2(x=4, y=2),
-        Vector2(x=-4, y=2),
-        Vector2(x=-4, y=-2),
-        Vector2(x=4, y=-2),
+        # Vector2(x=10, y=10),
+        # Vector2(x=-10, y=10),
+        # Vector2(x=-10, y=-10),
+        # Vector2(x=10, y=-10),
+
+        Vector2(x=5, y=5),
+        Vector2(x=-5, y=5),
+        Vector2(x=-5, y=-5),
+        Vector2(x=5, y=-5),
+
+
+        # Vector2(x=1, y=1),
+        # Vector2(x=-1, y=1),
+        # Vector2(x=-1, y=-1),
+        # Vector2(x=1, y=-1),
     ]
 
     floor_result = blender._create_floor_mesh(boundary, "test_material_room")
     assert floor_result.get("status") == "success", "Floor mesh creation should succeed"
-    print(f"✅ Floor mesh created successfully")
 
-    # Apply material using the workflow
-    material_result = apply_floor_material("wood floor", uv_scale=2.0)
+    boundary_tuples = [(point.x, point.y) for point in boundary]
+    bounds = blender._calculate_bounds(boundary_tuples)
+    current_size = max(bounds["width"], bounds["height"])
+    reference_size = 10.0  # 10x10 room -> uv_scale=30.0 base
+    reference_uv_scale = 30.0
+    calculated_uv_scale = reference_uv_scale * (current_size / reference_size)
+    
+    material_result = apply_floor_material("wood floor", uv_scale=calculated_uv_scale)
 
-    # Check results
     print(f"Material workflow result: {material_result}")
 
     # The workflow should attempt to find materials and apply them
-    # Even if Graphics-DB is not running, it should handle the error gracefully
     assert isinstance(material_result, dict), "Should return results dictionary"
     assert "success" in material_result, "Should have success status"
     assert "query" in material_result, "Should record the query"
@@ -51,7 +63,7 @@ def test_material_workflow_integration():
 
     if material_result["success"]:
         print(
-            f"✅ Successfully applied material to {material_result['floors_textured']} floors"
+            f"Successfully applied material to {material_result['floors_textured']} floors"
         )
         assert material_result["floors_textured"] > 0, (
             "Should have textured at least one floor"
@@ -62,40 +74,36 @@ def test_material_workflow_integration():
     else:
         print(f"⚠️  Material application failed (expected if Graphics-DB not running)")
         print(f"   Errors: {material_result['errors']}")
-        # This is expected if Graphics-DB server is not running
 
-    # Save scene for inspection
     blender.save_scene("test_material_workflow.blend")
-    print("✅ Test scene saved")
+    print("Test scene saved")
 
-    # Render top-down view
     try:
         render_path = blender.render_top_down(".")
-        print(f"✅ Top-down render saved: {render_path}")
+        print(f"Top-down render saved: {render_path}")
     except Exception as e:
         print(f"⚠️  Top-down render failed: {e}")
 
 
 def test_graphics_db_client():
-    """Test the Graphics-DB client (may fail if server not running)."""
+    """Test the Graphics-DB client (fail if server not running)."""
     from scene_builder.tools.graphics_db_client import GraphicsDBClient
 
     print("\n=== Testing Graphics-DB Client ===")
 
     client = GraphicsDBClient()
 
-    # Test search (will fail gracefully if server not running)
+    # Test search 
     materials = client.search_materials("wood floor", top_k=3)
 
-    # Should return empty list if server not available
     assert isinstance(materials, list), "Should return list even if empty"
 
     print(f"Found {len(materials)} materials")
 
     if materials:
-        print("✅ Graphics-DB server is running and returned materials")
+        print("Graphics-DB server is running and returned materials")
 
-        # Test material structure
+        # material structure
         material = materials[0]
         assert "uid" in material, "Material should have uid"
         print(f"   First material UID: {material['uid']}")
@@ -106,9 +114,9 @@ def test_graphics_db_client():
 
         if texture_path:
             assert Path(texture_path).exists(), "Downloaded texture should exist"
-            print(f"✅ Successfully downloaded texture: {texture_path}")
+            print(f"Successfully downloaded texture: {texture_path}")
         else:
-            print("⚠️  Texture download failed")
+            print("⚠️ Texture download failed")
     else:
         print("⚠️  No materials found (Graphics-DB server may not be running)")
 
@@ -171,10 +179,10 @@ if __name__ == "__main__":
         test_graphics_db_client()
         test_material_applicator_components()
 
-        print("\n🎉 All tests completed successfully!")
+        print("\n All tests completed successfully")
 
     except Exception as e:
-        print(f"\n❌ Test failed with error: {e}")
+        print(f"\n⚠️ Test failed with error: {e}")
         import traceback
 
         traceback.print_exc()

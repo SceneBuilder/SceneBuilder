@@ -259,7 +259,7 @@ def _create_object(obj_data: dict[str, Any], parent_location: str = "origin"):
 def _create_floor_mesh(
     boundary: list[dict[str, float]],
     room_id: str,
-    floor_thickness_m: float = 0.5,
+    floor_thickness_m: float = 0.1,
     origin: str = "center",
     llm_metadata: dict[str, Any] = None,
 ) -> dict[str, Any]:
