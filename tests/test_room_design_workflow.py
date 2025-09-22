@@ -4,6 +4,7 @@ from pathlib import Path
 
 from pydantic_graph import GraphRunResult
 
+from scene_builder.config import TEST_ASSET_DIR
 from scene_builder.database.object import ObjectDatabase
 from scene_builder.decoder import blender
 from scene_builder.definition.scene import Object, ObjectBlueprint, Room, Vector2, Scene
@@ -283,7 +284,7 @@ def test_single_object_placement(hardcoded_object=True):
         what_to_place=object,
     )
 
-    blender.load_template("test_assets/scenes/classroom.blend", clear_scene=True)
+    blender.load_template(f"{TEST_ASSET_DIR}/scenes/classroom.blend", clear_scene=True)
 
     async def run_graph():
         # return await room_design_graph.run(PlacementAgent(), state=initial_state)
