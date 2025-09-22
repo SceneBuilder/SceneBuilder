@@ -57,7 +57,79 @@ The remaining wall space is dedicated to storage and identity. It is a vertical 
 GARAGE_ROOM_DESCRIPTION = """\
 ### A sportscar garage
 
-The garage has a diverse set of sports car in a grid layout. 
+The garage has a diverse set of sports car in a grid layout.
+"""
+
+KITCHEN_ROOM_DESCRIPTION = """\
+A modern residential kitchen with central island, full appliances, and ample counter space for cooking and meal preparation.
+"""
+
+BEDROOM_ROOM_DESCRIPTION = """\
+A cozy master bedroom with a queen bed, nightstands, dresser, and reading chair by the window.
+"""
+
+OFFICE_ROOM_DESCRIPTION = """\
+A home office setup with desk, office chair, bookshelf, filing cabinet, and computer workstation.
+"""
+
+LIVING_ROOM_DESCRIPTION = """\
+A comfortable living room with sectional sofa, coffee table, TV entertainment center, and accent lighting.
+"""
+
+BATHROOM_ROOM_DESCRIPTION = """\
+A full bathroom with toilet, sink vanity, bathtub/shower combo, and storage cabinet.
+"""
+
+DINING_ROOM_DESCRIPTION = """\
+A formal dining room with dining table for 6, matching chairs, sideboard, and chandelier.
+"""
+
+LIBRARY_ROOM_DESCRIPTION = """\
+A quiet library space with wall-to-wall bookshelves, reading tables, comfortable armchairs, and study lamps.
+"""
+
+GYM_ROOM_DESCRIPTION = """\
+A home gym with exercise equipment including treadmill, weight rack, exercise bike, and yoga mats.
+"""
+
+RESTAURANT_KITCHEN_DESCRIPTION = """\
+A commercial restaurant kitchen with industrial equipment, prep stations, walk-in cooler, and service line.
+"""
+
+RETAIL_STORE_DESCRIPTION = """\
+A retail clothing store with display racks, fitting rooms, checkout counter, and mannequins.
+"""
+
+HOSPITAL_ROOM_DESCRIPTION = """\
+A hospital patient room with medical bed, monitoring equipment, visitor chairs, and medical supply cabinet.
+"""
+
+LABORATORY_DESCRIPTION = """\
+A scientific laboratory with lab benches, fume hoods, microscopes, centrifuges, and chemical storage.
+"""
+
+WAREHOUSE_DESCRIPTION = """\
+A storage warehouse with industrial shelving units, pallet racks, loading dock area, and forklift.
+"""
+
+CONFERENCE_ROOM_DESCRIPTION = """\
+A corporate conference room with large table, office chairs, projector screen, and presentation equipment.
+"""
+
+ART_GALLERY_DESCRIPTION = """\
+An art gallery space with white walls, track lighting, display pedestals, and artwork hanging systems.
+"""
+
+BAR_DESCRIPTION = """\
+A cocktail bar with bar counter, stools, liquor shelves, draft beer taps, and lounge seating area.
+"""
+
+THEATER_BACKSTAGE_DESCRIPTION = """\
+A theater backstage area with costume racks, makeup stations, prop storage, and quick-change areas.
+"""
+
+FACTORY_FLOOR_DESCRIPTION = """\
+A manufacturing floor with assembly line equipment, workstations, tool storage, and safety equipment.
 """
 
 SMALL_RECTANGULAR_BOUNDARY = [
@@ -65,6 +137,27 @@ SMALL_RECTANGULAR_BOUNDARY = [
     Vector2(x=-4.0, y=2.0),
     Vector2(x=-4.0, y=-2.0),
     Vector2(x=4.0, y=-2.0),
+]
+
+LARGE_RECTANGULAR_BOUNDARY = [
+    Vector2(x=6.0, y=4.0),
+    Vector2(x=-6.0, y=4.0),
+    Vector2(x=-6.0, y=-4.0),
+    Vector2(x=6.0, y=-4.0),
+]
+
+SQUARE_BOUNDARY = [
+    Vector2(x=3.0, y=3.0),
+    Vector2(x=-3.0, y=3.0),
+    Vector2(x=-3.0, y=-3.0),
+    Vector2(x=3.0, y=-3.0),
+]
+
+COMMERCIAL_BOUNDARY = [
+    Vector2(x=8.0, y=6.0),
+    Vector2(x=-8.0, y=6.0),
+    Vector2(x=-8.0, y=-6.0),
+    Vector2(x=8.0, y=-6.0),
 ]
 
 # Test cases dictionary mapping case names to room descriptions and boundaries
@@ -76,8 +169,98 @@ TEST_CASES = {
     },
     "garage": {
         "description": GARAGE_ROOM_DESCRIPTION,
-        "boundary": SMALL_RECTANGULAR_BOUNDARY,
+        "boundary": LARGE_RECTANGULAR_BOUNDARY,
         "room_id": "garage-01",
+    },
+    "kitchen": {
+        "description": KITCHEN_ROOM_DESCRIPTION,
+        "boundary": LARGE_RECTANGULAR_BOUNDARY,
+        "room_id": "kitchen-01",
+    },
+    "bedroom": {
+        "description": BEDROOM_ROOM_DESCRIPTION,
+        "boundary": SMALL_RECTANGULAR_BOUNDARY,
+        "room_id": "bedroom-01",
+    },
+    "office": {
+        "description": OFFICE_ROOM_DESCRIPTION,
+        "boundary": SMALL_RECTANGULAR_BOUNDARY,
+        "room_id": "office-01",
+    },
+    "living_room": {
+        "description": LIVING_ROOM_DESCRIPTION,
+        "boundary": LARGE_RECTANGULAR_BOUNDARY,
+        "room_id": "living-room-01",
+    },
+    "bathroom": {
+        "description": BATHROOM_ROOM_DESCRIPTION,
+        "boundary": SQUARE_BOUNDARY,
+        "room_id": "bathroom-01",
+    },
+    "dining_room": {
+        "description": DINING_ROOM_DESCRIPTION,
+        "boundary": SMALL_RECTANGULAR_BOUNDARY,
+        "room_id": "dining-room-01",
+    },
+    "library": {
+        "description": LIBRARY_ROOM_DESCRIPTION,
+        "boundary": LARGE_RECTANGULAR_BOUNDARY,
+        "room_id": "library-01",
+    },
+    "gym": {
+        "description": GYM_ROOM_DESCRIPTION,
+        "boundary": LARGE_RECTANGULAR_BOUNDARY,
+        "room_id": "gym-01",
+    },
+    "restaurant_kitchen": {
+        "description": RESTAURANT_KITCHEN_DESCRIPTION,
+        "boundary": COMMERCIAL_BOUNDARY,
+        "room_id": "restaurant-kitchen-01",
+    },
+    "retail_store": {
+        "description": RETAIL_STORE_DESCRIPTION,
+        "boundary": COMMERCIAL_BOUNDARY,
+        "room_id": "retail-store-01",
+    },
+    "hospital_room": {
+        "description": HOSPITAL_ROOM_DESCRIPTION,
+        "boundary": LARGE_RECTANGULAR_BOUNDARY,
+        "room_id": "hospital-room-01",
+    },
+    "laboratory": {
+        "description": LABORATORY_DESCRIPTION,
+        "boundary": COMMERCIAL_BOUNDARY,
+        "room_id": "laboratory-01",
+    },
+    "warehouse": {
+        "description": WAREHOUSE_DESCRIPTION,
+        "boundary": COMMERCIAL_BOUNDARY,
+        "room_id": "warehouse-01",
+    },
+    "conference_room": {
+        "description": CONFERENCE_ROOM_DESCRIPTION,
+        "boundary": LARGE_RECTANGULAR_BOUNDARY,
+        "room_id": "conference-room-01",
+    },
+    "art_gallery": {
+        "description": ART_GALLERY_DESCRIPTION,
+        "boundary": COMMERCIAL_BOUNDARY,
+        "room_id": "art-gallery-01",
+    },
+    "bar": {
+        "description": BAR_DESCRIPTION,
+        "boundary": LARGE_RECTANGULAR_BOUNDARY,
+        "room_id": "bar-01",
+    },
+    "theater_backstage": {
+        "description": THEATER_BACKSTAGE_DESCRIPTION,
+        "boundary": LARGE_RECTANGULAR_BOUNDARY,
+        "room_id": "theater-backstage-01",
+    },
+    "factory_floor": {
+        "description": FACTORY_FLOOR_DESCRIPTION,
+        "boundary": COMMERCIAL_BOUNDARY,
+        "room_id": "factory-floor-01",
     }
 }
 
