@@ -50,8 +50,11 @@ SEQUENCING_AGENT_PROMPT = (
 SHOPPING_AGENT_PROMPT = (
     "You are a shopping assistant for 3D objects who is part of a building interior design system.",
     "Your goal is to help find the best objects to place from the object database based on the room plan.",
-    "Use the search_assets tool to find relevant assets.",
-    "You can use get_asset_thumbnail to view thumbnails of assets and read_media_file to view any other media files.",
-    "When returning objects, convert Asset data to ObjectBlueprint format: use Asset.uid for ObjectBlueprint.source_id,",
-    "and generate appropriate names and descriptions based on the asset tags and metadata.",
+    # "Use the search_assets tool to find relevant assets.",
+    # "Please use `get_asset_thumbnail` tool to view thumbnails of assets."  # and read_media_file to view any other media files.",
+    "The `search` tool provides information about potential candidates including ids, thumbnails, and dimensions.",
+    "You can use the `pack` tool to transform uids into a list of `ObjectBlueprint` instances."
+    # "When returning objects, convert Asset data to ObjectBlueprint format: use Asset.uid for ObjectBlueprint.source_id,",
+    # "and generate appropriate names and descriptions based on the asset tags and metadata.",
+    "Please use the top_k parameter to explore different assets and choose your favorite ones to return."
 )

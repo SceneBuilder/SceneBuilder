@@ -71,10 +71,18 @@ sequencing_agent = Agent(
 shopping_agent = Agent(
     model,
     system_prompt=SHOPPING_AGENT_PROMPT,
-    tools=[obj_db.query, obj_db.get_asset_thumbnail],
-    output_type=list[ObjectBlueprint],
+    # tools=[obj_db.query, obj_db.get_asset_thumbnail],  # old
+    tools=[obj_db.search, obj_db.pack],  # new(?) - candidate
+    # output_type=list[ObjectBlueprint],
+    output_type=list[ObjectBlueprint],  # TEMP - only for tests
 )
 # TODO(?): implement a logic to filter / boil down what assets to choose out of returned *candidates*
+# TODO: make sure that the markdown report generated from `obj_db.search()` undergoes proper processing
+#       of multimedia data - in other words, make sure that the VLM is able to *see* the thumbnails.
+#       This is because multimedia content within user prompt seems to undergo proper processing, but 
+#       those within system prompt does not seem to. The tool call result probably will have a separate
+#       channel of communication (how it is stored in the conversation history, and how that conversation history
+#       transforms into LLM API calls). This can be seen by debugging thru PydAI's source code and inspecting Logfire. 
 
 room_design_agent = Agent(
     model,

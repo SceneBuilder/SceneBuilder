@@ -31,7 +31,9 @@ def is_graphics_db_available():
 async def test_shopping_agent_real_api():
     """Test ShoppingAgent with real graphics database API calls."""
     # Run the agent with a simple query
-    result = await shopping_agent.run("Find a modern sofa for the living room")
+    # result = await shopping_agent.run("Find a modern sofa for the living room")
+    # result = await shopping_agent.run("Find a modern sofa for the living room, and explain your reasoning of why you chose it. Also, please describe its color in the description.")  # DEBUG
+    result = await shopping_agent.run("Find a modern sofa for the living room. Please describe its appearance in great detail.")  # DEBUG
 
     objects = result.output
 
@@ -127,14 +129,14 @@ if __name__ == "__main__":
         # Run async tests
         async def run_async_tests():
             await test_shopping_agent_real_api()
-            await test_shopping_agent_with_thumbnails()
+            # await test_shopping_agent_with_thumbnails()
             print("All async tests passed!")
 
         asyncio.run(run_async_tests())
 
         # Run sync tests
-        test_asset_search_tool_directly()
-        test_asset_thumbnail_tool_directly()
+        # test_asset_search_tool_directly()
+        # test_asset_thumbnail_tool_directly()
         # test_shopping_agent_tools_available()
         print("All sync tests passed!")
     else:

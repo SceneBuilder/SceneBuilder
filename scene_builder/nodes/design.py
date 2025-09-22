@@ -99,6 +99,10 @@ class RoomDesignNode(BaseNode[RoomDesignState]):
         console.print(
             f"[bold cyan]Placing Next:[/] {what_to_place}"
         )
+        # Remove the object (blueprint) from shopping cart to prevent excessive repeats
+        # NOTE: since the shopping cart does not have a quantity property, we assume quantity=1 for now
+        idx = next((i for i, obj in enumerate(ctx.state.shopping_cart) if obj == what_to_place), None)
+        ctx.state.shopping_cart.pop(idx)
 
         # NOTE: It would be interesting if the room design agent can "think" of
         #       certain opinions and feed it to PlacementNode as text guidance.
@@ -107,6 +111,8 @@ class RoomDesignNode(BaseNode[RoomDesignState]):
             room_plan=ctx.state.room_plan,
             what_to_place=what_to_place,
         )
+
+        # PROBLEM(?): placement_graph runs for extended periods and places multiple objects. 
 
         placement_subgraph_response = await placement_graph.run(
             PlacementNode(), state=placement_state

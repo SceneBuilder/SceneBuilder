@@ -10,7 +10,7 @@ from graphics_db_server.schemas.asset import Asset
 
 from scene_builder import API_BASE_URL
 from scene_builder.definition.scene import ObjectBlueprint
-# from scene_builder.utils.conversions import rename_key
+from scene_builder.utils.pai import transform_markdown_to_messages
 
 
 AssetListAdapter = TypeAdapter(list[Asset])
@@ -51,6 +51,10 @@ class ObjectDatabase:
             response.raise_for_status()
             assets = AssetListAdapter.validate_json(response.text)
             # assets = AssetListAdapter.validate_json(response.text.replace("uid", "source_id"))
+            thumbnails = requests.post(
+                f"{API_BASE_URL}/v0/assets/thumbnails",
+                json={"asset_uids": [asset.uid for asset in assets]},
+            ).json()
             results = []
             for asset in assets:
                 results.append(
@@ -61,7 +65,7 @@ class ObjectDatabase:
                         # source=asset.source,
                         source="objaverse",  # TEMP HACK
                         description="",  # TODO: use VLM to add desc, or source from DB?
-                        extra_info={"tags": asset.tags},
+                        extra_info={"tags": asset.tags, "thumbnails": [thumbnails[asset.uid]]},
                     )
                 )
             logger.debug(f"ObjectDatabase.query returning {len(results)} object blueprints")
@@ -127,3 +131,84 @@ class ObjectDatabase:
                 raise ValueError(f"Failed to decode thumbnail for asset {asset_uid}: {e}")
         else:
             raise ValueError(f"Thumbnail not found for asset {asset_uid}")
+
+    # def generate_report(query_text, output_dir: Path = "logs") -> str:  # TEMP TODO: import dir from config
+    def search(self, query_text: str, for_vlm=True) -> str | list[str | BinaryContent]:  # TEMP TODO: import dir from config
+        """
+        Searches the object database with given query and returns a report with 
+        object id, thumbnails, and metadata of candidates, for downstream selection.
+        """
+        # Search for assets
+        assets_response = requests.get(
+            f"{API_BASE_URL}/v0/assets/search",
+            params={"query": query_text},
+        )
+        # logger.debug(f"Query: {query_text}. Response: {assets_response}")
+        assets = assets_response.json()
+
+        # Create report (with thumbnails and metadata to help VLM's decision making)
+        report_response = requests.get(
+            f"{API_BASE_URL}/v0/assets/report",
+            params={"asset_uids": [asset["uid"] for asset in assets],
+                    "image_format": "path"},  # this probably renders `flatten_markdown_images()` useless
+        )
+        report = report_response.json()
+        # logger.debug("Generated search report in markdown")
+
+        # # Transform thumbnail URLs into local paths
+        # report = flatten_markdown_images(report, output_dir)
+        # print("Transformed thumbnail URLs into local paths")  # TODO: → logger
+        if for_vlm:
+            return transform_markdown_to_messages(report)
+        else:
+            return report
+
+    def pack(self, uids: list[str]) -> list[ObjectBlueprint]:  # or export(), or finalize(), or *_objects(), or *_object_blueprints()
+        """
+        Returns a list of `ObjectBlueprint`s given a list of uids.
+        """
+        logger.debug(f"ObjectDatabase.pack called with {len(uids)} uids: {uids}")
+
+        if not uids:
+            return []
+
+        try:
+            # WARN: the by_uids endpoint does not exist in `graphics-db`. 
+            # response = requests.post(
+            #     f"{API_BASE_URL}/v0/assets/by_uids",
+            #     json={"asset_uids": uids},
+            #     timeout=30
+            # )
+            # response.raise_for_status()
+            # assets = AssetListAdapter.validate_json(response.text)
+
+            results = []
+            # for asset in assets:  # ORIG
+            #     results.append(
+            #         ObjectBlueprint(
+            #             name=asset.uid,  # TEMP HACK
+            #             source_id=asset.uid,
+            #             source="objaverse",  # TEMP HACK
+            #             description="",  # TODO: use VLM to add desc, or source from DB?
+            #             extra_info={"tags": asset.tags},
+            #         )
+            #     )
+            for uid in uids:  # TEMP HACK
+                results.append(
+                    ObjectBlueprint(
+                        name=uid,  # TEMP HACK
+                        source_id=uid,
+                        source="objaverse",  # TEMP HACK
+                        description="",  # TODO: use VLM to add desc, or source from DB?
+                        extra_info={"tags": []},  # TEMP HACK
+                    )
+                )
+            logger.debug(f"ObjectDatabase.pack returning {len(results)} object blueprints")
+            return results
+
+        except requests.exceptions.RequestException as e:
+            print(f"Request failed: {e}")
+            return []
+        except ValidationError as e:
+            print(f"Data validation failed: {e}")
+            return []
