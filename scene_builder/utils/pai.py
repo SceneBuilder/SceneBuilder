@@ -1,26 +1,44 @@
 import mimetypes
 import os
+import re
 from pathlib import Path
-from typing import Any, List, Optional, Type, TypeVar
+from typing import Any, TypeVar
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from pydantic_ai.messages import BinaryContent
 
-# --- 1. Define constants and the main transformation function ---
 
 # A set of common media file extensions to look for.
 MEDIA_EXTENSIONS = {
     # Images
-    '.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.webp', '.svg',
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".gif",
+    ".bmp",
+    ".tiff",
+    ".webp",
+    ".svg",
     # Video
-    '.mp4', '.mov', '.avi', '.mkv', '.webm',
+    ".mp4",
+    ".mov",
+    ".avi",
+    ".mkv",
+    ".webm",
     # Audio
-    '.mp3', '.wav', '.ogg', '.flac', '.aac',
+    ".mp3",
+    ".wav",
+    ".ogg",
+    ".flac",
+    ".aac",
     # Documents
-    '.pdf', '.doc', '.docx'
+    ".pdf",
+    ".doc",
+    ".docx",
 }
 
-T = TypeVar('T', bound=BaseModel)
+T = TypeVar("T", bound=BaseModel)
+
 
 def transform_paths_to_binary(model_instance: T) -> T:
     """
@@ -47,15 +65,14 @@ def transform_paths_to_binary(model_instance: T) -> T:
                 _, extension = os.path.splitext(str(value).lower())
                 if extension in MEDIA_EXTENSIONS and os.path.exists(value):
                     # Read the file in binary mode
-                    with open(value, 'rb') as f:
+                    with open(value, "rb") as f:
                         content = f.read()
 
                     # Guess the MIME type from the filename
                     mime_type, _ = mimetypes.guess_type(str(value))
 
                     return BinaryContent(
-                        data=content,
-                        media_type=mime_type or 'application/octet-stream'
+                        data=content, media_type=mime_type or "application/octet-stream"
                     )
             except (IOError, OSError) as e:
                 # If file is unreadable, return the original path
@@ -88,71 +105,40 @@ def transform_paths_to_binary(model_instance: T) -> T:
     # Start the transformation on the top-level model instance
     return _recursive_transform(model_instance)
 
-# --- 3. Example Usage ---
 
-if __name__ == "__main__":
-    from pathlib import Path
+def transform_markdown_to_messages(markdown: str) -> list[str | BinaryContent]:
+    """
+    Converts markdown text to a list of messages, replacing image references with BinaryContent.
 
-    # Create some dummy media files for the demonstration
-    with open("profile_pic.jpg", "wb") as f:
-        f.write(b"dummy_jpeg_data")
-    with open("intro.mp4", "wb") as f:
-        f.write(b"dummy_mp4_data")
-    with open("resume.pdf", "wb") as f:
-        f.write(b"dummy_pdf_data")
+    Parses markdown text line by line, detecting image references in the format
+    ![alt_text](file_path) and converting them to BinaryContent objects when the
+    referenced file exists and is a supported media type. Non-image lines are
+    returned as strings unchanged.
 
-    # Define example Pydantic models, including nested and recursive structures
-    class MediaItem(BaseModel):
-        description: str
-        file_path: str
+    Args:
+        markdown (str): Markdown text containing potential image references
 
-    class UserProfile(BaseModel):
-        username: str
-        avatar_path: Any
-        other_media: List[MediaItem]
-        unrelated_field: int = 42
+    Returns:
+        list[str | BinaryContent]: List where image references are replaced with
+        BinaryContent objects and other lines remain as strings
+    """
+    lines = markdown.split("\n")
 
-    class Project(BaseModel):
-        project_name: str
-        owner: UserProfile
-        attachments: dict[str, str]
+    for i, line in enumerate(lines):
+        match = re.match(r"!\[([^\]]*)\]\(([^)]+)\)", line)
+        if match:
+            alt_text, path = match.groups()
+            # Get file extension from the actual path
+            _, extension = os.path.splitext(path.lower())
+            if extension in MEDIA_EXTENSIONS and os.path.exists(path):
+                # Read the file in binary mode
+                with open(path, "rb") as f:
+                    content = f.read()
+                mime_type, _ = mimetypes.guess_type(path)
+                lines[i] = BinaryContent(
+                    data=content,
+                    media_type=mime_type or "application/octet-stream",
+                    identifier=alt_text,
+                )
 
-    # Create an instance of the Pydantic model with file paths
-    project_data = Project(
-        project_name="AI Agent Demo",
-        owner=UserProfile(
-            username="testuser",
-            avatar_path=Path("profile_pic.jpg"),
-            other_media=[
-                MediaItem(description="My introduction video", file_path="intro.mp4"),
-                MediaItem(description="A non-existent file", file_path="missing.png"),
-            ]
-        ),
-        attachments={
-            "main_resume": "resume.pdf",
-            "cover_letter": "letter.txt" # This will not be transformed
-        }
-    )
-
-    print("--- Original Pydantic Model ---")
-    print(project_data.model_dump_json(indent=2))
-
-    # Run the transformation function
-    transformed_project = transform_paths_to_binary(project_data)
-
-    print("\n--- Transformed Pydantic Model ---")
-    # Note: The output will now show BinaryContent objects instead of paths.
-    # Pydantic's default __repr__ for the model will be used.
-    print(transformed_project)
-
-    print("\n--- Verifying Transformed Content ---")
-    print(f"Owner's Avatar: {transformed_project.owner.avatar_path}")
-    print(f"First Media Item: {transformed_project.owner.other_media[0].file_path}")
-    print(f"Resume Attachment: {transformed_project.attachments['main_resume']}")
-    print(f"Untouched text file: {transformed_project.attachments['cover_letter']}")
-
-
-    # Clean up the dummy files
-    os.remove("profile_pic.jpg")
-    os.remove("intro.mp4")
-    os.remove("resume.pdf")
+    return lines

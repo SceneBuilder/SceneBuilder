@@ -3,18 +3,19 @@ import requests
 from graphics_db_server.schemas.asset import Asset
 from pydantic_ai import BinaryContent
 
+from scene_builder.config import GDB_API_BASE_URL
+from scene_builder.database.object import ObjectDatabase
 from scene_builder.definition.scene import Object, Vector3
 from scene_builder.workflow.agents import shopping_agent
 
-
-API_BASE_URL = "http://localhost:2692/api/v0"
+obj_db = ObjectDatabase()
 
 
 def is_graphics_db_available():
     """Check if the graphics database server is available."""
     try:
         response = requests.get(
-            f"{API_BASE_URL}/assets/search?query=test&top_k=1", timeout=5
+            f"{GDB_API_BASE_URL}/assets/search?query=test&top_k=1", timeout=5
         )
         return response.status_code == 200
     except (requests.exceptions.RequestException, ConnectionError):
@@ -28,7 +29,9 @@ def is_graphics_db_available():
 async def test_shopping_agent_real_api():
     """Test ShoppingAgent with real graphics database API calls."""
     # Run the agent with a simple query
-    result = await shopping_agent.run("Find a modern sofa for the living room")
+    # result = await shopping_agent.run("Find a modern sofa for the living room")
+    # result = await shopping_agent.run("Find a modern sofa for the living room, and explain your reasoning of why you chose it. Also, please describe its color in the description.")  # DEBUG
+    result = await shopping_agent.run("Find a modern sofa for the living room. Please describe its appearance in great detail.")  # DEBUG
 
     objects = result.output
 
@@ -73,10 +76,9 @@ async def test_shopping_agent_with_thumbnails():
 @pytest.mark.skipif(not is_graphics_db_available())
 def test_asset_search_tool_directly():
     """Test the search_assets tool directly with real API."""
-    from scene_builder.tools.asset_search import search_assets
 
     # Test basic search
-    assets = search_assets("chair", top_k=3)
+    assets = obj_db.query("chair", top_k=3)
 
     # Verify the result
     assert isinstance(assets, list)
@@ -93,15 +95,14 @@ def test_asset_search_tool_directly():
 )
 def test_asset_thumbnail_tool_directly():
     """Test the get_asset_thumbnail tool directly with real API."""
-    from scene_builder.tools.asset_search import get_asset_thumbnail, search_assets
 
     # First search for some assets to get UIDs
-    assets = search_assets("chair", top_k=1)
+    assets = obj_db.query("chair", top_k=1)
     if not assets:
         pytest.skip("No assets found to test thumbnails")
 
     # Test thumbnail retrieval for the first asset
-    thumbnail = get_asset_thumbnail(assets[0].uid)
+    thumbnail = obj_db.get_asset_thumbnail(assets[0].source_id)
 
     # Verify the result is BinaryContent
     assert isinstance(thumbnail, BinaryContent)
@@ -126,14 +127,14 @@ if __name__ == "__main__":
         # Run async tests
         async def run_async_tests():
             await test_shopping_agent_real_api()
-            await test_shopping_agent_with_thumbnails()
+            # await test_shopping_agent_with_thumbnails()
             print("All async tests passed!")
 
         asyncio.run(run_async_tests())
 
         # Run sync tests
-        test_asset_search_tool_directly()
-        test_asset_thumbnail_tool_directly()
+        # test_asset_search_tool_directly()
+        # test_asset_thumbnail_tool_directly()
         # test_shopping_agent_tools_available()
         print("All sync tests passed!")
     else:

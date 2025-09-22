@@ -1,9 +1,12 @@
+import requests
+from pathlib import Path
+
 import objaverse
-import tempfile
-import os
 
+from scene_builder.config import GDB_API_BASE_URL
+from scene_builder.logging import logger
 
-def import_object(object_uid: str) -> str:
+def import_object(object_uid: str, source="cache") -> str:
     """
     Imports a 3D object from the Objaverse dataset and returns the path to the downloaded file.
 
@@ -15,35 +18,24 @@ def import_object(object_uid: str) -> str:
     """
     print(f"Importing objaverse object: {object_uid}")
 
-    # Use a consistent temporary directory for caching
-    download_dir = os.path.join(tempfile.gettempdir(), "scene_builder_objaverse")
-    os.makedirs(download_dir, exist_ok=True)
+    if source == "cache":
+        response = requests.get(
+            f"{GDB_API_BASE_URL}/v0/assets/locate/{object_uid}/glb",
+        )
+        path = response.json()["path"]
+        assert Path(path).exists()
+        # logger.debug(f"[importer/objaverse]: located asset at {path}")
+        return path
 
-    # Check if the object is already downloaded
-    object_path = os.path.join(download_dir, f"{object_uid}.glb")
-    if os.path.exists(object_path):
-        print(f"Found cached object at: {object_path}")
-        return object_path
+    elif source == "objaverse":
+        print(f"Downloading object {object_uid} from Objaverse...")
+        downloaded_objects: dict[str, str] = objaverse.load_objects(
+            uids=[object_uid], download_processes=1
+        )
 
-    print(f"Downloading object {object_uid} from Objaverse...")
-    # load_objects downloads the object to a specific path
-    # and returns a dictionary mapping the UID to the path.
-    downloaded_objects = objaverse.load_objects(
-        uids=[object_uid], download_processes=1
-    )
-
-    # The path from the download
-    original_path = downloaded_objects.get(object_uid)
-
-    if original_path:
-        # Move the file to our consistent cache directory
-        try:
-            os.rename(original_path, object_path)
-            print(f"Object cached successfully to: {object_path}")
-            return object_path
-        except OSError as e:
-            print(f"Error moving object to cache: {e}. Using original path.")
-            return original_path
+        # The path from the download
+        original_path = downloaded_objects.get(object_uid)
+        return original_path
     else:
         print(f"Failed to download object: {object_uid}")
         return None

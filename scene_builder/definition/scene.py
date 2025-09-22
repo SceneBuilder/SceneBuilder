@@ -4,13 +4,6 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 
-class GlobalConfig(BaseModel):
-    """Global configuration for the generation process."""
-
-    debug: bool = False
-    previewAfterAction: bool = False
-
-
 class GenericPlan(BaseModel):
     pass
 
@@ -46,7 +39,8 @@ class Object(BaseModel):
     name: str
     id: str
     source: str
-    source_id: str | None = None
+    # source_id: str | None = None
+    source_id: str  # TEMP: to resolve ObjectBlueprint → Object adapter mistake
     description: str
     position: Vector3
     rotation: Vector3

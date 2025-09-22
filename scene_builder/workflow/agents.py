@@ -4,27 +4,32 @@ from pydantic_ai.providers.google import GoogleProvider
 
 from scene_builder.definition.scene import Room, Object, ObjectBlueprint, FloorDimensions
 from scene_builder.tools.read_file import read_media_file
-from scene_builder.tools.asset_search import search_assets, get_asset_thumbnail
+from scene_builder.database.object import ObjectDatabase
+from scene_builder.utils.pai import transform_paths_to_binary
 from scene_builder.workflow.prompts import (
     BUILDING_PLAN_AGENT_PROMPT,
     FLOOR_PLAN_AGENT_PROMPT,
     PLACEMENT_AGENT_PROMPT,
     FLOOR_SIZE_AGENT_PROMPT,
+    ROOM_DESIGN_AGENT_PROMPT,
+    SEQUENCING_AGENT_PROMPT,
+    SHOPPING_AGENT_PROMPT,
 )
 from scene_builder.workflow.states import (
     PlacementState,
     PlacementResponse,
+    RoomDesignState,
+    RoomDesignResponse,
 )
 import os
 
-# Configure Google Gemini model
-# Prefer explicit API key from env var if provided; otherwise rely on provider defaults
-api_key = os.getenv("GOOGLE_API_KEY")
-provider = GoogleProvider(api_key=api_key) if api_key else GoogleProvider()
-model = GoogleModel("gemini-2.5-flash", provider=provider)
+
+# model = GoogleModel("gemini-2.5-pro")
+model = GoogleModel("gemini-2.5-flash")
 # model = OpenAIModel("gpt-5-mini")
 # model = OpenAIModel("gpt-5-nano")
-# model = "openai:gpt-4o"
+
+obj_db = ObjectDatabase()
 
 floor_plan_agent = Agent(
     model,
@@ -63,18 +68,39 @@ floor_size_agent = Agent(
 )
 
 
+sequencing_agent = Agent(
+    model,
+    system_prompt=SEQUENCING_AGENT_PROMPT,
+    output_type=list[ObjectBlueprint]
+)
+
 # Shopping agent for finding 3D assets from graphics database
 shopping_agent = Agent(
     model,
-    system_prompt="You are a shopping assistant for 3D assets. Your goal is to help find the most appropriate 3D objects from the graphics database based on the user's description. Use the search_assets tool to find relevant assets. You can use get_asset_thumbnail to view thumbnails of assets and read_media_file to view any other media files. When returning objects, convert Asset data to Object format: use Asset.uid for Object.source_id, Asset.url for Object.source, and generate appropriate names and descriptions based on the asset tags and metadata. Set initial position, rotation, and scale to default values (position: x=0,y=0,z=0; rotation: x=0,y=0,z=0; scale: x=1,y=1,z=1).",
-    tools=[search_assets, get_asset_thumbnail],
-    output_type=list[ObjectBlueprint],
+    system_prompt=SHOPPING_AGENT_PROMPT,
+    # tools=[obj_db.query, obj_db.get_asset_thumbnail],  # old
+    tools=[obj_db.search, obj_db.pack],  # new(?) - candidate
+    # output_type=list[ObjectBlueprint],
+    output_type=list[ObjectBlueprint],  # TEMP - only for tests
 )
-
+# TODO(?): implement a logic to filter / boil down what assets to choose out of returned *candidates*
+# TODO: make sure that the markdown report generated from `obj_db.search()` undergoes proper processing
+#       of multimedia data - in other words, make sure that the VLM is able to *see* the thumbnails.
+#       This is because multimedia content within user prompt seems to undergo proper processing, but 
+#       those within system prompt does not seem to. The tool call result probably will have a separate
+#       channel of communication (how it is stored in the conversation history, and how that conversation history
+#       transforms into LLM API calls). This can be seen by debugging thru PydAI's source code and inspecting Logfire. 
 
 room_design_agent = Agent(
-    "openai:gpt-4o",
-    system_prompt="You are a room designer. Your goal is to add objects to the room based on the plan. Please utilize `PlacementAgent` to populate the room with objects from the `ShoppingCart`, until you are satisfied with the room.",
-    tools=[],
-    output_type=list[Object],
+    model,
+    deps_type=RoomDesignState,
+    system_prompt=ROOM_DESIGN_AGENT_PROMPT,
+    output_type=RoomDesignResponse,
+    tools=[read_media_file],
 )
+
+@room_design_agent.system_prompt
+async def add_room_design_state(ctx: RunContext[RoomDesignState]) -> str:
+    room_design_state = ctx.deps
+    return f"The current placement state:\n {room_design_state}"
+    # NOTE: see note in `add_placement_state()`

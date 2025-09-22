@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import Literal
 
 from graphics_db_server.schemas.asset import Asset
@@ -5,8 +6,8 @@ from pydantic import BaseModel, Field
 from pydantic_ai.messages import ModelMessage
 
 
+from scene_builder.config import GenerationConfig
 from scene_builder.definition.scene import (
-    GlobalConfig,
     Object,
     ObjectBlueprint,
     Room,
@@ -22,7 +23,7 @@ class MainState(BaseModel):
     plan: str | None = None
     messages: list[ModelMessage] = Field(default_factory=list)
     current_room_index: int = 0
-    global_config: GlobalConfig | None = None
+    generation_config: GenerationConfig | None = None
 
 
 class KeepEditingOrFinalize(BaseModel):
@@ -51,13 +52,18 @@ class PlacementResponse(BaseModel):
 class RoomDesignState(BaseModel):
     room: Room
     room_plan: RoomPlan
-    shopping_cart: list[ObjectBlueprint]
+    shopping_cart: list[ObjectBlueprint] = []
+    viz: list[Path] = []
     # NOTE: It's possible to put room_history here as well...
     # TODO (yunho-c): make a decision on ^.
 
 
+# class RoomDesignAction(BaseModel):
+#     updated_room: Room
+
+
 class RoomDesignResponse(BaseModel):
-    # placement_action: PlacementAction
+    # room_design_action: RoomDesignAction
     decision: KeepEditingOrFinalize
     reasoning: str
 

@@ -4,7 +4,6 @@ from pathlib import Path
 from rich.console import Console
 from rich.panel import Panel
 
-from scene_builder.definition.scene import GlobalConfig
 from scene_builder.nodes.general import MetadataNode
 from scene_builder.workflow.graphs import main_graph
 from scene_builder.workflow.states import MainState
@@ -15,7 +14,6 @@ def test_scene_generation():
     console.print(Panel("[bold green]Running SceneBuilder Workflow[/]", expand=False))
     initial_state = MainState(
         user_input="Create a modern, minimalist living room.",
-        global_config=GlobalConfig(debug=True),
     )
 
     async def run_graph():
