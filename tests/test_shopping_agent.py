@@ -3,12 +3,10 @@ import requests
 from graphics_db_server.schemas.asset import Asset
 from pydantic_ai import BinaryContent
 
+from scene_builder.config import GDB_API_BASE_URL
 from scene_builder.database.object import ObjectDatabase
 from scene_builder.definition.scene import Object, Vector3
 from scene_builder.workflow.agents import shopping_agent
-
-
-API_BASE_URL = "http://localhost:2692/api/v0"
 
 obj_db = ObjectDatabase()
 
@@ -17,7 +15,7 @@ def is_graphics_db_available():
     """Check if the graphics database server is available."""
     try:
         response = requests.get(
-            f"{API_BASE_URL}/assets/search?query=test&top_k=1", timeout=5
+            f"{GDB_API_BASE_URL}/assets/search?query=test&top_k=1", timeout=5
         )
         return response.status_code == 200
     except (requests.exceptions.RequestException, ConnectionError):
