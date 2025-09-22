@@ -2,7 +2,7 @@ import os
 import tempfile
 import math
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import bpy
 import numpy as np
@@ -14,6 +14,11 @@ from scene_builder.importer import objaverse_importer, test_asset_importer
 from scene_builder.logging import logger
 from scene_builder.utils.conversions import pydantic_to_dict
 from scene_builder.utils.file import get_filename
+
+
+HDRI_FILE_PATH = Path(
+    "~/GitHub/SceneBuilder-Test-Assets/hdri/autumn_field_puresky_4k.exr"
+).expanduser()  # TEMP HACK
 
 
 def parse_scene_definition(scene_data: dict[str, Any]):
@@ -118,13 +123,15 @@ def _create_object(obj_data: dict[str, Any], parent_location: str = "origin"):
     if object_path and object_path.endswith(".glb"):
         try:
             # Deselect all objects before import to ensure clean selection
-            bpy.ops.object.select_all(action='DESELECT')
+            bpy.ops.object.select_all(action="DESELECT")
 
             # Import the GLTF file - imported objects will be selected
             bpy.ops.import_scene.gltf(filepath=object_path)
 
             # Get only top-level imported objects (no parents) to preserve hierarchy
-            imported_objects = [obj for obj in bpy.context.selected_objects if obj.parent is None]
+            imported_objects = [
+                obj for obj in bpy.context.selected_objects if obj.parent is None
+            ]
 
             if not imported_objects:
                 raise IOError(f"No objects were imported from '{object_path}'")
@@ -144,13 +151,13 @@ def _create_object(obj_data: dict[str, Any], parent_location: str = "origin"):
                 # Get median values
                 n = len(locations)
                 if n % 2 == 0:
-                    median_x = (x_coords[n//2 - 1] + x_coords[n//2]) / 2
-                    median_y = (y_coords[n//2 - 1] + y_coords[n//2]) / 2
-                    median_z = (z_coords[n//2 - 1] + z_coords[n//2]) / 2
+                    median_x = (x_coords[n // 2 - 1] + x_coords[n // 2]) / 2
+                    median_y = (y_coords[n // 2 - 1] + y_coords[n // 2]) / 2
+                    median_z = (z_coords[n // 2 - 1] + z_coords[n // 2]) / 2
                 else:
-                    median_x = x_coords[n//2]
-                    median_y = y_coords[n//2]
-                    median_z = z_coords[n//2]
+                    median_x = x_coords[n // 2]
+                    median_y = y_coords[n // 2]
+                    median_z = z_coords[n // 2]
 
                 empty_location = (median_x, median_y, median_z)
             elif parent_location == "origin":
@@ -160,7 +167,7 @@ def _create_object(obj_data: dict[str, Any], parent_location: str = "origin"):
                 empty_location = (0, 0, 0)
 
             # Create Empty at the calculated location
-            bpy.ops.object.empty_add(type='PLAIN_AXES', location=empty_location)
+            bpy.ops.object.empty_add(type="PLAIN_AXES", location=empty_location)
             blender_obj = bpy.context.active_object
             blender_obj.name = object_name
 
@@ -401,4 +408,104 @@ def create_scene_visualization(
         strategy="increment",
     )
 
+    scene = bpy.context.scene
+    setup_lighting_foundation(scene)
+    setup_post_processing(scene)
+
     return render_to_file(output_path)
+
+
+### Lighting
+# TODO: Modularize lighting stuff into a file (i.e., turn blender decoder into a folder, not a single file)
+def setup_lighting_foundation(
+    scene: bpy.types.Scene,
+    hdri_path: Optional[str | Path] = HDRI_FILE_PATH,
+    hdri_strength: float = 1.0,
+):
+    """Sets up global illumination and world environment lighting."""
+    print("Setting up foundation lighting...")
+    scene.render.engine = "CYCLES"
+    cycles_settings = scene.cycles
+
+    # Configure GI bounces
+    cycles_settings.max_bounces = 12
+    cycles_settings.diffuse_bounces = 4
+    cycles_settings.glossy_bounces = 4
+
+    # Set up the world environment
+    world = scene.world
+    if not world:
+        world = bpy.data.worlds.new("AutomatedWorld")
+        scene.world = world
+
+    world.use_nodes = True
+    nt = world.node_tree
+    nt.nodes.clear()
+
+    # Create and link shader nodes
+    bg_node = nt.nodes.new(type="ShaderNodeBackground")
+    output_node = nt.nodes.new(type="ShaderNodeOutputWorld")
+    bg_node.inputs["Strength"].default_value = hdri_strength
+
+    if hdri_path and Path(hdri_path).exists():
+        env_node = nt.nodes.new(type="ShaderNodeTexEnvironment")
+        env_node.image = bpy.data.images.load(str(hdri_path))
+        nt.links.new(env_node.outputs["Color"], bg_node.inputs["Color"])
+    else:
+        bg_node.inputs["Color"].default_value = (0.1, 0.1, 0.1, 1.0)
+
+    nt.links.new(bg_node.outputs["Background"], output_node.inputs["Surface"])
+
+
+# TODO: Implement this function to work with windows built by SceneBuilder.
+# def add_motivated_lights(scene: bpy.types.Scene, sun_energy: float = 5.0):
+#     """Adds key lights based on semantic information in the scene."""
+#     print("Adding motivated lights...")
+#     bpy.ops.object.light_add(type='SUN', location=(0, 0, 10))
+#     sun = bpy.context.active_object
+#     sun.data.energy = sun_energy
+#     sun.data.angle = math.radians(0.53)
+
+#     # --- Your Custom Logic Goes Here ---
+#     # Example: Find windows and add portals
+#     for obj in scene.objects:
+#         if "window" in obj.name.lower():
+#             print(f"Found window: {obj.name}. Adding light portal.")
+#             bpy.ops.object.light_add(type='AREA', location=obj.location)
+#             portal = bpy.context.active_object
+#             portal.data.is_portal = True
+#             portal.scale = (obj.dimensions.x, obj.dimensions.y, 1)
+
+
+# def add_fill_lights():
+#     """Adds subtle, non-shadow-casting lights to brighten dark areas."""
+#     print("Adding fill lights...")
+#     bpy.ops.object.light_add(type='POINT', location=(-3, -3, 1.5))
+#     fill_light = bpy.context.active_object
+#     fill_light.name = "FillLight"
+
+#     fill_light.data.energy = 20.0
+#     fill_light.data.shadow_soft_size = 3.0
+#     fill_light.visible_shadow = False
+
+
+def setup_post_processing(scene: bpy.types.Scene):
+    """Configures color management and compositor nodes for the final look."""
+    print("Setting up post-processing...")
+    scene.view_settings.view_transform = "AgX"
+    scene.view_settings.look = "AgX - Medium High Contrast"
+
+    scene.use_nodes = True
+    nt = scene.node_tree
+    nt.nodes.clear()
+
+    render_layers = nt.nodes.new(type="CompositorNodeRLayers")
+    composite_output = nt.nodes.new(type="CompositorNodeComposite")
+    glare_node = nt.nodes.new(type="CompositorNodeGlare")
+
+    glare_node.glare_type = "FOG_GLOW"
+    glare_node.threshold = 1.5
+    glare_node.size = 8
+
+    nt.links.new(render_layers.outputs["Image"], glare_node.inputs["Image"])
+    nt.links.new(glare_node.outputs["Image"], composite_output.inputs["Image"])
