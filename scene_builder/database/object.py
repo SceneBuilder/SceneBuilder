@@ -53,7 +53,7 @@ class ObjectDatabase:
             # assets = AssetListAdapter.validate_json(response.text.replace("uid", "source_id"))
             thumbnails = requests.post(
                 f"{GDB_API_BASE_URL}/v0/objects/thumbnails",
-                json={"asset_uids": [asset.uid for asset in assets]},
+                json={"uids": [asset.uid for asset in assets]},
             ).json()
             results = []
             for asset in assets:
@@ -92,7 +92,7 @@ class ObjectDatabase:
         try:
             response = requests.post(
                 f"{GDB_API_BASE_URL}/v0/objects/thumbnails",
-                json={"asset_uids": asset_uids},
+                json={"uids": asset_uids},
                 timeout=30
             )
             response.raise_for_status()
@@ -149,7 +149,7 @@ class ObjectDatabase:
         # Create report (with thumbnails and metadata to help VLM's decision making)
         report_response = requests.get(
             f"{GDB_API_BASE_URL}/v0/objects/report",
-            params={"asset_uids": [asset["uid"] for asset in assets],
+            params={"uids": [asset["uid"] for asset in assets],
                     "image_format": "path"},  # this probably renders `flatten_markdown_images()` useless
         )
         report = report_response.json()
@@ -176,7 +176,7 @@ class ObjectDatabase:
             # WARN: the by_uids endpoint does not exist in `graphics-db`. 
             # response = requests.post(
             #     f"{API_BASE_URL}/v0/objects/by_uids",
-            #     json={"asset_uids": uids},
+            #     json={"uids": uids},
             #     timeout=30
             # )
             # response.raise_for_status()
