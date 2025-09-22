@@ -366,6 +366,9 @@ def test_room_design_workflow(case: str):
     )
     blender._clear_scene()
 
+    floor_result = blender._create_floor_mesh(test_data["boundary"], test_data["room_id"])
+    print(f"Floor mesh created: {floor_result.get('status', 'unknown')}")
+
     async def run_graph():
         # return await room_design_graph.run(RoomDesignNode(), state=initial_room_state)
         return await room_design_graph.run(
