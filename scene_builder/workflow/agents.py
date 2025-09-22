@@ -1,25 +1,27 @@
-from pydantic_ai import Agent, RunContext, BinaryContent
+from pydantic_ai import Agent, RunContext
 from pydantic_ai.models.google import GoogleModel
-from pydantic_ai.models.openai import OpenAIModel
 from pydantic_ai.providers.google import GoogleProvider
 
-from scene_builder.definition.scene import Room, Object, ObjectBlueprint
+from scene_builder.definition.scene import Room, Object, ObjectBlueprint, FloorDimensions
 from scene_builder.tools.read_file import read_media_file
 from scene_builder.tools.asset_search import search_assets, get_asset_thumbnail
-from scene_builder.utils.pai import transform_paths_to_binary
 from scene_builder.workflow.prompts import (
     BUILDING_PLAN_AGENT_PROMPT,
     FLOOR_PLAN_AGENT_PROMPT,
     PLACEMENT_AGENT_PROMPT,
+    FLOOR_SIZE_AGENT_PROMPT,
 )
 from scene_builder.workflow.states import (
     PlacementState,
-    PlacementAction,
     PlacementResponse,
 )
+import os
 
-
-model = GoogleModel("gemini-2.5-flash")
+# Configure Google Gemini model
+# Prefer explicit API key from env var if provided; otherwise rely on provider defaults
+api_key = os.getenv("GOOGLE_API_KEY")
+provider = GoogleProvider(api_key=api_key) if api_key else GoogleProvider()
+model = GoogleModel("gemini-2.5-flash", provider=provider)
 # model = OpenAIModel("gpt-5-mini")
 # model = OpenAIModel("gpt-5-nano")
 # model = "openai:gpt-4o"
@@ -53,6 +55,13 @@ planning_agent = Agent(
     model,
     system_prompt=BUILDING_PLAN_AGENT_PROMPT,
 )
+
+floor_size_agent = Agent(
+    model,
+    system_prompt=FLOOR_SIZE_AGENT_PROMPT,
+    output_type=FloorDimensions,
+)
+
 
 # Shopping agent for finding 3D assets from graphics database
 shopping_agent = Agent(

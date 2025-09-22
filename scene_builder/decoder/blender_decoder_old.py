@@ -1,23 +1,20 @@
-import os
-import tempfile
-import math
-import time
-from pathlib import Path
 from typing import Any
+from pathlib import Path
+import tempfile
+import numpy as np
 
 import bpy
 import bmesh
-import numpy as np
 import yaml
-from scipy.spatial.transform import Rotation
+import time
 from mathutils.geometry import tessellate_polygon
 from mathutils import Vector
 
-from scene_builder.definition.scene import Object, Room, Scene
-from scene_builder.importer import objaverse_importer, test_asset_importer
-from scene_builder.logging import logger
-from scene_builder.utils.conversions import pydantic_to_dict
-from scene_builder.utils.file import get_filename
+# Removed objaverse and test_asset importers for material workflow simplicity
+
+# This script uses the `bpy` module to create a Blender scene.
+# It can be run with a standalone `bpy` installation (e.g., from pip)
+# or within the Blender Python environment.
 
 
 def parse_scene_definition(scene_data: dict[str, Any]):
@@ -27,10 +24,7 @@ def parse_scene_definition(scene_data: dict[str, Any]):
     Args:
         scene_data: A dictionary representing the scene, loaded from the YAML file.
     """
-    logger.debug("Parsing scene definition and creating scene in Blender...")
-
-    if isinstance(scene_data, Scene):
-        scene_data = pydantic_to_dict(scene_data)
+    print("Parsing scene definition and creating scene in Blender...")
 
     # Clear the existing scene
     _clear_scene()
@@ -39,24 +33,17 @@ def parse_scene_definition(scene_data: dict[str, Any]):
         _create_room(room_data)
 
 
-def parse_room_definition(room_data: dict[str, Any], clear=False):
+def parse_room_definition(room_data: dict[str, Any]):
     """
     Parses the room definition dictionary and creates the scene in Blender.
 
     Args:
         room_data: A dictionary representing the room, loaded from the YAML file.
-        clear: Whether to clear the Blender scene before building room.
-
-    # NOTE: not sure if it's good for `clear` to default to True; (it was for testing)
     """
-    logger.debug("Parsing room definition and creating scene in Blender...")
-
-    if isinstance(room_data, Room):
-        room_data = pydantic_to_dict(room_data)
+    print("Parsing room definition and creating scene in Blender...")
 
     # Clear the existing scene
-    if clear:
-        _clear_scene()
+    _clear_scene()
 
     _create_room(room_data)
 
@@ -65,22 +52,22 @@ def _clear_scene():
     """Clears all objects from the current Blender scene."""
     bpy.ops.object.select_all(action="SELECT")
     bpy.ops.object.delete()
-    logger.debug("Cleared existing scene.")
+    print("Cleared existing scene.")
 
 
 def _create_room(room_data: dict[str, Any]):
-    """Creates a representation of a room including floor mesh, walls, and objects."""
+    """Creates a representation of a room including floor mesh."""
     if room_data is None:
-        logger.warning("room_data is None, skipping room creation")
+        print("Warning: room_data is None, skipping room creation")
         return
 
     room_id = room_data.get("id", "unknown_room")
-    logger.debug(f"Creating room: {room_id}")
+    print(f"Creating room: {room_id}")
 
     # Create floor mesh if boundary data exists
     boundary = room_data.get("boundary")
     if boundary:
-        logger.debug(f"Creating floor mesh for room: {room_id}")
+        print(f"Creating floor mesh for room: {room_id}")
         try:
             # Extract LLM metadata if available
             llm_metadata = {}
@@ -98,9 +85,9 @@ def _create_room(room_data: dict[str, Any]):
             floor_result = _create_floor_mesh(
                 boundary, room_id, llm_metadata=llm_metadata
             )
-            logger.debug(f"Floor mesh created: {floor_result.get('status', 'unknown')}")
+            print(f"Floor mesh created: {floor_result.get('status', 'unknown')}")
         except Exception as e:
-            logger.error(f"Failed to create floor mesh for room {room_id}: {e}")
+            print(f"Failed to create floor mesh for room {room_id}: {e}")
 
     # Create walls from boundary if ceiling height is available
     if boundary and room_data.get("floor_dimensions"):
@@ -109,89 +96,12 @@ def _create_room(room_data: dict[str, Any]):
             "ceiling_height", 2.7
         )  # Default to 2.7m if not specified
 
-        logger.debug(f"Creating walls for room: {room_id} (height: {ceiling_height}m)")
+        print(f"Creating walls for room: {room_id} (height: {ceiling_height}m)")
         try:
             wall_result = _create_walls_from_boundary(boundary, room_id, ceiling_height)
-            logger.debug(f"Walls created: {wall_result.get('status', 'unknown')}")
+            print(f"Walls created: {wall_result.get('status', 'unknown')}")
         except Exception as e:
-            logger.error(f"Failed to create walls for room {room_id}: {e}")
-
-    # Create objects in the room
-    for obj_data in room_data.get("objects", []):
-        _create_object(obj_data)
-
-
-
-def _create_object(obj_data: dict[str, Any]):
-    """
-    Creates a single object in the Blender scene.
-    Raises an IOError if the object cannot be imported.
-    """
-    if isinstance(obj_data, Object):
-        obj_data = pydantic_to_dict(obj_data)
-
-    object_name = obj_data.get("name", "Unnamed Object")
-    logger.debug(f"Creating object: {object_name}")
-
-    blender_obj = None
-
-    if obj_data.get("source") == "objaverse":
-        source_id = obj_data.get("source_id")
-        if not source_id:
-            raise ValueError(
-                f"Object '{object_name}' has source 'objaverse' but no 'source_id'."
-            )
-
-        # Import the object from Objaverse
-        object_path = objaverse_importer.import_object(source_id)
-
-    elif obj_data.get("source") == "test_asset":
-        object_path = test_asset_importer.import_test_asset(obj_data.get("source_id"))
-
-    elif obj_data.get("source") == "template":
-        return
-
-    else:
-        # For other sources, we don't have an importer yet.
-        # We can either raise an error or create a placeholder.
-        # Raising an error is more explicit about what's happening.
-        source = obj_data.get("source", "unknown")
-        raise NotImplementedError(
-            f"Object source '{source}' is not yet supported for '{object_name}'."
-        )
-
-    # Import the .glb file
-    if object_path and object_path.endswith(".glb"):
-        try:
-            bpy.ops.import_scene.gltf(filepath=object_path)
-            # The imported object is the newly selected one
-            blender_obj = bpy.context.selected_objects[0]
-            blender_obj.name = object_name
-        except Exception as e:
-            raise IOError(
-                f"Failed to import GLB file for '{object_name}' from '{object_path}'. Blender error: {e}"
-            )
-    else:
-        raise IOError(
-            f"Failed to import object '{object_name}' (source_id: {source_id}). "
-            f"The file path was not found or was not a .glb file. Path: '{object_path}'"
-        )
-
-    # Set position, rotation, and scale from the object data
-    pos = obj_data.get("position", {"x": 0, "y": 0, "z": 0})
-    rot = obj_data.get("rotation", {"x": 0, "y": 0, "z": 0})
-    scl = obj_data.get("scale", {"x": 1, "y": 1, "z": 1})
-
-    blender_obj.location = (pos["x"], pos["y"], pos["z"])
-    blender_obj.scale = (scl["x"], scl["y"], scl["z"])
-
-    # Combine the original rotation with the rotation from the scene definition.
-    original_rotation = Rotation.from_euler("xyz", blender_obj.rotation_euler)
-    new_rotation = Rotation.from_euler("xyz", [rot["x"], rot["y"], rot["z"]])
-    combined_rotation = new_rotation * original_rotation
-
-    # Apply the combined rotation.
-    blender_obj.rotation_euler = combined_rotation.as_euler("xyz")
+            print(f"Failed to create walls for room {room_id}: {e}")
 
 
 def _create_floor_mesh(
@@ -209,6 +119,7 @@ def _create_floor_mesh(
         room_id: Room identifier for naming
         floor_thickness_m: Thickness of the floor in meters (default: 0.1)
         origin: Origin placement - "center" or "min" (default: "center")
+        material_name: Optional material name to apply
         llm_metadata: LLM analysis data from floor_dimensions
 
     Returns:
@@ -222,6 +133,7 @@ def _create_floor_mesh(
             "timestamp": int(time.time()),
         }
 
+    # try:
     # Generate timestamp for deterministic naming
     timestamp = int(time.time())
     floor_name = f"Floor_{room_id}_{timestamp}"
@@ -265,7 +177,7 @@ def _create_floor_mesh(
             top_face.normal_update()
         except ValueError as e:
             # If direct face creation fails, try triangulation
-            logger.debug(f"Direct face creation failed: {e}. Attempting triangulation...")
+            print(f"Direct face creation failed: {e}. Attempting triangulation...")
 
             # Convert to mathutils Vectors for tessellation
             vectors = [Vector(v) for v in verts_3d]
@@ -283,7 +195,7 @@ def _create_floor_mesh(
                         continue
 
             except Exception as tess_error:
-                logger.debug(f"Tessellation failed: {tess_error}")
+                print(f"Tessellation failed: {tess_error}")
                 # Fallback: create a simple triangular fan
                 for i in range(1, len(bmesh_verts) - 1):
                     try:
@@ -294,7 +206,7 @@ def _create_floor_mesh(
                         ]
                         bm.faces.new(face_verts)
                     except ValueError as ve:
-                        logger.debug(f"Failed to create fallback triangle face: {ve}")
+                        print(f"Failed to create fallback triangle face: {ve}")
                         continue
 
         # Create bottom face and side walls if thickness > 0
@@ -347,7 +259,7 @@ def _create_floor_mesh(
         bpy.ops.mesh.select_all(action="SELECT")
         bpy.ops.uv.unwrap(method="ANGLE_BASED", margin=0.001)
         bpy.ops.object.mode_set(mode="OBJECT")
-        logger.debug(f"Generated UV coordinates for floor: {floor_name}")
+        print(f"Generated UV coordinates for floor: {floor_name}")
 
     finally:
         bm.free()
@@ -387,6 +299,13 @@ def _create_floor_mesh(
             result["llm_analysis"] = llm_metadata["llm_analysis"]
 
     return result
+
+    # except Exception as e:
+    #     return {
+    #         "status": "error",
+    #         "message": f"Floor mesh creation failed for room {room_id}: {str(e)}",
+    #         "timestamp": int(time.time())
+    #     }
 
 
 def _create_walls_from_boundary(
@@ -597,24 +516,6 @@ def _ensure_collection(collection_name: str):
     return collection
 
 
-def load_template(path: str, clear_scene: bool):
-    """
-    Loads a template .blend file.
-
-    Args:
-        path: The path to the .blend file.
-        clear_scene: Whether to clear the current scene before loading.
-    """
-    if not os.path.exists(path):
-        raise FileNotFoundError(f"Template file not found: {path}")
-
-    if clear_scene:
-        _clear_scene()
-
-    bpy.ops.wm.open_mainfile(filepath=path)
-    logger.debug(f"Loaded template from {path}")
-
-
 def save_scene(filepath: str):
     """Saves the current Blender scene to a .blend file."""
     if not filepath.endswith(".blend"):
@@ -623,9 +524,9 @@ def save_scene(filepath: str):
     # Pack all external images into the .blend file
     try:
         bpy.ops.file.pack_all()
-        logger.debug("✅ Packed all external images into .blend file")
+        print("✅ Packed all external images into .blend file")
     except Exception as e:
-        logger.debug(f"⚠️  Warning: Could not pack images: {e}")
+        print(f"⚠️  Warning: Could not pack images: {e}")
 
     # Ensure viewport is set to Material Preview before saving
     for area in bpy.context.screen.areas:
@@ -636,7 +537,7 @@ def save_scene(filepath: str):
                     break
 
     bpy.ops.wm.save_as_mainfile(filepath=filepath)
-    logger.debug(f"Scene saved to {filepath}")
+    print(f"Scene saved to {filepath}")
 
 
 def render_top_down(output_dir: str = None) -> Path:
@@ -645,75 +546,14 @@ def render_top_down(output_dir: str = None) -> Path:
     1. Build the scene in Blender (bpy)
     2. Set the camera to top-down + orthographic, then render
     3. Save the rendered image as a file (PNG)
+    4. Attach the generated top-down image to the Pydantic graph (viz field)
 
     Returns:
         Path to the rendered top-down PNG file.
     """
-    logger.debug("Setting up top-down orthographic render...")
+    print("Setting up top-down orthographic render...")
 
-    # Use existing modular functions instead of duplicating code
-    _select_render_engine()
-    _configure_output_image("PNG", 1024)
-    _setup_top_down_camera()
-    _setup_lighting(energy=0.5)
-
-    # Prepare output filepath
-    if output_dir is None:
-        output_dir = tempfile.gettempdir()
-
-    output_path = (
-        Path(output_dir)
-        / f"room_topdown_{abs(hash(str(bpy.context.scene.objects)))}.png"
-    )
-    
-    return render_to_file(output_path)  
-
-
-
-def render() -> np.ndarray:
-    """
-    Main render function for the workflow - renders scene to NumPy array.
-    Sets up top-down orthographic view and renders directly to memory.
-
-    Returns:
-        NumPy array of rendered top-down image data (RGBA format).
-    """
-    logger.debug("Setting up top-down orthographic render...")
-
-    _select_render_engine()
-    _configure_output_image("PNG", 1024)
-    _setup_top_down_camera()
-    _setup_lighting(energy=5.0)
-
-    logger.debug("Rendering top-down view to memory...")
-    bpy.ops.render.render()
-
-    render_result = bpy.context.scene.render
-    width = render_result.resolution_x
-    height = render_result.resolution_y
-
-    pixels = bpy.data.images["Render Result"].pixels[:]
-
-    image_array = np.array(pixels).reshape((height, width, 4))
-
-    logger.debug(f"Render completed: {width}x{height} RGBA array")
-    return image_array
-
-    
-def _configure_output_image(format: str, resolution: int):
-    format = format.upper()
-    mapping = {"JPG": "JPEG"}
-    if format in mapping.keys():
-        format = mapping[format]
-
-    bpy.context.scene.render.image_settings.file_format = format
-    bpy.context.scene.render.resolution_x = resolution
-    bpy.context.scene.render.resolution_y = resolution
-    bpy.context.scene.render.resolution_percentage = 100
-
-
-def _select_render_engine():
-    """Selects a compatible render engine."""
+    # Select a compatible render engine (handles Blender versions where 'EEVEE' is renamed)
     try:
         engine_prop = bpy.context.scene.render.bl_rna.properties["engine"]
         available_engines = [item.identifier for item in engine_prop.enum_items]
@@ -728,10 +568,98 @@ def _select_render_engine():
     else:
         # Fallback to whatever is currently set if preferences are unavailable
         pass
+    bpy.context.scene.render.image_settings.file_format = "PNG"
+    bpy.context.scene.render.resolution_x = 1024
+    bpy.context.scene.render.resolution_y = 1024
+    bpy.context.scene.render.resolution_percentage = 100
+
+    # Clear existing cameras
+    for obj in bpy.context.scene.objects:
+        if obj.type == "CAMERA":
+            bpy.data.objects.remove(obj, do_unlink=True)
+
+    # Add top-down orthographic camera
+    bpy.ops.object.camera_add(location=(0, 0, 10))  # 10 units above origin
+    camera = bpy.context.object
+    camera.name = "TopDownCamera"
+
+    # Set to orthographic projection
+    camera.data.type = "ORTHO"
+    # camera.data.ortho_scale = 1.0  # Adjust based on room size
+    # camera.data.ortho_scale = 5.0  # Adjust based on room size
+    camera.data.ortho_scale = 20.0  # Adjust based on room size
+
+    # Point camera straight down (top-down view)
+    camera.rotation_euler = (0, 0, 0)  # Looking straight down Z-axis
+
+    # Set as active camera
+    bpy.context.scene.camera = camera
+
+    # Add basic lighting for visibility
+    if not any(obj.type == "LIGHT" for obj in bpy.context.scene.objects):
+        bpy.ops.object.light_add(type="SUN", location=(0, 0, 15))
+        light = bpy.context.object
+        # light.data.energy = 5.0
+        light.data.energy = 0.5
+        light.rotation_euler = (0, 0, 0)  # Light pointing down
+        print("Added top-down lighting")
+
+    # Prepare output filepath
+    if output_dir is None:
+        output_dir = tempfile.gettempdir()
+
+    output_path = (
+        Path(output_dir)
+        / f"room_topdown_{abs(hash(str(bpy.context.scene.objects)))}.png"
+    )
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Set render output path
+    bpy.context.scene.render.filepath = str(output_path)
+
+    # Render the scene
+    print(f"Rendering top-down view to {output_path}")
+    bpy.ops.render.render(write_still=True)
+
+    if output_path.exists():
+        print(f"Top-down render completed: {output_path}")
+        return output_path
+    else:
+        raise IOError(
+            f"Top-down render failed - output file not created: {output_path}"
+        )
 
 
-def _setup_top_down_camera():
-    """Sets up a top-down orthographic camera."""
+def render() -> np.ndarray:
+    """
+    Main render function for the workflow - renders scene to NumPy array.
+    Sets up top-down orthographic view and renders directly to memory.
+
+    Returns:
+        NumPy array of rendered top-down image data (RGBA format).
+    """
+    print("Setting up top-down orthographic render...")
+
+    # Select a compatible render engine (handles Blender versions where 'EEVEE' is renamed)
+    try:
+        engine_prop = bpy.context.scene.render.bl_rna.properties["engine"]
+        available_engines = [item.identifier for item in engine_prop.enum_items]
+    except Exception:
+        available_engines = []
+
+    preferred_engines = ["BLENDER_EEVEE_NEXT", "EEVEE", "CYCLES", "BLENDER_WORKBENCH"]
+    for candidate in preferred_engines:
+        if candidate in available_engines:
+            bpy.context.scene.render.engine = candidate
+            break
+    else:
+        # Fallback to whatever is currently set if preferences are unavailable
+        pass
+    bpy.context.scene.render.image_settings.file_format = "PNG"
+    bpy.context.scene.render.resolution_x = 1024
+    bpy.context.scene.render.resolution_y = 1024
+    bpy.context.scene.render.resolution_percentage = 100
+
     # Clear existing cameras
     for obj in bpy.context.scene.objects:
         if obj.type == "CAMERA":
@@ -752,65 +680,31 @@ def _setup_top_down_camera():
     # Set as active camera
     bpy.context.scene.camera = camera
 
-
-def _setup_isometric_camera():
-    """Sets up an isometric orthographic camera."""
-    # Clear existing cameras
-    for obj in bpy.context.scene.objects:
-        if obj.type == "CAMERA":
-            bpy.data.objects.remove(obj, do_unlink=True)
-
-    # Add isometric orthographic camera
-    bpy.ops.object.camera_add(location=(10, -10, 10))
-    camera = bpy.context.object
-    camera.name = "IsometricCamera"
-    camera.data.type = "ORTHO"
-    camera.data.ortho_scale = 20.0  # Adjust based on room size
-
-    # Point camera towards the origin with isometric rotation
-    camera.rotation_euler = (math.radians(54.736), 0, math.radians(45))
-
-    # Set as active camera
-    bpy.context.scene.camera = camera
-
-
-def _setup_lighting(energy: float = 1.0):
-    """Sets up basic lighting for the scene."""
+    # Add basic lighting for visibility
     if not any(obj.type == "LIGHT" for obj in bpy.context.scene.objects):
         bpy.ops.object.light_add(type="SUN", location=(0, 0, 15))
         light = bpy.context.object
-        light.data.energy = energy
+        light.data.energy = 5.0
         light.rotation_euler = (0, 0, 0)  # Light pointing down
-        logger.debug("Added top-down lighting")
+        print("Added top-down lighting")
 
+    # Render to Blender's internal buffer
+    print("Rendering top-down view to memory...")
+    bpy.ops.render.render()
 
-def render_to_file(output_path: str | Path) -> Path:
-    """
-    Renders the current scene to a file.
+    # Get rendered image from Blender
+    render_result = bpy.context.scene.render
+    width = render_result.resolution_x
+    height = render_result.resolution_y
 
-    Args:
-        output_path: The path to save the rendered image to.
+    # Extract pixel data
+    pixels = bpy.data.images["Render Result"].pixels[:]
 
-    Returns:
-        The path to the rendered image.
-    """
-    if not isinstance(output_path, Path):
-        output_path = Path(output_path)
+    # Convert to NumPy array (RGBA format)
+    image_array = np.array(pixels).reshape((height, width, 4))
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    # Set render output path
-    bpy.context.scene.render.filepath = str(output_path)
-
-    # Render the scene
-    logger.debug(f"Rendering scene to {output_path}")
-    bpy.ops.render.render(write_still=True)
-
-    if output_path.exists():
-        logger.debug(f"Render completed: {output_path}")
-        return output_path
-    else:
-        raise IOError(f"Render failed - output file not created: {output_path}")
+    print(f"Render completed: {width}x{height} RGBA array")
+    return image_array
 
 
 def render_to_numpy() -> np.ndarray:
@@ -837,49 +731,6 @@ def render_to_numpy() -> np.ndarray:
     return image_array
 
 
-def create_scene_visualization(
-    resolution=1024, format="jpg", output_dir: str = None, view: str = "top_down"
-) -> Path:
-    """
-    Creates a visualization of the current scene.
-
-    Args:
-        resolution: The resolution of the output image.
-        format: The format of the output image.
-        output_dir: The directory to save the output image to.
-        view: The view to render from. Can be 'top_down' or 'isometric'.
-
-    Returns:
-        Path to the rendered scene visualization file.
-    """
-    logger.debug(f"Setting up {view} orthographic render...")
-
-    _select_render_engine()
-    _configure_output_image(format, resolution)
-    if view == "top_down":
-        _setup_top_down_camera()
-    elif view == "isometric":
-        _setup_isometric_camera()
-    else:
-        raise ValueError(
-            f"Unsupported view type: {view}. Must be 'top_down' or 'isometric'."
-        )
-    _setup_lighting(energy=0.5)
-
-    # Prepare output filepath
-    if output_dir is None:
-        output_dir = tempfile.gettempdir()
-
-    output_path = get_filename(
-        output_dir=output_dir,
-        base_name=f"sb_scene_viz_{view}",
-        extension=format.lower(),
-        strategy="increment",
-    )
-
-    return render_to_file(output_path)
-
-
 def load_scene_from_yaml(filepath: str) -> dict[str, Any]:
     """
     Loads a scene definition from a YAML file.
@@ -892,3 +743,19 @@ def load_scene_from_yaml(filepath: str) -> dict[str, Any]:
     """
     with open(filepath, "r") as f:
         return yaml.safe_load(f)
+
+
+if __name__ == "__main__":
+    # This is an example of how you might use this script.
+    # You would first need to load your scene definition into a dictionary.
+
+    # Example of loading from a YAML file:
+    # Note: This will likely fail if the sourceIds in the yaml are not valid
+    # or if the required importers are not available.
+    try:
+        scene_data = load_scene_from_yaml("scenes/generated_scene.yaml")
+        parse_scene_definition(scene_data)
+        save_scene("output.blend")
+        print("\nBlender scene created successfully from YAML data.")
+    except (IOError, NotImplementedError, ValueError, FileNotFoundError) as e:
+        print(f"\n[ERROR] Could not create Blender scene: {e}")

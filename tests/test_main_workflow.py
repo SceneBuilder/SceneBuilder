@@ -27,7 +27,7 @@ def test_main_workflow():
     if result:
         final_scene = result.output
         console.print(Panel("[bold green]Exporting to Blender[/]", expand=False))
-        # Convert from BaseModel to dict for blender_decoder
+        # Convert from BaseModel to dict for blender
         from scene_builder.utils.conversions import pydantic_to_dict
         scene_dict = pydantic_to_dict(final_scene)
 
