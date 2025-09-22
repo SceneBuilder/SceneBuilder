@@ -16,6 +16,12 @@ class PlacementNode(BaseNode[PlacementState]):
     async def run(
         self, ctx: GraphRunContext[PlacementState]
     ) -> PlacementVisualFeedback | End[Room]:
+        ctx.state.run_count += 1  # DEBUG
+
+        # TEMP HACK: terminate after first execution
+        if ctx.state.run_count >= 2:
+            return End(ctx.state.room)
+
         if DEBUG:
             # user_prompt = "By the way, I have a quick question: are you able to read the deps (the PlacementState)?"
             # user_prompt = "Could you repeat exactly what was provided to you (in terms of the depedencies) into the 'reasoning' output?"

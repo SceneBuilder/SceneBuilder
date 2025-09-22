@@ -102,7 +102,8 @@ class RoomDesignNode(BaseNode[RoomDesignState]):
         # Remove the object (blueprint) from shopping cart to prevent excessive repeats
         # NOTE: since the shopping cart does not have a quantity property, we assume quantity=1 for now
         idx = next((i for i, obj in enumerate(ctx.state.shopping_cart) if obj == what_to_place), None)
-        ctx.state.shopping_cart.pop(idx)
+        if idx is not None:
+            ctx.state.shopping_cart.pop(idx)
 
         # NOTE: It would be interesting if the room design agent can "think" of
         #       certain opinions and feed it to PlacementNode as text guidance.
