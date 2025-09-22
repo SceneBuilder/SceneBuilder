@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pydantic_graph import BaseNode, End, Graph, GraphRunContext
 
-from scene_builder.config import DEBUG
+from scene_builder.config import DEBUG, TEST_ASSET_DIR
 from scene_builder.decoder import blender
 from scene_builder.definition.scene import Room
 from scene_builder.utils.conversions import pydantic_to_dict
@@ -58,7 +58,7 @@ class PlacementVisualFeedback(BaseNode[PlacementState]):
     async def run(self, ctx: GraphRunContext[PlacementState]) -> PlacementNode:
         room_data = pydantic_to_dict(ctx.state.room)
         # blender.load_template(
-        #     "test_assets/scenes/classroom.blend", clear_scene=True
+        #     f"{TEST_ASSET_DIR}/scenes/classroom.blend", clear_scene=True
         # )  # TEMP HACK
         blender.parse_room_definition(room_data)
         top_down_render = blender.create_scene_visualization(output_dir="test_output")
