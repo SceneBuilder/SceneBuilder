@@ -17,7 +17,7 @@ from scene_builder.workflow.agents import (
     placement_agent,
     planning_agent,
 )
-from scene_builder.workflow.state import PlacementState, RoomUpdateState
+from scene_builder.workflow.states import PlacementState, RoomUpdateState
 
 DEBUG = True
 
