@@ -326,7 +326,7 @@ def test_partial_room_completion():
     # )
 
     # NOTE: option 2
-    room = pydantic_from_yaml("test_assets/scenes/classroom.yaml", Scene).rooms[0]
+    room = pydantic_from_yaml(f"{TEST_ASSET_DIR}/scenes/classroom.yaml", Scene).rooms[0]
 
     initial_state = PlacementState(
         room=room,
@@ -334,7 +334,7 @@ def test_partial_room_completion():
         what_to_place=search_test_asset("classroom_table"),
     )
 
-    blender.load_template("test_assets/scenes/classroom.blend", clear_scene=True)
+    blender.load_template(f"{TEST_ASSET_DIR}/scenes/classroom.blend", clear_scene=True)
 
     async def run_graph():
         return await placement_graph.run(PlacementVisualFeedback(), state=initial_state)

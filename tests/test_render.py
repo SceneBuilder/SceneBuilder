@@ -1,8 +1,8 @@
 import pytest
-from pathlib import Path
 import unittest.mock as mock
+from pathlib import Path
 
-# bpy = pytest.importorskip("bpy", reason="Blender bpy not available")
+from scene_builder.config import TEST_ASSET_DIR
 from scene_builder.decoder import blender
 from scene_builder.importer.test_asset_importer import search_test_asset
 from scene_builder.nodes.placement import PlacementVisualFeedback
@@ -89,7 +89,7 @@ def test_template_loading():
     ctx = Ctx()
     ctx.state = state
 
-    template_path = "test_assets/scenes/classroom.blend"
+    template_path = f"{TEST_ASSET_DIR}/scenes/classroom.blend"
     assert Path(template_path).exists()
 
     # with mock.patch("scene_builder.decoder.blender.load_template") as mock_load:

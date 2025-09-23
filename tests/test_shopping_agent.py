@@ -15,7 +15,7 @@ def is_graphics_db_available():
     """Check if the graphics database server is available."""
     try:
         response = requests.get(
-            f"{GDB_API_BASE_URL}/assets/search?query=test&top_k=1", timeout=5
+            f"{GDB_API_BASE_URL}/objects/search?query=test&top_k=1", timeout=5
         )
         return response.status_code == 200
     except (requests.exceptions.RequestException, ConnectionError):

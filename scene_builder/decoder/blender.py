@@ -13,6 +13,7 @@ from scipy.spatial.transform import Rotation
 from mathutils.geometry import tessellate_polygon
 from mathutils import Vector
 
+from scene_builder.config import TEST_ASSET_DIR
 from scene_builder.definition.scene import Object, Room, Scene
 from scene_builder.importer import objaverse_importer, test_asset_importer
 from scene_builder.logging import logger
@@ -21,7 +22,7 @@ from scene_builder.utils.file import get_filename
 
 
 HDRI_FILE_PATH = Path(
-    "~/GitHub/SceneBuilder-Test-Assets/hdri/autumn_field_puresky_4k.exr"
+    f"{TEST_ASSET_DIR}/hdri/autumn_field_puresky_4k.exr"
 ).expanduser()  # TEMP HACK
 
 
@@ -124,7 +125,6 @@ def _create_room(room_data: dict[str, Any]):
     # Create objects in the room
     for obj_data in room_data.get("objects", []):
         _create_object(obj_data)
-
 
 
 def _create_object(obj_data: dict[str, Any], parent_location: str = "origin"):
@@ -327,7 +327,9 @@ def _create_floor_mesh(
             top_face.normal_update()
         except ValueError as e:
             # If direct face creation fails, try triangulation
-            logger.debug(f"Direct face creation failed: {e}. Attempting triangulation...")
+            logger.debug(
+                f"Direct face creation failed: {e}. Attempting triangulation..."
+            )
 
             # Convert to mathutils Vectors for tessellation
             vectors = [Vector(v) for v in verts_3d]
@@ -727,9 +729,8 @@ def render_top_down(output_dir: str = None) -> Path:
         Path(output_dir)
         / f"room_topdown_{abs(hash(str(bpy.context.scene.objects)))}.png"
     )
-    
-    return render_to_file(output_path)  
 
+    return render_to_file(output_path)
 
 
 def render() -> np.ndarray:
@@ -761,7 +762,7 @@ def render() -> np.ndarray:
     logger.debug(f"Render completed: {width}x{height} RGBA array")
     return image_array
 
-    
+
 def _configure_output_image(format: str, resolution: int):
     format = format.upper()
     mapping = {"JPG": "JPEG"}
