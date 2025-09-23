@@ -7,8 +7,8 @@ from pydantic_graph import GraphRunResult
 from scene_builder.config import TEST_ASSET_DIR
 from scene_builder.database.object import ObjectDatabase
 from scene_builder.decoder import blender
-from scene_builder.definition.scene import Object, ObjectBlueprint, Room, Vector2, Scene
 from scene_builder.definition.plan import RoomPlan
+from scene_builder.definition.scene import Object, ObjectBlueprint, Room, Vector2, Scene
 from scene_builder.importer.test_asset_importer import search_test_asset
 from scene_builder.logging import configure_logging
 from scene_builder.nodes.design import (

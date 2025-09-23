@@ -1,7 +1,9 @@
 import os
 import tempfile
 import math
+import sys
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Optional
 
@@ -26,6 +28,42 @@ HDRI_FILE_PATH = Path(
 ).expanduser()  # TEMP HACK
 
 
+@contextmanager
+def suppress_blender_logs():
+    """A context manager that redirects stdout and stderr to devnull.
+
+    This is used to suppress verbose console output from Blender operations
+    that cannot be controlled through Python's logging module.
+    """
+    # Save the original stdout and stderr file descriptors
+    original_stdout_fd = sys.stdout.fileno()
+    original_stderr_fd = sys.stderr.fileno()
+
+    # Create duplicates of the original file descriptors
+    saved_stdout_fd = os.dup(original_stdout_fd)
+    saved_stderr_fd = os.dup(original_stderr_fd)
+
+    # Open /dev/null or 'nul' depending on the OS
+    devnull_fd = os.open(os.devnull, os.O_WRONLY)
+
+    try:
+        # Redirect stdout and stderr to the null device
+        os.dup2(devnull_fd, original_stdout_fd)
+        os.dup2(devnull_fd, original_stderr_fd)
+
+        # Yield control back to the 'with' block
+        yield
+    finally:
+        # Restore the original stdout and stderr
+        os.dup2(saved_stdout_fd, original_stdout_fd)
+        os.dup2(saved_stderr_fd, original_stderr_fd)
+
+        # Close the file descriptors we opened
+        os.close(devnull_fd)
+        os.close(saved_stdout_fd)
+        os.close(saved_stderr_fd)
+
+
 def parse_scene_definition(scene_data: dict[str, Any]):
     """
     Parses the scene definition dictionary and creates the scene in Blender.
@@ -38,11 +76,12 @@ def parse_scene_definition(scene_data: dict[str, Any]):
     if isinstance(scene_data, Scene):
         scene_data = pydantic_to_dict(scene_data)
 
-    # Clear the existing scene
-    _clear_scene()
+    with suppress_blender_logs():
+        # Clear the existing scene
+        _clear_scene()
 
-    for room_data in scene_data.get("rooms", []):
-        _create_room(room_data)
+        for room_data in scene_data.get("rooms", []):
+            _create_room(room_data)
 
 
 def parse_room_definition(room_data: dict[str, Any], clear=False):
@@ -60,17 +99,19 @@ def parse_room_definition(room_data: dict[str, Any], clear=False):
     if isinstance(room_data, Room):
         room_data = pydantic_to_dict(room_data)
 
-    # Clear the existing scene
-    if clear:
-        _clear_scene()
+    with suppress_blender_logs():
+        # Clear the existing scene
+        if clear:
+            _clear_scene()
 
-    _create_room(room_data)
+        _create_room(room_data)
 
 
 def _clear_scene():
     """Clears all objects from the current Blender scene."""
-    bpy.ops.object.select_all(action="SELECT")
-    bpy.ops.object.delete()
+    with suppress_blender_logs():
+        bpy.ops.object.select_all(action="SELECT")
+        bpy.ops.object.delete()
     logger.debug("Cleared existing scene.")
 
 
@@ -174,10 +215,11 @@ def _create_object(obj_data: dict[str, Any], parent_location: str = "origin"):
     if object_path and object_path.endswith(".glb"):
         try:
             # Deselect all objects before import to ensure clean selection
-            bpy.ops.object.select_all(action="DESELECT")
+            with suppress_blender_logs():
+                bpy.ops.object.select_all(action="DESELECT")
 
-            # Import the GLTF file - imported objects will be selected
-            bpy.ops.import_scene.gltf(filepath=object_path)
+                # Import the GLTF file - imported objects will be selected
+                bpy.ops.import_scene.gltf(filepath=object_path)
 
             # Get only top-level imported objects (no parents) to preserve hierarchy
             imported_objects = [
@@ -218,7 +260,8 @@ def _create_object(obj_data: dict[str, Any], parent_location: str = "origin"):
                 empty_location = (0, 0, 0)
 
             # Create Empty at the calculated location
-            bpy.ops.object.empty_add(type="PLAIN_AXES", location=empty_location)
+            with suppress_blender_logs():
+                bpy.ops.object.empty_add(type="PLAIN_AXES", location=empty_location)
             blender_obj = bpy.context.active_object
             blender_obj.name = object_name
 
@@ -405,12 +448,13 @@ def _create_floor_mesh(
 
         # Generate UV coordinates for texturing
         bpy.context.view_layer.objects.active = floor_obj
-        bpy.ops.object.select_all(action="DESELECT")
-        floor_obj.select_set(True)
-        bpy.ops.object.mode_set(mode="EDIT")
-        bpy.ops.mesh.select_all(action="SELECT")
-        bpy.ops.uv.unwrap(method="ANGLE_BASED", margin=0.001)
-        bpy.ops.object.mode_set(mode="OBJECT")
+        with suppress_blender_logs():
+            bpy.ops.object.select_all(action="DESELECT")
+            floor_obj.select_set(True)
+            bpy.ops.object.mode_set(mode="EDIT")
+            bpy.ops.mesh.select_all(action="SELECT")
+            bpy.ops.uv.unwrap(method="ANGLE_BASED", margin=0.001)
+            bpy.ops.object.mode_set(mode="OBJECT")
         logger.debug(f"Generated UV coordinates for floor: {floor_name}")
 
     finally:
@@ -675,7 +719,8 @@ def load_template(path: str, clear_scene: bool):
     if clear_scene:
         _clear_scene()
 
-    bpy.ops.wm.open_mainfile(filepath=path)
+    with suppress_blender_logs():
+        bpy.ops.wm.open_mainfile(filepath=path)
     logger.debug(f"Loaded template from {path}")
 
 
@@ -686,7 +731,8 @@ def save_scene(filepath: str):
 
     # Pack all external images into the .blend file
     try:
-        bpy.ops.file.pack_all()
+        with suppress_blender_logs():
+            bpy.ops.file.pack_all()
         logger.debug("✅ Packed all external images into .blend file")
     except Exception as e:
         logger.debug(f"⚠️  Warning: Could not pack images: {e}")
@@ -699,68 +745,12 @@ def save_scene(filepath: str):
                     space.shading.type = "MATERIAL"
                     break
 
-    bpy.ops.wm.save_as_mainfile(filepath=filepath)
+    with suppress_blender_logs():
+        bpy.ops.wm.save_as_mainfile(filepath=filepath)
     logger.debug(f"Scene saved to {filepath}")
 
 
-def render_top_down(output_dir: str = None) -> Path:
-    """
-    Brief Pipeline:
-    1. Build the scene in Blender (bpy)
-    2. Set the camera to top-down + orthographic, then render
-    3. Save the rendered image as a file (PNG)
 
-    Returns:
-        Path to the rendered top-down PNG file.
-    """
-    logger.debug("Setting up top-down orthographic render...")
-
-    # Use existing modular functions instead of duplicating code
-    _select_render_engine()
-    _configure_output_image("PNG", 1024)
-    _setup_top_down_camera()
-    _setup_lighting(energy=0.5)
-
-    # Prepare output filepath
-    if output_dir is None:
-        output_dir = tempfile.gettempdir()
-
-    output_path = (
-        Path(output_dir)
-        / f"room_topdown_{abs(hash(str(bpy.context.scene.objects)))}.png"
-    )
-
-    return render_to_file(output_path)
-
-
-def render() -> np.ndarray:
-    """
-    Main render function for the workflow - renders scene to NumPy array.
-    Sets up top-down orthographic view and renders directly to memory.
-
-    Returns:
-        NumPy array of rendered top-down image data (RGBA format).
-    """
-    logger.debug("Setting up top-down orthographic render...")
-
-    _select_render_engine()
-    _configure_output_image("PNG", 1024)
-    _setup_top_down_camera()
-    _setup_lighting(energy=5.0)
-
-    logger.debug("Rendering top-down view to memory...")
-    bpy.ops.render.render()
-
-    render_result = bpy.context.scene.render
-    width = render_result.resolution_x
-    height = render_result.resolution_y
-
-    pixels = bpy.data.images["Render Result"].pixels[:]
-
-    image_array = np.array(pixels).reshape((height, width, 4))
-
-    logger.debug(f"Render completed: {width}x{height} RGBA array")
-    return image_array
 
 
 def _configure_output_image(format: str, resolution: int):
@@ -775,22 +765,50 @@ def _configure_output_image(format: str, resolution: int):
     bpy.context.scene.render.resolution_percentage = 100
 
 
-def _select_render_engine():
-    """Selects a compatible render engine."""
+def _configure_render_settings(engine: str = None, samples: int = 256, enable_gpu: bool = True):
+    """Selects a compatible render engine and configures render settings."""
     try:
         engine_prop = bpy.context.scene.render.bl_rna.properties["engine"]
         available_engines = [item.identifier for item in engine_prop.enum_items]
     except Exception:
         available_engines = []
 
-    preferred_engines = ["BLENDER_EEVEE_NEXT", "EEVEE", "CYCLES", "BLENDER_WORKBENCH"]
-    for candidate in preferred_engines:
-        if candidate in available_engines:
-            bpy.context.scene.render.engine = candidate
-            break
+    # Use specified engine if provided and available
+    if engine and engine in available_engines:
+        bpy.context.scene.render.engine = engine
     else:
-        # Fallback to whatever is currently set if preferences are unavailable
-        pass
+        # Fallback to preferred engines
+        preferred_engines = ["BLENDER_EEVEE_NEXT", "EEVEE", "CYCLES", "BLENDER_WORKBENCH"]
+        for candidate in preferred_engines:
+            if candidate in available_engines:
+                bpy.context.scene.render.engine = candidate
+                break
+        else:
+            # Fallback to whatever is currently set if preferences are unavailable
+            pass
+
+    # Configure samples based on selected engine
+    if samples is not None:
+        if bpy.context.scene.render.engine == 'CYCLES':
+            bpy.context.scene.cycles.samples = samples
+        elif bpy.context.scene.render.engine in ['BLENDER_EEVEE_NEXT', 'EEVEE']:
+            bpy.context.scene.eevee.taa_render_samples = samples
+
+    # Enable GPU rendering for Cycles if requested
+    if enable_gpu and bpy.context.scene.render.engine == 'CYCLES':
+        try:
+            prefs = bpy.context.preferences.addons['cycles'].preferences
+            prefs.compute_device_type = 'CUDA'  # Try CUDA first
+            bpy.context.scene.cycles.device = 'GPU'
+        except Exception:
+            # Fallback if CUDA not available or addon not found
+            try:
+                prefs = bpy.context.preferences.addons['cycles'].preferences
+                prefs.compute_device_type = 'OPENCL'
+                bpy.context.scene.cycles.device = 'GPU'
+            except Exception:
+                # GPU acceleration not available, continue with CPU
+                pass
 
 
 def _setup_top_down_camera():
@@ -801,7 +819,8 @@ def _setup_top_down_camera():
             bpy.data.objects.remove(obj, do_unlink=True)
 
     # Add top-down orthographic camera
-    bpy.ops.object.camera_add(location=(0, 0, 10))  # 10 units above origin
+    with suppress_blender_logs():
+        bpy.ops.object.camera_add(location=(0, 0, 10))  # 10 units above origin
     camera = bpy.context.object
     camera.name = "TopDownCamera"
 
@@ -824,7 +843,8 @@ def _setup_isometric_camera():
             bpy.data.objects.remove(obj, do_unlink=True)
 
     # Add isometric orthographic camera
-    bpy.ops.object.camera_add(location=(10, -10, 10))
+    with suppress_blender_logs():
+        bpy.ops.object.camera_add(location=(10, -10, 10))
     camera = bpy.context.object
     camera.name = "IsometricCamera"
     camera.data.type = "ORTHO"
@@ -840,7 +860,8 @@ def _setup_isometric_camera():
 def _setup_lighting(energy: float = 1.0):
     """Sets up basic lighting for the scene."""
     if not any(obj.type == "LIGHT" for obj in bpy.context.scene.objects):
-        bpy.ops.object.light_add(type="SUN", location=(0, 0, 15))
+        with suppress_blender_logs():
+            bpy.ops.object.light_add(type="SUN", location=(0, 0, 15))
         light = bpy.context.object
         light.data.energy = energy
         light.rotation_euler = (0, 0, 0)  # Light pointing down
@@ -867,7 +888,8 @@ def render_to_file(output_path: str | Path) -> Path:
 
     # Render the scene
     logger.debug(f"Rendering scene to {output_path}")
-    bpy.ops.render.render(write_still=True)
+    with suppress_blender_logs():
+        bpy.ops.render.render(write_still=True)
 
     if output_path.exists():
         logger.debug(f"Render completed: {output_path}")
@@ -884,7 +906,8 @@ def render_to_numpy() -> np.ndarray:
         NumPy array of rendered image data.
     """
     # Render to Blender's internal buffer
-    bpy.ops.render.render()
+    with suppress_blender_logs():
+        bpy.ops.render.render()
 
     # Get rendered image from Blender
     render_result = bpy.context.scene.render
@@ -917,18 +940,6 @@ def create_scene_visualization(
     """
     logger.debug(f"Setting up {view} orthographic render...")
 
-    _select_render_engine()
-    _configure_output_image(format, resolution)
-    if view == "top_down":
-        _setup_top_down_camera()
-    elif view == "isometric":
-        _setup_isometric_camera()
-    else:
-        raise ValueError(
-            f"Unsupported view type: {view}. Must be 'top_down' or 'isometric'."
-        )
-    _setup_lighting(energy=0.5)
-
     # Prepare output filepath
     if output_dir is None:
         output_dir = tempfile.gettempdir()
@@ -940,9 +951,23 @@ def create_scene_visualization(
         strategy="increment",
     )
 
-    scene = bpy.context.scene
-    setup_lighting_foundation(scene)
-    setup_post_processing(scene)
+    # Suppress verbose Blender output during scene setup and rendering
+    with suppress_blender_logs():
+        _configure_render_settings()
+        _configure_output_image(format, resolution)
+        if view == "top_down":
+            _setup_top_down_camera()
+        elif view == "isometric":
+            _setup_isometric_camera()
+        else:
+            raise ValueError(
+                f"Unsupported view type: {view}. Must be 'top_down' or 'isometric'."
+            )
+        _setup_lighting(energy=0.5)
+
+        scene = bpy.context.scene
+        setup_lighting_foundation(scene)
+        setup_post_processing(scene)
 
     return render_to_file(output_path)
 
@@ -974,7 +999,7 @@ def setup_lighting_foundation(
     cycles_settings = scene.cycles
 
     # Configure GI bounces
-    cycles_settings.max_bounces = 12
+    cycles_settings.max_bounces = 6
     cycles_settings.diffuse_bounces = 4
     cycles_settings.glossy_bounces = 4
 
