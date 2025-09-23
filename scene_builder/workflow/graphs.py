@@ -1,8 +1,7 @@
 from pydantic_graph import Graph
 
 from scene_builder.definition.scene import Room
-from scene_builder.nodes.design import RoomDesignNode
-
+from scene_builder.nodes.design import RoomDesignNode, RoomDesignVisualFeedback
 # from scene_builder.nodes.feedback import VisualFeedback
 from scene_builder.nodes.design import DesignLoopRouter  # TEMP
 from scene_builder.nodes.general import MetadataNode, UpdateScene
@@ -21,6 +20,7 @@ main_graph = Graph(
         FloorPlanNode,
         DesignLoopRouter,
         RoomDesignNode,
+        RoomDesignVisualFeedback,  # TEMP?
         UpdateScene,
         PlacementVisualFeedback,  # TEMP
         PlacementNode,  # TEMP

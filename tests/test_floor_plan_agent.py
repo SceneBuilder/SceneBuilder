@@ -1,8 +1,9 @@
-import pytest
 import asyncio
-from scene_builder.workflow.graph import FloorPlanAgent, MainState
-from scene_builder.definition.scene import Scene, GlobalConfig
-from pydantic_graph import GraphRunContext
+import pytest
+
+from scene_builder.definition.scene import Scene
+from scene_builder.workflow.graphs import FloorPlanNode
+from scene_builder.workflow.states import MainState
 
 
 async def test_floor_plan_agent_rectangular_classroom():
@@ -16,7 +17,6 @@ async def test_floor_plan_agent_rectangular_classroom():
             category="educational", tags=["classroom"], floorType="single", rooms=[]
         ),
         plan="Create a rectangular classroom with space for students and teacher.",
-        global_config=GlobalConfig(debug=False),  # Use production mode to test LLM
     )
 
     # Mock context
@@ -27,7 +27,7 @@ async def test_floor_plan_agent_rectangular_classroom():
     context = MockContext(state)
 
     # Test the agent
-    agent = FloorPlanAgent()
+    agent = FloorPlanNode()
 
     try:
         result = await agent.run(context)
@@ -65,7 +65,7 @@ async def test_floor_plan_agent_rectangular_classroom():
                     blender.parse_room_definition(room_data)
 
                     # Render top-down view
-                    render_path = blender.render_top_down("./")
+                    render_path = blender.create_scene_visualization(output_dir="./")
                     print(f"✓ Rendered image saved to: {render_path}")
 
                     # Save Blender scene

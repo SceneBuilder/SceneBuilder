@@ -750,64 +750,7 @@ def save_scene(filepath: str):
     logger.debug(f"Scene saved to {filepath}")
 
 
-def render_top_down(output_dir: str = None) -> Path:
-    """
-    Brief Pipeline:
-    1. Build the scene in Blender (bpy)
-    2. Set the camera to top-down + orthographic, then render
-    3. Save the rendered image as a file (PNG)
 
-    Returns:
-        Path to the rendered top-down PNG file.
-    """
-    logger.debug("Setting up top-down orthographic render...")
-
-    # Use existing modular functions instead of duplicating code
-    _configure_render_settings()
-    _configure_output_image("PNG", 1024)
-    _setup_top_down_camera()
-    _setup_lighting(energy=0.5)
-
-    # Prepare output filepath
-    if output_dir is None:
-        output_dir = tempfile.gettempdir()
-
-    output_path = (
-        Path(output_dir)
-        / f"room_topdown_{abs(hash(str(bpy.context.scene.objects)))}.png"
-    )
-
-    return render_to_file(output_path)
-
-
-def render() -> np.ndarray:
-    """
-    Main render function for the workflow - renders scene to NumPy array.
-    Sets up top-down orthographic view and renders directly to memory.
-
-    Returns:
-        NumPy array of rendered top-down image data (RGBA format).
-    """
-    logger.debug("Setting up top-down orthographic render...")
-
-    _configure_render_settings()
-    _configure_output_image("PNG", 1024)
-    _setup_top_down_camera()
-    _setup_lighting(energy=5.0)
-
-    logger.debug("Rendering top-down view to memory...")
-    bpy.ops.render.render()
-
-    render_result = bpy.context.scene.render
-    width = render_result.resolution_x
-    height = render_result.resolution_y
-
-    pixels = bpy.data.images["Render Result"].pixels[:]
-
-    image_array = np.array(pixels).reshape((height, width, 4))
-
-    logger.debug(f"Render completed: {width}x{height} RGBA array")
-    return image_array
 
 
 def _configure_output_image(format: str, resolution: int):
@@ -1056,7 +999,7 @@ def setup_lighting_foundation(
     cycles_settings = scene.cycles
 
     # Configure GI bounces
-    cycles_settings.max_bounces = 12
+    cycles_settings.max_bounces = 6
     cycles_settings.diffuse_bounces = 4
     cycles_settings.glossy_bounces = 4
 

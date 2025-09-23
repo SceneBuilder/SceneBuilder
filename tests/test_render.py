@@ -4,11 +4,11 @@ from pathlib import Path
 
 from scene_builder.config import TEST_ASSET_DIR
 from scene_builder.decoder import blender
+from scene_builder.definition.plan import RoomPlan
+from scene_builder.definition.scene import Room, Object, Vector2, Vector3
 from scene_builder.importer.test_asset_importer import search_test_asset
 from scene_builder.nodes.placement import PlacementVisualFeedback
 from scene_builder.workflow.states import PlacementState
-from scene_builder.definition.scene import Room, Object, Vector2, Vector3
-from scene_builder.definition.plan import RoomPlan
 
 
 def test_visual_feedback_renders_png():
