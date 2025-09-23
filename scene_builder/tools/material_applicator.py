@@ -101,7 +101,7 @@ def create_diffuse_material(
             # Pack the image into the blend file to ensure it's saved
             try:
                 image.pack()
-                print(f"✅ Packed image into .blend file: {image.name}")
+                print(f"Packed image into .blend file: {image.name}")
             except Exception as pack_error:
                 print(f"⚠️  Warning: Could not pack image: {pack_error}")
 
@@ -116,7 +116,7 @@ def create_diffuse_material(
             print(f"Attempted absolute path: {abs_texture_path}")
             return None
 
-        # Add UV mapping (always needed for proper texturing)
+        # Add UV mapping 
         tex_coord = material.node_tree.nodes.new(type="ShaderNodeTexCoord")
         tex_coord.location = (-800, 0)
 
@@ -154,7 +154,7 @@ def create_diffuse_material(
             print(f"Available bsdf inputs: {[inp.name for inp in bsdf.inputs]}")
             return None
 
-        # Force viewport to show materials properly
+        # viewport to show materials properly
         try:
             # Set all 3D viewports to Material Preview mode
             for window in bpy.context.window_manager.windows:
