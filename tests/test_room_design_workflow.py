@@ -19,8 +19,10 @@ from scene_builder.nodes.design import (
 # from scene_builder.nodes.placement import PlacementNode, placement_graph, VisualFeedback
 from scene_builder.nodes.placement import PlacementNode, PlacementVisualFeedback, placement_graph
 # from scene_builder.nodes.feedback import VisualFeedback
+from scene_builder.tools.material_workflow import apply_floor_material
 from scene_builder.utils.conversions import pydantic_from_yaml
 from scene_builder.utils.image import create_gif_from_images
+from scene_builder.workflow.agents import room_design_agent
 # from scene_builder.workflow.graphs import (
 #     room_design_graph,
 #     placement_graph,
@@ -357,18 +359,26 @@ def test_room_design_workflow(case: str):
         raise ValueError(f"Unknown test case: {case}. Available cases: {list(TEST_CASES.keys())}")
 
     test_data = TEST_CASES[case]
+    boundary = test_data["boundary"]
+    description = test_data["description"]
 
     initial_room_state = RoomDesignState(
         room=Room(
             id=test_data["room_id"],
-            boundary=test_data["boundary"],
+            boundary=boundary,
         ),
-        room_plan=RoomPlan(room_description=test_data["description"]),
+        room_plan=RoomPlan(room_description=description),
     )
     blender._clear_scene()
 
     floor_result = blender._create_floor_mesh(test_data["boundary"], test_data["room_id"])
     print(f"Floor mesh created: {floor_result.get('status', 'unknown')}")
+
+    # TEMP
+    material_prompt = f"Could you write a search query for a material (texture) that will be applied to the floor, based on the room description?: {description}"
+    response = room_design_agent.run_sync(material_prompt, output_type=str)
+    material_result = apply_floor_material(response.output, boundary=boundary)
+    print(f"Material applied: {material_result}")
 
     async def run_graph():
         # return await room_design_graph.run(RoomDesignNode(), state=initial_room_state)
@@ -388,3 +398,4 @@ if __name__ == "__main__":
     # test_room_design_workflow("garage")
     # test_room_design_workflow("laboratory")
     test_room_design_workflow("library")
+    # test_room_design_workflow("hospital_room")
