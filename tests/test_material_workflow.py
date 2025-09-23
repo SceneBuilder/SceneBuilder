@@ -38,14 +38,7 @@ def test_material_workflow_integration():
     floor_result = blender._create_floor_mesh(boundary, "test_material_room")
     assert floor_result.get("status") == "success", "Floor mesh creation should succeed"
 
-    boundary_tuples = [(point.x, point.y) for point in boundary]
-    bounds = blender._calculate_bounds(boundary_tuples)
-    current_size = max(bounds["width"], bounds["height"])
-    reference_size = 10.0  # 10x10 room -> uv_scale=30.0 base
-    reference_uv_scale = 30.0
-    calculated_uv_scale = reference_uv_scale * (current_size / reference_size)
-    
-    material_result = apply_floor_material("wood floor", uv_scale=calculated_uv_scale)
+    material_result = apply_floor_material("wood floor", boundary=boundary)
 
     print(f"Material workflow result: {material_result}")
 
