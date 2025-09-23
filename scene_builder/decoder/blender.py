@@ -716,7 +716,7 @@ def render_top_down(output_dir: str = None) -> Path:
     logger.debug("Setting up top-down orthographic render...")
 
     # Use existing modular functions instead of duplicating code
-    _select_render_engine()
+    _configure_render_settings()
     _configure_output_image("PNG", 1024)
     _setup_top_down_camera()
     _setup_lighting(energy=0.5)
@@ -743,7 +743,7 @@ def render() -> np.ndarray:
     """
     logger.debug("Setting up top-down orthographic render...")
 
-    _select_render_engine()
+    _configure_render_settings()
     _configure_output_image("PNG", 1024)
     _setup_top_down_camera()
     _setup_lighting(energy=5.0)
@@ -775,22 +775,50 @@ def _configure_output_image(format: str, resolution: int):
     bpy.context.scene.render.resolution_percentage = 100
 
 
-def _select_render_engine():
-    """Selects a compatible render engine."""
+def _configure_render_settings(engine: str = None, samples: int = 256, enable_gpu: bool = True):
+    """Selects a compatible render engine and configures render settings."""
     try:
         engine_prop = bpy.context.scene.render.bl_rna.properties["engine"]
         available_engines = [item.identifier for item in engine_prop.enum_items]
     except Exception:
         available_engines = []
 
-    preferred_engines = ["BLENDER_EEVEE_NEXT", "EEVEE", "CYCLES", "BLENDER_WORKBENCH"]
-    for candidate in preferred_engines:
-        if candidate in available_engines:
-            bpy.context.scene.render.engine = candidate
-            break
+    # Use specified engine if provided and available
+    if engine and engine in available_engines:
+        bpy.context.scene.render.engine = engine
     else:
-        # Fallback to whatever is currently set if preferences are unavailable
-        pass
+        # Fallback to preferred engines
+        preferred_engines = ["BLENDER_EEVEE_NEXT", "EEVEE", "CYCLES", "BLENDER_WORKBENCH"]
+        for candidate in preferred_engines:
+            if candidate in available_engines:
+                bpy.context.scene.render.engine = candidate
+                break
+        else:
+            # Fallback to whatever is currently set if preferences are unavailable
+            pass
+
+    # Configure samples based on selected engine
+    if samples is not None:
+        if bpy.context.scene.render.engine == 'CYCLES':
+            bpy.context.scene.cycles.samples = samples
+        elif bpy.context.scene.render.engine in ['BLENDER_EEVEE_NEXT', 'EEVEE']:
+            bpy.context.scene.eevee.taa_render_samples = samples
+
+    # Enable GPU rendering for Cycles if requested
+    if enable_gpu and bpy.context.scene.render.engine == 'CYCLES':
+        try:
+            prefs = bpy.context.preferences.addons['cycles'].preferences
+            prefs.compute_device_type = 'CUDA'  # Try CUDA first
+            bpy.context.scene.cycles.device = 'GPU'
+        except Exception:
+            # Fallback if CUDA not available or addon not found
+            try:
+                prefs = bpy.context.preferences.addons['cycles'].preferences
+                prefs.compute_device_type = 'OPENCL'
+                bpy.context.scene.cycles.device = 'GPU'
+            except Exception:
+                # GPU acceleration not available, continue with CPU
+                pass
 
 
 def _setup_top_down_camera():
@@ -917,7 +945,7 @@ def create_scene_visualization(
     """
     logger.debug(f"Setting up {view} orthographic render...")
 
-    _select_render_engine()
+    _configure_render_settings()
     _configure_output_image(format, resolution)
     if view == "top_down":
         _setup_top_down_camera()
