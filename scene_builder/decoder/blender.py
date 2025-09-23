@@ -27,6 +27,8 @@ HDRI_FILE_PATH = Path(
     f"{TEST_ASSET_DIR}/hdri/autumn_field_puresky_4k.exr"
 ).expanduser()  # TEMP HACK
 
+BACKGROUND_COLOR = (0.02, 0.02, 0.02, 1.0)
+
 
 @contextmanager
 def suppress_blender_logs():
@@ -186,7 +188,7 @@ def _create_object(obj_data: dict[str, Any], parent_location: str = "origin"):
 
     blender_obj = None
 
-    if obj_data.get("source") == "objaverse":
+    if obj_data.get("source").lower() == "objaverse":
         source_id = obj_data.get("source_id")
         if not source_id:
             raise ValueError(
@@ -750,9 +752,6 @@ def save_scene(filepath: str):
     logger.debug(f"Scene saved to {filepath}")
 
 
-
-
-
 def _configure_output_image(format: str, resolution: int):
     format = format.upper()
     mapping = {"JPG": "JPEG"}
@@ -765,7 +764,9 @@ def _configure_output_image(format: str, resolution: int):
     bpy.context.scene.render.resolution_percentage = 100
 
 
-def _configure_render_settings(engine: str = None, samples: int = 256, enable_gpu: bool = True):
+def _configure_render_settings(
+    engine: str = None, samples: int = 256, enable_gpu: bool = True
+):
     """Selects a compatible render engine and configures render settings."""
     try:
         engine_prop = bpy.context.scene.render.bl_rna.properties["engine"]
@@ -778,7 +779,12 @@ def _configure_render_settings(engine: str = None, samples: int = 256, enable_gp
         bpy.context.scene.render.engine = engine
     else:
         # Fallback to preferred engines
-        preferred_engines = ["BLENDER_EEVEE_NEXT", "EEVEE", "CYCLES", "BLENDER_WORKBENCH"]
+        preferred_engines = [
+            "BLENDER_EEVEE_NEXT",
+            "EEVEE",
+            "CYCLES",
+            "BLENDER_WORKBENCH",
+        ]
         for candidate in preferred_engines:
             if candidate in available_engines:
                 bpy.context.scene.render.engine = candidate
@@ -789,23 +795,23 @@ def _configure_render_settings(engine: str = None, samples: int = 256, enable_gp
 
     # Configure samples based on selected engine
     if samples is not None:
-        if bpy.context.scene.render.engine == 'CYCLES':
+        if bpy.context.scene.render.engine == "CYCLES":
             bpy.context.scene.cycles.samples = samples
-        elif bpy.context.scene.render.engine in ['BLENDER_EEVEE_NEXT', 'EEVEE']:
+        elif bpy.context.scene.render.engine in ["BLENDER_EEVEE_NEXT", "EEVEE"]:
             bpy.context.scene.eevee.taa_render_samples = samples
 
     # Enable GPU rendering for Cycles if requested
-    if enable_gpu and bpy.context.scene.render.engine == 'CYCLES':
+    if enable_gpu and bpy.context.scene.render.engine == "CYCLES":
         try:
-            prefs = bpy.context.preferences.addons['cycles'].preferences
-            prefs.compute_device_type = 'CUDA'  # Try CUDA first
-            bpy.context.scene.cycles.device = 'GPU'
+            prefs = bpy.context.preferences.addons["cycles"].preferences
+            prefs.compute_device_type = "CUDA"  # Try CUDA first
+            bpy.context.scene.cycles.device = "GPU"
         except Exception:
             # Fallback if CUDA not available or addon not found
             try:
-                prefs = bpy.context.preferences.addons['cycles'].preferences
-                prefs.compute_device_type = 'OPENCL'
-                bpy.context.scene.cycles.device = 'GPU'
+                prefs = bpy.context.preferences.addons["cycles"].preferences
+                prefs.compute_device_type = "OPENCL"
+                bpy.context.scene.cycles.device = "GPU"
             except Exception:
                 # GPU acceleration not available, continue with CPU
                 pass
@@ -924,7 +930,11 @@ def render_to_numpy() -> np.ndarray:
 
 
 def create_scene_visualization(
-    resolution=1024, format="jpg", output_dir: str = None, view: str = "top_down"
+    resolution=1024,
+    format="jpg",
+    output_dir: str = None,
+    view: str = "top_down",
+    background_color: tuple[float, float, float, float] = BACKGROUND_COLOR,
 ) -> Path:
     """
     Creates a visualization of the current scene.
@@ -966,7 +976,7 @@ def create_scene_visualization(
         _setup_lighting(energy=0.5)
 
         scene = bpy.context.scene
-        setup_lighting_foundation(scene)
+        setup_lighting_foundation(scene, background_color=background_color)
         setup_post_processing(scene)
 
     return render_to_file(output_path)
@@ -992,6 +1002,7 @@ def setup_lighting_foundation(
     scene: bpy.types.Scene,
     hdri_path: Optional[str | Path] = HDRI_FILE_PATH,
     hdri_strength: float = 1.0,
+    background_color: tuple[float, float, float, float] = BACKGROUND_COLOR,
 ):
     """Sets up global illumination and world environment lighting."""
     print("Setting up foundation lighting...")
@@ -1013,19 +1024,52 @@ def setup_lighting_foundation(
     nt = world.node_tree
     nt.nodes.clear()
 
-    # Create and link shader nodes
-    bg_node = nt.nodes.new(type="ShaderNodeBackground")
+    # Create nodes for separating HDRI lighting from background color
     output_node = nt.nodes.new(type="ShaderNodeOutputWorld")
-    bg_node.inputs["Strength"].default_value = hdri_strength
+    output_node.location = (400, 0)
 
+    # Mix Shader to combine HDRI lighting and background color
+    mix_node = nt.nodes.new(type="ShaderNodeMixShader")
+    mix_node.location = (200, 0)
+
+    # Background node for HDRI lighting
+    bg_hdri_node = nt.nodes.new(type="ShaderNodeBackground")
+    bg_hdri_node.location = (0, 100)
+    bg_hdri_node.inputs["Strength"].default_value = hdri_strength
+
+    # Background node for solid color background
+    bg_color_node = nt.nodes.new(type="ShaderNodeBackground")
+    bg_color_node.location = (0, -100)
+    bg_color_node.inputs["Color"].default_value = background_color
+    bg_color_node.inputs["Strength"].default_value = 1.0
+
+    # Light Path node to distinguish camera rays from other rays
+    light_path_node = nt.nodes.new(type="ShaderNodeLightPath")
+    light_path_node.location = (0, -250)
+
+    # Set up HDRI or fallback color for lighting
     if hdri_path and Path(hdri_path).exists():
         env_node = nt.nodes.new(type="ShaderNodeTexEnvironment")
+        env_node.location = (-200, 100)
         env_node.image = bpy.data.images.load(str(hdri_path))
-        nt.links.new(env_node.outputs["Color"], bg_node.inputs["Color"])
+        nt.links.new(env_node.outputs["Color"], bg_hdri_node.inputs["Color"])
     else:
-        bg_node.inputs["Color"].default_value = (0.1, 0.1, 0.1, 1.0)
+        # Fallback to a neutral color for lighting
+        bg_hdri_node.inputs["Color"].default_value = (0.1, 0.1, 0.1, 1.0)
 
-    nt.links.new(bg_node.outputs["Background"], output_node.inputs["Surface"])
+    # Link nodes together
+    # HDRI background to first slot of Mix Shader
+    nt.links.new(bg_hdri_node.outputs["Background"], mix_node.inputs[1])
+
+    # Color background to second slot of Mix Shader
+    nt.links.new(bg_color_node.outputs["Background"], mix_node.inputs[2])
+
+    # Light Path "Is Camera Ray" controls the mix factor
+    # Camera rays (value 1) use the color background, other rays (value 0) use HDRI
+    nt.links.new(light_path_node.outputs["Is Camera Ray"], mix_node.inputs["Fac"])
+
+    # Mix Shader output to World Output
+    nt.links.new(mix_node.outputs["Shader"], output_node.inputs["Surface"])
 
 
 # TODO: Implement this function to work with windows built by SceneBuilder.
