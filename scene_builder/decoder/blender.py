@@ -108,23 +108,22 @@ def _create_room(room_data: dict[str, Any]):
             logger.error(f"Failed to create floor mesh for room {room_id}: {e}")
 
     # Create walls from boundary if ceiling height is available
-    if boundary and room_data.get("floor_dimensions"):
-        floor_dims = room_data["floor_dimensions"]
-        ceiling_height = floor_dims.get(
-            "ceiling_height", 2.7
-        )  # Default to 2.7m if not specified
+    # if boundary and room_data.get("floor_dimensions"):
+    #     floor_dims = room_data["floor_dimensions"]
+    #     ceiling_height = floor_dims.get(
+    #         "ceiling_height", 2.7
+    #     )  # Default to 2.7m if not specified
 
-        logger.debug(f"Creating walls for room: {room_id} (height: {ceiling_height}m)")
-        try:
-            wall_result = _create_walls_from_boundary(boundary, room_id, ceiling_height)
-            logger.debug(f"Walls created: {wall_result.get('status', 'unknown')}")
-        except Exception as e:
-            logger.error(f"Failed to create walls for room {room_id}: {e}")
+    #     logger.debug(f"Creating walls for room: {room_id} (height: {ceiling_height}m)")
+    #     try:
+    #         wall_result = _create_walls_from_boundary(boundary, room_id, ceiling_height)
+    #         logger.debug(f"Walls created: {wall_result.get('status', 'unknown')}")
+    #     except Exception as e:
+    #         logger.error(f"Failed to create walls for room {room_id}: {e}")
 
-    # Create objects in the room
-    for obj_data in room_data.get("objects", []):
-        _create_object(obj_data)
-
+    # # Create objects in the room
+    # for obj_data in room_data.get("objects", []):
+    #     _create_object(obj_data)
 
 
 def _create_object(obj_data: dict[str, Any], parent_location: str = "origin"):
@@ -327,7 +326,9 @@ def _create_floor_mesh(
             top_face.normal_update()
         except ValueError as e:
             # If direct face creation fails, try triangulation
-            logger.debug(f"Direct face creation failed: {e}. Attempting triangulation...")
+            logger.debug(
+                f"Direct face creation failed: {e}. Attempting triangulation..."
+            )
 
             # Convert to mathutils Vectors for tessellation
             vectors = [Vector(v) for v in verts_3d]
@@ -451,151 +452,152 @@ def _create_floor_mesh(
     return result
 
 
-def _create_walls_from_boundary(
-    boundary: list[dict[str, float]],
-    room_id: str,
-    ceiling_height: float = 2.7,
-    wall_thickness: float = 0.2,
-) -> dict[str, Any]:
-    """
-    Creates wall meshes from room boundary points.
+# NOTE: Wall creation has been disabled
+# def _create_walls_from_boundary(
+#     boundary: list[dict[str, float]],
+#     room_id: str,
+#     ceiling_height: float = 2.7,
+#     wall_thickness: float = 0.2,
+# ) -> dict[str, Any]:
+#     """
+#     Creates wall meshes from room boundary points.
 
-    Args:
-        boundary: List of Vector2 points from room.boundary [{"x": float, "y": float}, ...]
-        room_id: Room identifier for naming
-        ceiling_height: Height of walls in meters (default: 2.7)
-        wall_thickness: Thickness of walls in meters (default: 0.2)
+#     Args:
+#         boundary: List of Vector2 points from room.boundary [{"x": float, "y": float}, ...]
+#         room_id: Room identifier for naming
+#         ceiling_height: Height of walls in meters (default: 2.7)
+#         wall_thickness: Thickness of walls in meters (default: 0.2)
 
-    Returns:
-        Dictionary with creation status and metadata
-    """
+#     Returns:
+#         Dictionary with creation status and metadata
+#     """
 
-    if not boundary or len(boundary) < 3:
-        return {
-            "status": "error",
-            "message": f"Room {room_id}: At least 3 boundary points required for wall creation",
-            "timestamp": int(time.time()),
-        }
+#     if not boundary or len(boundary) < 3:
+#         return {
+#             "status": "error",
+#             "message": f"Room {room_id}: At least 3 boundary points required for wall creation",
+#             "timestamp": int(time.time()),
+#         }
 
-    try:
-        # Generate timestamp for naming
-        timestamp = int(time.time())
+#     try:
+#         # Generate timestamp for naming
+#         timestamp = int(time.time())
 
-        # Ensure NavGo_Walls collection exists
-        collection = _ensure_collection("NavGo_Walls")
+#         # Ensure NavGo_Walls collection exists
+#         collection = _ensure_collection("NavGo_Walls")
 
-        # Convert boundary points to 2D coordinates
-        vertices_2d = []
-        for point in boundary:
-            if hasattr(point, "x"):  # Vector2 object
-                vertices_2d.append((point.x, point.y))
-            else:  # Dictionary format
-                vertices_2d.append((point["x"], point["y"]))
+#         # Convert boundary points to 2D coordinates
+#         vertices_2d = []
+#         for point in boundary:
+#             if hasattr(point, "x"):  # Vector2 object
+#                 vertices_2d.append((point.x, point.y))
+#             else:  # Dictionary format
+#                 vertices_2d.append((point["x"], point["y"]))
 
-        walls_created = 0
+#         walls_created = 0
 
-        # Create walls between consecutive boundary points
-        num_points = len(vertices_2d)
-        for i in range(num_points):
-            next_i = (i + 1) % num_points
+#         # Create walls between consecutive boundary points
+#         num_points = len(vertices_2d)
+#         for i in range(num_points):
+#             next_i = (i + 1) % num_points
 
-            # Get current and next point
-            p1 = vertices_2d[i]
-            p2 = vertices_2d[next_i]
+#             # Get current and next point
+#             p1 = vertices_2d[i]
+#             p2 = vertices_2d[next_i]
 
-            # Create wall segment
-            wall_name = f"Wall_{room_id}_{i}_{timestamp}"
-            mesh_name = f"WallMesh_{room_id}_{i}_{timestamp}"
+#             # Create wall segment
+#             wall_name = f"Wall_{room_id}_{i}_{timestamp}"
+#             mesh_name = f"WallMesh_{room_id}_{i}_{timestamp}"
 
-            # Calculate wall direction and normal for thickness
-            wall_dir_x = p2[0] - p1[0]
-            wall_dir_y = p2[1] - p1[1]
-            wall_length = (wall_dir_x**2 + wall_dir_y**2) ** 0.5
+#             # Calculate wall direction and normal for thickness
+#             wall_dir_x = p2[0] - p1[0]
+#             wall_dir_y = p2[1] - p1[1]
+#             wall_length = (wall_dir_x**2 + wall_dir_y**2) ** 0.5
 
-            if wall_length < 0.01:  # Skip very short walls
-                continue
+#             if wall_length < 0.01:  # Skip very short walls
+#                 continue
 
-            # Normalize direction vector
-            wall_dir_x /= wall_length
-            wall_dir_y /= wall_length
+#             # Normalize direction vector
+#             wall_dir_x /= wall_length
+#             wall_dir_y /= wall_length
 
-            # Calculate perpendicular vector for wall thickness (inward normal only)
-            # Boundary points are the outer edge, walls extend inward
-            inward_normal_x = -wall_dir_y * wall_thickness
-            inward_normal_y = wall_dir_x * wall_thickness
+#             # Calculate perpendicular vector for wall thickness (inward normal only)
+#             # Boundary points are the outer edge, walls extend inward
+#             inward_normal_x = -wall_dir_y * wall_thickness
+#             inward_normal_y = wall_dir_x * wall_thickness
 
-            # Create wall vertices (rectangular wall segment)
-            wall_verts = [
-                # Bottom face - outer edge stays at boundary, inner edge moves inward
-                (p1[0], p1[1], 0.0),  # Bottom left outer (at boundary)
-                (p2[0], p2[1], 0.0),  # Bottom right outer (at boundary)
-                (
-                    p2[0] + inward_normal_x,
-                    p2[1] + inward_normal_y,
-                    0.0,
-                ),  # Bottom right inner
-                (
-                    p1[0] + inward_normal_x,
-                    p1[1] + inward_normal_y,
-                    0.0,
-                ),  # Bottom left inner
-                # Top face
-                (p1[0], p1[1], ceiling_height),  # Top left outer (at boundary)
-                (p2[0], p2[1], ceiling_height),  # Top right outer (at boundary)
-                (
-                    p2[0] + inward_normal_x,
-                    p2[1] + inward_normal_y,
-                    ceiling_height,
-                ),  # Top right inner
-                (
-                    p1[0] + inward_normal_x,
-                    p1[1] + inward_normal_y,
-                    ceiling_height,
-                ),  # Top left inner
-            ]
+#             # Create wall vertices (rectangular wall segment)
+#             wall_verts = [
+#                 # Bottom face - outer edge stays at boundary, inner edge moves inward
+#                 (p1[0], p1[1], 0.0),  # Bottom left outer (at boundary)
+#                 (p2[0], p2[1], 0.0),  # Bottom right outer (at boundary)
+#                 (
+#                     p2[0] + inward_normal_x,
+#                     p2[1] + inward_normal_y,
+#                     0.0,
+#                 ),  # Bottom right inner
+#                 (
+#                     p1[0] + inward_normal_x,
+#                     p1[1] + inward_normal_y,
+#                     0.0,
+#                 ),  # Bottom left inner
+#                 # Top face
+#                 (p1[0], p1[1], ceiling_height),  # Top left outer (at boundary)
+#                 (p2[0], p2[1], ceiling_height),  # Top right outer (at boundary)
+#                 (
+#                     p2[0] + inward_normal_x,
+#                     p2[1] + inward_normal_y,
+#                     ceiling_height,
+#                 ),  # Top right inner
+#                 (
+#                     p1[0] + inward_normal_x,
+#                     p1[1] + inward_normal_y,
+#                     ceiling_height,
+#                 ),  # Top left inner
+#             ]
 
-            # Define faces for the wall (quads)
-            wall_faces = [
-                # Outer face
-                (0, 1, 5, 4),
-                # Inner face
-                (3, 7, 6, 2),
-                # End faces
-                (0, 4, 7, 3),  # Left end
-                (1, 2, 6, 5),  # Right end
-                # Top face
-                (4, 5, 6, 7),
-                # Bottom face (optional, usually covered by floor)
-                (0, 3, 2, 1),
-            ]
+#             # Define faces for the wall (quads)
+#             wall_faces = [
+#                 # Outer face
+#                 (0, 1, 5, 4),
+#                 # Inner face
+#                 (3, 7, 6, 2),
+#                 # End faces
+#                 (0, 4, 7, 3),  # Left end
+#                 (1, 2, 6, 5),  # Right end
+#                 # Top face
+#                 (4, 5, 6, 7),
+#                 # Bottom face (optional, usually covered by floor)
+#                 (0, 3, 2, 1),
+#             ]
 
-            # Create mesh
-            mesh = bpy.data.meshes.new(mesh_name)
-            mesh.from_pydata(wall_verts, [], wall_faces)
-            mesh.update()
+#             # Create mesh
+#             mesh = bpy.data.meshes.new(mesh_name)
+#             mesh.from_pydata(wall_verts, [], wall_faces)
+#             mesh.update()
 
-            # Create object
-            wall_obj = bpy.data.objects.new(wall_name, mesh)
-            collection.objects.link(wall_obj)
+#             # Create object
+#             wall_obj = bpy.data.objects.new(wall_name, mesh)
+#             collection.objects.link(wall_obj)
 
-            walls_created += 1
+#             walls_created += 1
 
-        return {
-            "status": "success",
-            "room_id": room_id,
-            "walls_created": walls_created,
-            "collection": "NavGo_Walls",
-            "ceiling_height": ceiling_height,
-            "wall_thickness": wall_thickness,
-            "timestamp": timestamp,
-        }
+#         return {
+#             "status": "success",
+#             "room_id": room_id,
+#             "walls_created": walls_created,
+#             "collection": "NavGo_Walls",
+#             "ceiling_height": ceiling_height,
+#             "wall_thickness": wall_thickness,
+#             "timestamp": timestamp,
+#         }
 
-    except Exception as e:
-        return {
-            "status": "error",
-            "message": f"Wall creation failed for room {room_id}: {str(e)}",
-            "timestamp": int(time.time()),
-        }
+#     except Exception as e:
+#         return {
+#             "status": "error",
+#             "message": f"Wall creation failed for room {room_id}: {str(e)}",
+#             "timestamp": int(time.time()),
+#         }
 
 
 def _calculate_bounds(
@@ -727,9 +729,8 @@ def render_top_down(output_dir: str = None) -> Path:
         Path(output_dir)
         / f"room_topdown_{abs(hash(str(bpy.context.scene.objects)))}.png"
     )
-    
-    return render_to_file(output_path)  
 
+    return render_to_file(output_path)
 
 
 def render() -> np.ndarray:
@@ -761,7 +762,7 @@ def render() -> np.ndarray:
     logger.debug(f"Render completed: {width}x{height} RGBA array")
     return image_array
 
-    
+
 def _configure_output_image(format: str, resolution: int):
     format = format.upper()
     mapping = {"JPG": "JPEG"}
