@@ -68,7 +68,8 @@ class PlacementVisualFeedback(BaseNode[PlacementState]):
         top_down_render = blender.create_scene_visualization(output_dir="test_output")
         isometric_render = blender.create_scene_visualization(output_dir="test_output", view="isometric")
         prev_room = ctx.state.room
-        prev_room.viz.append([top_down_render, isometric_render])
+        prev_room.viz.append(top_down_render)
+        prev_room.viz.append(isometric_render)
         ctx.state.room_history.append(prev_room)
         return PlacementNode()
         # NOTE: I think the feedback (in the form of text) should be generated here, not in the PlacementNode. 

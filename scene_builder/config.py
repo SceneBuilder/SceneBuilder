@@ -1,6 +1,7 @@
 """Configuration settings for SceneBuilder."""
 
 import os
+from pathlib import Path
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
@@ -21,6 +22,7 @@ LOGFIRE_TOKEN = os.getenv("LOGFIRE_TOKEN")
 
 # Test
 TEST_ASSET_DIR = "~/GitHub/SceneBuilder-Test-Assets"
+TEST_ASSET_DIR = Path(TEST_ASSET_DIR).expanduser()
 
 class GenerationConfig(BaseModel):
     """Configuration for the generation process."""
