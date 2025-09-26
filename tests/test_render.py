@@ -134,8 +134,61 @@ def test_isometric_render():
     output_path_final = blender.create_scene_visualization(view="isometric")
     assert output_path_final.exists()
 
+
+def test_grid_visualization():
+    """
+    Tests that grid visualization works correctly with both top_down and isometric views.
+    """
+    room = Room(
+        id="test_grid_room",
+        category="living_room",
+        boundary=[
+            Vector2(x=3, y=3),
+            Vector2(x=-3, y=3),
+            Vector2(x=-3, y=-3),
+            Vector2(x=3, y=-3),
+        ],
+        viz=[],
+        objects=[
+            Object.from_blueprint(
+                blueprint=search_test_asset("classroom_table"),
+                id="classroom_table_01",
+                position=Vector3(x=1, y=1, z=0),
+                rotation=Vector3(x=0, y=0, z=0),
+                scale=Vector3(x=1, y=1, z=1),
+            )
+        ],
+    )
+    blender.parse_room_definition(room, clear=True)
+
+    # Test top-down view with grid
+    output_path_top_grid = blender.create_scene_visualization(
+        view="top_down",
+        show_grid=True,
+        resolution=512
+    )
+    assert output_path_top_grid.exists()
+
+    # Test isometric view with grid
+    output_path_iso_grid = blender.create_scene_visualization(
+        view="isometric",
+        show_grid=True,
+        resolution=512
+    )
+    assert output_path_iso_grid.exists()
+
+    # Test that grid can be called multiple times (stateless behavior)
+    output_path_repeat = blender.create_scene_visualization(
+        view="top_down",
+        show_grid=True,
+        resolution=512
+    )
+    assert output_path_repeat.exists()
+
+
 if __name__ == "__main__":
     test_visual_feedback_renders_png()
     test_template_loading()
     test_isometric_render()
+    test_grid_visualization()
 
