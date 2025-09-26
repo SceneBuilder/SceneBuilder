@@ -707,6 +707,132 @@ def _ensure_collection(collection_name: str):
     return collection
 
 
+def _create_unlit_material(name: str, color: tuple[float, float, float, float]):
+    """Creates or gets an unlit material with the specified name and color."""
+    if name in bpy.data.materials:
+        material = bpy.data.materials[name]
+    else:
+        material = bpy.data.materials.new(name=name)
+
+    material.use_nodes = True
+    # Clear existing nodes to start fresh
+    for node in material.node_tree.nodes:
+        material.node_tree.nodes.remove(node)
+
+    # Create the new Emission and Material Output nodes
+    nodes = material.node_tree.nodes
+    links = material.node_tree.links
+    emission_node = nodes.new(type='ShaderNodeEmission')
+    output_node = nodes.new(type='ShaderNodeOutputMaterial')
+
+    # Set the color and link the nodes
+    emission_node.inputs['Color'].default_value = color
+    links.new(emission_node.outputs['Emission'], output_node.inputs['Surface'])
+    return material
+
+
+def _create_grid(
+    grid_size_meters: int = 20,
+    wireframe_thickness: float = 0.01,
+    grid_color: tuple[float, float, float, float] = (0.2, 0.2, 0.2, 1.0),
+    axis_thickness: float = 0.02,
+    axis_extension: float = 1.0,
+    axis_x_color: tuple[float, float, float, float] = (0.8, 0.1, 0.1, 1.0),
+    axis_y_color: tuple[float, float, float, float] = (0.1, 0.8, 0.1, 1.0),
+):
+    """
+    Creates a customizable grid in Blender with red (X) and green (Y) axis lines.
+
+    Args:
+        grid_size_meters: The width and height of the grid in meters
+        wireframe_thickness: Thickness of the grid wireframe
+        grid_color: RGBA color for the grid
+        axis_thickness: Thickness of the axis lines
+        axis_extension: How many meters the axis lines extend beyond the grid
+        axis_x_color: RGBA color for the X-axis (red)
+        axis_y_color: RGBA color for the Y-axis (green)
+    """
+    GRID_NAME = "Grid"
+
+    # Check if grid already exists
+    if GRID_NAME in bpy.data.objects:
+        logger.debug(f"Grid '{GRID_NAME}' already exists, skipping creation")
+        return
+
+    with suppress_blender_logs():
+        # Ensure we are in Object Mode
+        if bpy.context.object and bpy.context.object.mode != 'OBJECT':
+            bpy.ops.object.mode_set(mode='OBJECT')
+
+        # Delete any existing grid objects to avoid duplicates
+        for name in [GRID_NAME, "X_Axis", "Y_Axis"]:
+            if name in bpy.data.objects:
+                obj = bpy.data.objects[name]
+                bpy.data.objects.remove(obj, do_unlink=True)
+
+        # 1. Create the Plane mesh for the grid
+        bpy.ops.mesh.primitive_plane_add(
+            size=grid_size_meters,
+            enter_editmode=False,
+            align='WORLD',
+            location=(0, 0, 0)
+        )
+        grid_object = bpy.context.active_object
+        grid_object.name = GRID_NAME
+
+        # 2. Subdivide the plane to create 1x1 meter squares
+        subdivision_cuts = grid_size_meters - 1
+        bpy.ops.object.mode_set(mode='EDIT')
+        bpy.ops.mesh.subdivide(number_cuts=subdivision_cuts)
+        bpy.ops.object.mode_set(mode='OBJECT')
+
+        # 3. Apply the Wireframe modifier
+        wireframe_mod = grid_object.modifiers.new(name="GridWire", type='WIREFRAME')
+        wireframe_mod.thickness = wireframe_thickness
+        wireframe_mod.use_replace = True
+
+        # 4. Create and apply the grid material
+        grid_material = _create_unlit_material("GridMaterial_Unlit", grid_color)
+        if grid_object.data.materials:
+            grid_object.data.materials[0] = grid_material
+        else:
+            grid_object.data.materials.append(grid_material)
+
+        # 5. Create Axis Visualization
+        total_axis_length = grid_size_meters + (axis_extension * 2)
+
+        # X-Axis (Red Line)
+        bpy.ops.mesh.primitive_cube_add(
+            location=(0, 0, 0.001)  # Place slightly above grid to prevent z-fighting
+        )
+        x_axis_obj = bpy.context.active_object
+        x_axis_obj.name = "X_Axis"
+        x_axis_obj.scale = (total_axis_length / 2, axis_thickness / 2, 0.001)
+        x_axis_mat = _create_unlit_material("Axis_X_Material", axis_x_color)
+        x_axis_obj.data.materials.append(x_axis_mat)
+
+        # Y-Axis (Green Line)
+        bpy.ops.mesh.primitive_cube_add(
+            location=(0, 0, 0.001)
+        )
+        y_axis_obj = bpy.context.active_object
+        y_axis_obj.name = "Y_Axis"
+        y_axis_obj.scale = (axis_thickness / 2, total_axis_length / 2, 0.001)
+        y_axis_mat = _create_unlit_material("Axis_Y_Material", axis_y_color)
+        y_axis_obj.data.materials.append(y_axis_mat)
+
+        # 6. Parent axes to the grid so they move together
+        x_axis_obj.parent = grid_object
+        y_axis_obj.parent = grid_object
+
+        # 7. Clean up selection state
+        bpy.ops.object.select_all(action='DESELECT')
+        grid_object.select_set(True)
+        bpy.context.view_layer.objects.active = grid_object
+
+    logger.debug(f"Successfully created '{GRID_NAME}' object with axis lines")
+
+
 def load_template(path: str, clear_scene: bool):
     """
     Loads a template .blend file.
@@ -935,6 +1061,7 @@ def create_scene_visualization(
     output_dir: str = None,
     view: str = "top_down",
     background_color: tuple[float, float, float, float] = BACKGROUND_COLOR,
+    show_grid: bool = False,
 ) -> Path:
     """
     Creates a visualization of the current scene.
@@ -944,6 +1071,8 @@ def create_scene_visualization(
         format: The format of the output image.
         output_dir: The directory to save the output image to.
         view: The view to render from. Can be 'top_down' or 'isometric'.
+        background_color: RGBA color for the background.
+        show_grid: Whether to show a grid in the visualization.
 
     Returns:
         Path to the rendered scene visualization file.
@@ -974,6 +1103,10 @@ def create_scene_visualization(
                 f"Unsupported view type: {view}. Must be 'top_down' or 'isometric'."
             )
         _setup_lighting(energy=0.5)
+
+        # Create grid if requested
+        if show_grid:
+            _create_grid()
 
         scene = bpy.context.scene
         setup_lighting_foundation(scene, background_color=background_color)
