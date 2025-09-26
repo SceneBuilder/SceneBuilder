@@ -41,16 +41,6 @@ def test_msd_to_blender():
             "category": room.category,
             "tags": room.tags,
             "boundary": [{"x": p.x, "y": p.y} for p in room.boundary],
-            "floor_dimensions": {
-                "width": room.floor_dimensions.width if room.floor_dimensions else 0,
-                "length": room.floor_dimensions.length if room.floor_dimensions else 0,
-                "ceiling_height": room.floor_dimensions.ceiling_height
-                if room.floor_dimensions
-                else 2.6,
-                "shape": room.floor_dimensions.shape
-                if room.floor_dimensions
-                else "polygon",
-            },
             "objects": room.objects,
         }
         blender_scene_data["rooms"].append(room_dict)

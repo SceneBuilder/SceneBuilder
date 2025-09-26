@@ -41,15 +41,6 @@ async def test_floor_plan_agent_rectangular_classroom():
             print(f"✓ Room category: {room.category}")
             print(f"✓ Room tags: {room.tags}")
 
-            if room.floor_dimensions:
-                print(
-                    f"✓ Dimensions: {room.floor_dimensions.width}x{room.floor_dimensions.length}m"
-                )
-                print(f"✓ Shape: {room.floor_dimensions.shape}")
-                print(f"✓ Area: {room.floor_dimensions.area_sqm} sqm")
-                if room.floor_dimensions.llm_analysis:
-                    print(f"✓ LLM Analysis: {room.floor_dimensions.llm_analysis}")
-
             if room.boundary:
                 print(f"✓ Boundary points: {len(room.boundary)}")
                 for i, point in enumerate(room.boundary):

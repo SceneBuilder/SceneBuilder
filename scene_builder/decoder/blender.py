@@ -18,6 +18,8 @@ from scene_builder.importer import objaverse_importer, test_asset_importer
 from scene_builder.logging import logger
 from scene_builder.utils.conversions import pydantic_to_dict
 from scene_builder.utils.file import get_filename
+from scene_builder.database.material import MaterialWorkflow
+
 
 
 HDRI_FILE_PATH = Path(
@@ -87,22 +89,7 @@ def _create_room(room_data: dict[str, Any]):
     if boundary:
         logger.debug(f"Creating floor mesh for room: {room_id}")
         try:
-            # Extract LLM metadata if available
-            llm_metadata = {}
-            if "floor_dimensions" in room_data:
-                floor_dims = room_data["floor_dimensions"]
-                llm_metadata = {
-                    "width": floor_dims.get("width", 0),
-                    "height": floor_dims.get("height", 0),
-                    "area_sqm": floor_dims.get("area_sqm", 0),
-                    "shape": floor_dims.get("shape", "unknown"),
-                    "confidence": floor_dims.get("confidence", 0),
-                    "llm_analysis": floor_dims.get("llm_analysis", ""),
-                }
-
-            floor_result = _create_floor_mesh(
-                boundary, room_id, llm_metadata=llm_metadata
-            )
+            floor_result = _create_floor_mesh(boundary, room_id)
             logger.debug(f"Floor mesh created: {floor_result.get('status', 'unknown')}")
         except Exception as e:
             logger.error(f"Failed to create floor mesh for room {room_id}: {e}")
@@ -260,17 +247,13 @@ def _create_floor_mesh(
     room_id: str,
     floor_thickness_m: float = 0.1,
     origin: str = "center",
-    llm_metadata: dict[str, Any] = None,
 ) -> dict[str, Any]:
     """
-    Creates a watertight floor mesh from room boundary points with LLM metadata integration.
-
     Args:
         boundary: List of Vector2 points from room.boundary [{"x": float, "y": float}, ...]
         room_id: Room identifier for naming
         floor_thickness_m: Thickness of the floor in meters (default: 0.1)
         origin: Origin placement - "center" or "min" (default: "center")
-        llm_metadata: LLM analysis data from floor_dimensions
 
     Returns:
         Dictionary with creation status and metadata
@@ -443,161 +426,7 @@ def _create_floor_mesh(
         "timestamp": timestamp,
     }
 
-    # Add LLM metadata to result
-    if llm_metadata:
-        result["llm_metadata"] = llm_metadata
-        if llm_metadata.get("llm_analysis"):
-            result["llm_analysis"] = llm_metadata["llm_analysis"]
-
     return result
-
-
-# NOTE: Wall creation has been disabled
-# def _create_walls_from_boundary(
-#     boundary: list[dict[str, float]],
-#     room_id: str,
-#     ceiling_height: float = 2.7,
-#     wall_thickness: float = 0.2,
-# ) -> dict[str, Any]:
-#     """
-#     Creates wall meshes from room boundary points.
-
-#     Args:
-#         boundary: List of Vector2 points from room.boundary [{"x": float, "y": float}, ...]
-#         room_id: Room identifier for naming
-#         ceiling_height: Height of walls in meters (default: 2.7)
-#         wall_thickness: Thickness of walls in meters (default: 0.2)
-
-#     Returns:
-#         Dictionary with creation status and metadata
-#     """
-
-#     if not boundary or len(boundary) < 3:
-#         return {
-#             "status": "error",
-#             "message": f"Room {room_id}: At least 3 boundary points required for wall creation",
-#             "timestamp": int(time.time()),
-#         }
-
-#     try:
-#         # Generate timestamp for naming
-#         timestamp = int(time.time())
-
-#         # Ensure NavGo_Walls collection exists
-#         collection = _ensure_collection("NavGo_Walls")
-
-#         # Convert boundary points to 2D coordinates
-#         vertices_2d = []
-#         for point in boundary:
-#             if hasattr(point, "x"):  # Vector2 object
-#                 vertices_2d.append((point.x, point.y))
-#             else:  # Dictionary format
-#                 vertices_2d.append((point["x"], point["y"]))
-
-#         walls_created = 0
-
-#         # Create walls between consecutive boundary points
-#         num_points = len(vertices_2d)
-#         for i in range(num_points):
-#             next_i = (i + 1) % num_points
-
-#             # Get current and next point
-#             p1 = vertices_2d[i]
-#             p2 = vertices_2d[next_i]
-
-#             # Create wall segment
-#             wall_name = f"Wall_{room_id}_{i}_{timestamp}"
-#             mesh_name = f"WallMesh_{room_id}_{i}_{timestamp}"
-
-#             # Calculate wall direction and normal for thickness
-#             wall_dir_x = p2[0] - p1[0]
-#             wall_dir_y = p2[1] - p1[1]
-#             wall_length = (wall_dir_x**2 + wall_dir_y**2) ** 0.5
-
-#             if wall_length < 0.01:  # Skip very short walls
-#                 continue
-
-#             # Normalize direction vector
-#             wall_dir_x /= wall_length
-#             wall_dir_y /= wall_length
-
-#             # Calculate perpendicular vector for wall thickness (inward normal only)
-#             # Boundary points are the outer edge, walls extend inward
-#             inward_normal_x = -wall_dir_y * wall_thickness
-#             inward_normal_y = wall_dir_x * wall_thickness
-
-#             # Create wall vertices (rectangular wall segment)
-#             wall_verts = [
-#                 # Bottom face - outer edge stays at boundary, inner edge moves inward
-#                 (p1[0], p1[1], 0.0),  # Bottom left outer (at boundary)
-#                 (p2[0], p2[1], 0.0),  # Bottom right outer (at boundary)
-#                 (
-#                     p2[0] + inward_normal_x,
-#                     p2[1] + inward_normal_y,
-#                     0.0,
-#                 ),  # Bottom right inner
-#                 (
-#                     p1[0] + inward_normal_x,
-#                     p1[1] + inward_normal_y,
-#                     0.0,
-#                 ),  # Bottom left inner
-#                 # Top face
-#                 (p1[0], p1[1], ceiling_height),  # Top left outer (at boundary)
-#                 (p2[0], p2[1], ceiling_height),  # Top right outer (at boundary)
-#                 (
-#                     p2[0] + inward_normal_x,
-#                     p2[1] + inward_normal_y,
-#                     ceiling_height,
-#                 ),  # Top right inner
-#                 (
-#                     p1[0] + inward_normal_x,
-#                     p1[1] + inward_normal_y,
-#                     ceiling_height,
-#                 ),  # Top left inner
-#             ]
-
-#             # Define faces for the wall (quads)
-#             wall_faces = [
-#                 # Outer face
-#                 (0, 1, 5, 4),
-#                 # Inner face
-#                 (3, 7, 6, 2),
-#                 # End faces
-#                 (0, 4, 7, 3),  # Left end
-#                 (1, 2, 6, 5),  # Right end
-#                 # Top face
-#                 (4, 5, 6, 7),
-#                 # Bottom face (optional, usually covered by floor)
-#                 (0, 3, 2, 1),
-#             ]
-
-#             # Create mesh
-#             mesh = bpy.data.meshes.new(mesh_name)
-#             mesh.from_pydata(wall_verts, [], wall_faces)
-#             mesh.update()
-
-#             # Create object
-#             wall_obj = bpy.data.objects.new(wall_name, mesh)
-#             collection.objects.link(wall_obj)
-
-#             walls_created += 1
-
-#         return {
-#             "status": "success",
-#             "room_id": room_id,
-#             "walls_created": walls_created,
-#             "collection": "NavGo_Walls",
-#             "ceiling_height": ceiling_height,
-#             "wall_thickness": wall_thickness,
-#             "timestamp": timestamp,
-#         }
-
-#     except Exception as e:
-#         return {
-#             "status": "error",
-#             "message": f"Wall creation failed for room {room_id}: {str(e)}",
-#             "timestamp": int(time.time()),
-#         }
 
 
 def _calculate_bounds(
@@ -1003,38 +832,6 @@ def setup_lighting_foundation(
     nt.links.new(bg_node.outputs["Background"], output_node.inputs["Surface"])
 
 
-# TODO: Implement this function to work with windows built by SceneBuilder.
-# def add_motivated_lights(scene: bpy.types.Scene, sun_energy: float = 5.0):
-#     """Adds key lights based on semantic information in the scene."""
-#     print("Adding motivated lights...")
-#     bpy.ops.object.light_add(type='SUN', location=(0, 0, 10))
-#     sun = bpy.context.active_object
-#     sun.data.energy = sun_energy
-#     sun.data.angle = math.radians(0.53)
-
-#     # --- Your Custom Logic Goes Here ---
-#     # Example: Find windows and add portals
-#     for obj in scene.objects:
-#         if "window" in obj.name.lower():
-#             print(f"Found window: {obj.name}. Adding light portal.")
-#             bpy.ops.object.light_add(type='AREA', location=obj.location)
-#             portal = bpy.context.active_object
-#             portal.data.is_portal = True
-#             portal.scale = (obj.dimensions.x, obj.dimensions.y, 1)
-
-
-# def add_fill_lights():
-#     """Adds subtle, non-shadow-casting lights to brighten dark areas."""
-#     print("Adding fill lights...")
-#     bpy.ops.object.light_add(type='POINT', location=(-3, -3, 1.5))
-#     fill_light = bpy.context.active_object
-#     fill_light.name = "FillLight"
-
-#     fill_light.data.energy = 20.0
-#     fill_light.data.shadow_soft_size = 3.0
-#     fill_light.visible_shadow = False
-
-
 def setup_post_processing(scene: bpy.types.Scene):
     """Configures color management and compositor nodes for the final look."""
     print("Setting up post-processing...")
@@ -1055,3 +852,65 @@ def setup_post_processing(scene: bpy.types.Scene):
 
     nt.links.new(render_layers.outputs["Image"], glare_node.inputs["Image"])
     nt.links.new(glare_node.outputs["Image"], composite_output.inputs["Image"])
+
+
+def apply_floor_material(
+    query: str,
+    uv_scale: Optional[float] = None,
+    boundary: Optional[list] = None
+) -> dict[str, Any]:
+    """
+    Function to search and apply a material to all floor objects.
+    If boundary is provided, calculates appropriate UV scale automatically.
+
+    Args:
+        query: Material search query (e.g., "wood floor parquet")
+        uv_scale: UV scaling for texture tiling (optional if boundary provided)
+        boundary: List of Vector2 points for UV scale calculation
+
+    Returns:
+        Results dictionary with status information
+    """
+    from scene_builder.database.material import MaterialWorkflow
+
+    # Calculate UV scale from boundary if provided
+    if boundary is not None and uv_scale is None:
+        # Convert boundary points to tuples for _calculate_bounds
+        boundary_tuples = []
+        for point in boundary:
+            if hasattr(point, "x"):  # Vector2 object
+                boundary_tuples.append((point.x, point.y))
+            else:  # Dictionary format
+                boundary_tuples.append((point["x"], point["y"]))
+
+        bounds = _calculate_bounds(boundary_tuples)
+        current_size = max(bounds["width"], bounds["height"])
+        reference_size = 10.0  # 10x10 room -> uv_scale=30.0 base
+        reference_uv_scale = 30.0
+        calculated_uv_scale = reference_uv_scale * (current_size / reference_size)
+        uv_scale = calculated_uv_scale
+    elif uv_scale is None:
+        # Default UV scale if neither boundary nor uv_scale provided
+        uv_scale = 2.0
+
+    workflow = MaterialWorkflow()
+    return workflow.texture_floors_with_query(query, uv_scale=uv_scale)
+
+
+def texture_floor_with_material(
+    floor_name: str, query: str, uv_scale: float = 2.0
+) -> bool:
+    """
+    Function to texture a specific floor with a material.
+
+    Args:
+        floor_name: Name of the floor object
+        query: Material search query
+        uv_scale: UV scaling factor
+
+    Returns:
+        True if successful, False otherwise
+    """
+
+    workflow = MaterialWorkflow()
+    return workflow.texture_specific_floor(floor_name, query, uv_scale)

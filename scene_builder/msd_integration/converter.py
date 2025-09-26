@@ -8,7 +8,7 @@ import networkx as nx
 from typing import List
 import re
 
-from scene_builder.definition.scene import Room, Vector2, FloorDimensions
+from scene_builder.definition.scene import Room, Vector2
 
 
 def parse_polygon(geom_string: str) -> List[Vector2]:
@@ -69,23 +69,6 @@ def calculate_polygon_metrics(coords: List[Vector2]) -> dict:
     }
 
 
-def calculate_dimensions(coords: List[Vector2]) -> FloorDimensions:
-    """Calculate room dimensions from coordinates"""
-    if not coords:
-        return FloorDimensions()
-
-    metrics = calculate_polygon_metrics(coords)
-
-    # Use bounding box for width/length for compatibility, but add area
-    return FloorDimensions(
-        width=metrics["bbox_width"],
-        length=metrics["bbox_height"],
-        area_sqm=metrics["area"],
-        ceiling_height=2.6,
-        shape="polygon",
-    )
-
-
 class GraphToSceneConverter:
     """Convert MSD graph to SceneBuilder format"""
 
@@ -130,7 +113,6 @@ class GraphToSceneConverter:
                 category=category,
                 tags=["msd"],
                 boundary=coords,
-                floor_dimensions=calculate_dimensions(coords),
                 objects=[],
             )
 
