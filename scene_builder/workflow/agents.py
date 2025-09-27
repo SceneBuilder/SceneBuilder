@@ -1,6 +1,8 @@
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.providers.google import GoogleProvider
+from pydantic_ai.providers.openrouter import OpenRouterProvider
+from pydantic_ai.models.openai import OpenAIChatModel
 
 from scene_builder.definition.scene import Room, Object, ObjectBlueprint, FloorDimensions
 from scene_builder.tools.read_file import read_media_file
@@ -26,9 +28,12 @@ import os
 
 # model = GoogleModel("gemini-2.5-pro")
 model = GoogleModel("gemini-2.5-flash")
-# model = OpenAIModel("gpt-5-mini")
-# model = OpenAIModel("gpt-5-nano")
-
+# model = OpenAIChatModel("gpt-5-mini")
+# model = OpenAIChatModel("gpt-5-nano")
+# model = OpenAIChatModel(
+#     'x-ai/grok-4-fast:free',
+#     provider=OpenRouterProvider(api_key=os.getenv("OPENROUTER_API_KEY")),
+# )
 obj_db = ObjectDatabase()
 
 floor_plan_agent = Agent(
