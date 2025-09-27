@@ -24,6 +24,9 @@ LOGFIRE_TOKEN = os.getenv("LOGFIRE_TOKEN")
 TEST_ASSET_DIR = "~/GitHub/SceneBuilder-Test-Assets"
 TEST_ASSET_DIR = Path(TEST_ASSET_DIR).expanduser()
 
+# Blender logging
+BLENDER_LOG_FILE = "blender_output.log"
+
 class GenerationConfig(BaseModel):
     """Configuration for the generation process."""
 
