@@ -5,7 +5,8 @@ import sys
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Optional
+from dataclasses import dataclass
+from typing import Any, Optional, Dict, Tuple
 
 import bpy
 import bmesh
@@ -21,6 +22,79 @@ from scene_builder.importer import objaverse_importer, test_asset_importer
 from scene_builder.logging import logger
 from scene_builder.utils.conversions import pydantic_to_dict
 from scene_builder.utils.file import get_filename
+
+
+@dataclass
+class BlenderObjectState:
+    """Tracks state of objects created in Blender."""
+    blender_name: str
+    object_id: str
+    source_id: str
+    position: Tuple[float, float, float]
+    rotation: Tuple[float, float, float]
+    scale: Tuple[float, float, float]
+
+
+class BlenderSceneTracker:
+    """Tracks created objects by ID with readable position/rotation data."""
+
+    def __init__(self):
+        # Key: object_id, Value: BlenderObjectState
+        self._objects: Dict[str, BlenderObjectState] = {}
+
+    def object_exists_unchanged(self, object_id: str, pos: dict, rot: dict) -> bool:
+        """Check if object exists with exact same position/rotation."""
+        if object_id not in self._objects:
+            return False
+
+        existing = self._objects[object_id]
+        pos_tuple = (pos["x"], pos["y"], pos["z"])
+        rot_tuple = (rot["x"], rot["y"], rot["z"])
+
+        return (existing.position == pos_tuple and
+                existing.rotation == rot_tuple)
+
+    def object_exists_but_moved(self, object_id: str, pos: dict, rot: dict) -> bool:
+        """Check if object exists but has moved to different position/rotation."""
+        if object_id not in self._objects:
+            return False
+
+        # If it exists but positions/rotations don't match, it moved
+        return not self.object_exists_unchanged(object_id, pos, rot)
+
+    def register_object(self, obj_data: dict, blender_name: str):
+        """Register a newly created object (overwrites if object moved)."""
+        object_id = obj_data["id"]
+        source_id = obj_data["source_id"]
+        pos = obj_data.get["position"]
+        rot = obj_data.get["rotation"]
+        scale = obj_data.get["scale"]
+
+        self._objects[object_id] = BlenderObjectState(
+            blender_name=blender_name,
+            object_id=object_id,
+            source_id=source_id,
+            position=(pos["x"], pos["y"], pos["z"]),
+            rotation=(rot["x"], rot["y"], rot["z"]),
+            scale=(scale["x"], scale["y"], scale["z"])
+        )
+
+    def clear_all(self):
+        """Clear all tracked objects."""
+        self._objects.clear()
+        logger.debug("Cleared all object tracking")
+
+    def get_object_count(self) -> int:
+        """Get total count of tracked objects."""
+        return len(self._objects)
+
+    def get_object_state(self, object_id: str) -> Optional[BlenderObjectState]:
+        """Get current state for a specific object."""
+        return self._objects.get(object_id)
+
+
+# Global scene tracker instance
+_scene_tracker = BlenderSceneTracker()
 
 
 HDRI_FILE_PATH = Path(
@@ -121,6 +195,10 @@ def _clear_scene():
     with suppress_blender_logs():
         bpy.ops.object.select_all(action="SELECT")
         bpy.ops.object.delete()
+
+    # Clear object tracking as well
+    _scene_tracker.clear_all()
+
     logger.debug("Cleared existing scene.")
 
 
@@ -177,6 +255,35 @@ def _create_room(room_data: dict[str, Any]):
         _create_object(obj_data)
 
 
+def _check_object_duplicate_status(obj_data: dict[str, Any]) -> str:
+    """
+    Check if object already exists and determine what action to take.
+
+    Args:
+        obj_data: Dictionary containing object data
+
+    Returns:
+        String indicating status: "skip_unchanged", "recreate_moved", or "proceed_new"
+    """
+    object_id = obj_data.get("id")
+    object_name = obj_data.get("name", "Unnamed Object")
+    pos = obj_data.get("position", {"x": 0, "y": 0, "z": 0})
+    rot = obj_data.get("rotation", {"x": 0, "y": 0, "z": 0})
+
+    if not object_id:
+        return "proceed_new"
+
+    if _scene_tracker.object_exists_unchanged(object_id, pos, rot):
+        logger.debug(f"Skipping duplicate object: {object_name} (id: {object_id}) - unchanged at {pos}")
+        return "skip_unchanged"
+
+    if _scene_tracker.object_exists_but_moved(object_id, pos, rot):
+        logger.debug(f"Object {object_name} (id: {object_id}) has moved - will recreate at {pos}")
+        return "recreate_moved"
+
+    return "proceed_new"
+
+
 def _create_object(obj_data: dict[str, Any], parent_location: str = "origin"):
     """
     Creates a single object in the Blender scene.
@@ -190,8 +297,23 @@ def _create_object(obj_data: dict[str, Any], parent_location: str = "origin"):
     if isinstance(obj_data, Object):
         obj_data = pydantic_to_dict(obj_data)
 
+    # Load data from object
     object_name = obj_data.get("name", "Unnamed Object")
-    logger.debug(f"Creating object: {object_name}")
+    object_id = obj_data["id"]
+    pos = obj_data.get("position", {"x": 0, "y": 0, "z": 0})
+    rot = obj_data.get("rotation", {"x": 0, "y": 0, "z": 0})
+    # scl = obj_data.get("scale", {"x": 1, "y": 1, "z": 1})
+    # NOTE: I think LLMs think scale to be a size (dimensions) attribute in meters,
+    #       not the scaling factor (0-1.0 float). Probs bc they're not fed with dims.
+    scl = {"x": 1, "y": 1, "z": 1}  # TEMP HACK
+
+    # Check for duplicates and determine action
+    status = _check_object_duplicate_status(obj_data)
+    if status == "skip_unchanged":
+        return
+    # TODO: Handle "recreate_moved" case if needed (remove old Blender object)
+
+    logger.debug(f"Creating object: {object_name} (id: {object_id})")
 
     blender_obj = None
 
@@ -288,14 +410,7 @@ def _create_object(obj_data: dict[str, Any], parent_location: str = "origin"):
             f"The file path was not found or was not a .glb file. Path: '{object_path}'"
         )
 
-    # Set position, rotation, and scale from the object data
-    pos = obj_data.get("position", {"x": 0, "y": 0, "z": 0})
-    rot = obj_data.get("rotation", {"x": 0, "y": 0, "z": 0})
-    # scl = obj_data.get("scale", {"x": 1, "y": 1, "z": 1})
-    # NOTE: I think LLMs think scale to be a size (dimensions) attribute in meters,
-    #       not the scaling factor (0-1.0 float). Probs bc they're not fed with dims.
-    scl = {"x": 1, "y": 1, "z": 1}  # TEMP HACK
-
+    # Set position, rotation, and scale
     blender_obj.location = (pos["x"], pos["y"], pos["z"])
     blender_obj.scale = (scl["x"], scl["y"], scl["z"])
 
@@ -306,6 +421,11 @@ def _create_object(obj_data: dict[str, Any], parent_location: str = "origin"):
 
     # Apply the combined rotation.
     blender_obj.rotation_euler = combined_rotation.as_euler("xyz")
+
+    # Register the created object in tracker
+    if object_id and blender_obj:
+        _scene_tracker.register_object(obj_data, blender_obj.name)
+        logger.debug(f"Registered object in tracker: {object_name} (id: {object_id})")
 
 
 def _create_floor_mesh(
