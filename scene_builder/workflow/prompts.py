@@ -44,17 +44,69 @@ PLACEMENT_AGENT_PROMPT = (
     "If so, please utilize them. Otherwise, return an updated instance of the input scene/room state.",
     "Note that some objects are extremely overscaled, and you may need to scale them down appropriately."
 )
+# TODO: The placement agent should not determine whether the placement proposal loop shoudld be continued;
+#       a separate critique agent must either accept or reject the proposal with a rationale and feedback (and maybe a score, for comparison).
 
 ROOM_DESIGN_AGENT_PROMPT = (
+    "You are a supervisor who is part of a building interior design system.",
+    "You will be given various tasks relating to designing the 3D indoor environment of a room.",
+    "Please complete them with the intention of creating a cohesive, functional, and attractive, interior environment.",  # NOTE: maybe add "realistic"?
+    "Images: You may be given paths to image files. You are equipped with a `read_media_file` tool to view them.",
+    "If you are given paths to image files, please try to view relevant image before answering.**",
+)
+# NOTE: Some of the relevant/possible tasks: 
+# - shopping
+# - placement
+# - inspection (requesting visual feedback from specific viewpoint)
+# - exploration (generation and coalescing of different options for comparison)
+
+# IDEA: `request_to_shopping_agent()`, `requst_to_placement_agent()`
+
+# IDEA: In the video visualization, the cute mini drones will show chat bubbles,
+#       the shopping agent will look thru object database (scrolling thru 3D shapes) and send 3d objects to shopping cart (visible) in a cute ease-in-out animation,
+#       the building agent will receive items from shopping cart and place them (by approaching and placing physically). 
+#       The "turn" and exchange of information (such as visualfeedback) will be conveyed visually — the drone will receive a photo, for example.
+
+# NOTE: The PlacementAgent - VisualFeedback loop does NOT require the use of graphs. 
+#       Simplistically, the reason is: because the call stack does not involve 'GOTO' (to arbitrary) logic. It's a simple loop.
+
+# NOTE: The one-of-many (one PlacementAgent placing multiple objects at once) or many-of-one (spawning multiple PlacementAgent that each places one object) dilemma must be at least thought upon, maybe experimented (ablated).
+
+# NOTE (yunho-c): It helps to visually imagine a bunch of flying mini-robots looking at a room, designing/building it together.
+# 돈 필요하면 OpenAI랑 구글에 돈 달라 하자. 인터뷰 부탁해서, 내가 이거때문에 API 엄청 필요한데 제발 도와달라고. (OpenAI는 신청 프로그램도 있었잖아 !)
+# NOTE: The good thing with sub-agents is that they can be parallelized — massively. (Honestly, placing multiple objects in parallel with dependency calc & log/monitoring window is SO exciting.)
+# NOTE: The good thing with "do-it-yourself" (one agent with single converation history) doing everything sequentially is that context mgmt (not losing info on the way) is easy.
+#       Humans do everything themselves (an interior designer uses requirements, imagination, browser tabs for shopping, 3D CAD for placing) sequentially. 
+
+# NOTE: Whether more context is better (~ sequential) or less context is better (~ parallel) is something that can be experimented (ablated) ourselves, which is great.
+
+# NOTE: NOT EVERYTHING HAS TO BE A GRAPH.
+
+# NOTE: Can do inter-object dependency calculation, and select top-level objects. And LLM can further filter out what to target for the current turn.
+# NOTE: Single vs. multi-object placement (one PlacementAgent call taking care of multiple placeables being placed onto room) must be experimented. 
+
+# NOTE: The `previous state` tracking must be done at the LLM conversation level, not at the state level (at least we should prevent from n-ly repeating every past history per turn - like the area of a triangle).
+
+ROOM_DESIGN_AGENT_PROMPT_OLD = (
     "You are a room designer.",
     # "Your goal is to add objects to the room based on the plan.",
-    # "Please utilize `PlacementAgent` to populate the room with objects from the `ShoppingCart`,",
-    # "until you are satisfied with the room.",
+    # "Please utilize `PlacementAgent` to populate the room with objects from the `ShoppingCart`,", #*
+    # "until you are satisfied with the room.", #*
     "Please output whether to continue designing the room, or to finalize it, based on the visual ",
     "feedback and the room plan given to you as text."
     "Images: You may be given paths to image files. You are equipped with a `read_media_file` tool to view them.",
     "**If you are given images, please view all of them before answering.**",
 )
+# NOTE: The difference in the two prompts (new and old) represent a shift in the conceptualization of
+#       the multi-agent interaction system. The 'old' prompt (*) imagined either a single "agent" (a LLM conversation
+#       with coherent chronology) either directly utilizing different tools (such as `ShoppingCart`) or directly
+#       interacting with agents (such as `PlacementAgent`), e.g., directly invoking them with specific inputs. 
+#       The 'new' prompt imagines an explicitization such workflows (or invoking ShoppingCart and PlacementAgent) via
+#       explicit medium of communication (text messages) that will be passed to the sub-agents (`shopping_agent`, `placement_agent`).
+
+#       Something to note is that, if the conversation is cut at a certain point (e.g., the room_design_agent != room_planning_agent),
+#       the LLM may lose the latent activations that generated their original answers. For example, (TODO).
+#       So, I think it is impmortant to try to feed the previous messages (such as plans) into the context as "agent" messages.
 
 SEQUENCING_AGENT_PROMPT = (
     "You are an agent who is in charge of determining the order in which objects are placed, as part of an interior design system.",

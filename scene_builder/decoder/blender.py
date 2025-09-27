@@ -188,7 +188,7 @@ def _create_object(obj_data: dict[str, Any], parent_location: str = "origin"):
 
     blender_obj = None
 
-    if obj_data.get("source") == "objaverse":
+    if obj_data.get("source").lower() == "objaverse":
         source_id = obj_data.get("source_id")
         if not source_id:
             raise ValueError(
