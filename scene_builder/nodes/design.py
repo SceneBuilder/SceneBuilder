@@ -222,7 +222,8 @@ class RoomDesignVisualFeedback(BaseNode[RoomDesignState]):
         isometric_render = blender.create_scene_visualization(
             output_dir="test_output", view="isometric"
         )
-        ctx.state.viz.append([top_down_render, isometric_render])
+        ctx.state.viz.append(top_down_render)
+        ctx.state.viz.append(isometric_render)
         return RoomDesignNode()
 
 
