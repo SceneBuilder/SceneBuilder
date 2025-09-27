@@ -209,6 +209,8 @@ def _create_object(obj_data: dict[str, Any], parent_location: str = "origin"):
         # We can either raise an error or create a placeholder.
         # Raising an error is more explicit about what's happening.
         source = obj_data.get("source", "unknown")
+        logger.warning(f"Unknown object source: {source}. For now, overwriting with objaverse.")
+        source = "objaverse"  # TEMP HACK
         raise NotImplementedError(
             f"Object source '{source}' is not yet supported for '{object_name}'."
         )
@@ -294,7 +296,7 @@ def _create_object(obj_data: dict[str, Any], parent_location: str = "origin"):
 
     # Combine the original rotation with the rotation from the scene definition.
     original_rotation = Rotation.from_euler("xyz", blender_obj.rotation_euler)
-    new_rotation = Rotation.from_euler("xyz", [rot["x"], rot["y"], rot["z"]])
+    new_rotation = Rotation.from_euler("xyz", [rot["x"], rot["y"], rot["z"]], degrees=True)
     combined_rotation = new_rotation * original_rotation
 
     # Apply the combined rotation.
@@ -1019,7 +1021,7 @@ def render_to_file(output_path: str | Path) -> Path:
     bpy.context.scene.render.filepath = str(output_path)
 
     # Render the scene
-    logger.debug(f"Rendering scene to {output_path}")
+    # logger.debug(f"Rendering scene to {output_path}")
     with suppress_blender_logs():
         bpy.ops.render.render(write_still=True)
 

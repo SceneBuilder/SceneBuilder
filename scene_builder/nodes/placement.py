@@ -18,8 +18,8 @@ class PlacementNode(BaseNode[PlacementState]):
     ) -> PlacementVisualFeedback | End[Room]:
         ctx.state.run_count += 1  # DEBUG
 
-        # TEMP HACK: terminate after first execution
-        if ctx.state.run_count >= 2:
+        # TEMP HACK: terminate after first (TEMP: second) execution
+        if ctx.state.run_count >= 3:
             return End(ctx.state.room)
 
         if DEBUG:
@@ -27,6 +27,7 @@ class PlacementNode(BaseNode[PlacementState]):
             # user_prompt = "Could you repeat exactly what was provided to you (in terms of the depedencies) into the 'reasoning' output?"
             # user_prompt = "Were you provided the current room boundaries (list[Vector2])? What is it?" # -> NO!
             user_prompt = "Are you able to see the visualized image of the room?"
+            user_prompt = ""  # TEMP HACK
         else:
             user_prompt = ""
 
@@ -48,6 +49,7 @@ class PlacementNode(BaseNode[PlacementState]):
             print(f"[PlacementNode]: {response.output.decision}")
 
         if response.output.decision.decision == "finalize":
+            ctx.state.room = response.output.placement_action.updated_room
             return End(ctx.state.room)
         else:
             ctx.state.room = response.output.placement_action.updated_room
@@ -65,8 +67,8 @@ class PlacementVisualFeedback(BaseNode[PlacementState]):
         #     f"{TEST_ASSET_DIR}/scenes/classroom.blend", clear_scene=True
         # )  # TEMP HACK
         blender.parse_room_definition(room_data)
-        top_down_render = blender.create_scene_visualization(output_dir="test_output")
-        isometric_render = blender.create_scene_visualization(output_dir="test_output", view="isometric")
+        top_down_render = blender.create_scene_visualization(output_dir="test_output", show_grid=True)
+        isometric_render = blender.create_scene_visualization(output_dir="test_output", view="isometric", show_grid=True)
         prev_room = ctx.state.room
         prev_room.viz.append(top_down_render)
         prev_room.viz.append(isometric_render)
