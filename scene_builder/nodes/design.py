@@ -109,14 +109,18 @@ class RoomDesignNode(BaseNode[RoomDesignState]):
         # what_to_place = ctx.state.shopping_cart[0]
 
         rda2sea_prompt = (
-            "Please communicate with the `SequencingAgent` what you would like to achieve in the next design step.",
-            "Your next response will be passed along to the `SequencingAgent`.",
+            # "Please communicate with the `SequencingAgent` what you would like to achieve in the next design step.",
+            "Please communicate with the `SequencingAgent` what you would like to achieve (e.g., which objects to place first) in the next design step.",
+            # "Your next response will be passed along to the `SequencingAgent`.",
+            "Your next response will be passed along to the `SequencingAgent`. (Just respond in natural language this time!)",
         )
         rda2sea_response = await room_design_agent.run(
             rda2sea_prompt,
             message_history=rda2sha_response.all_messages(),
             output_type=str,
         )
+        if DEBUG:
+            print(f"[RoomDesignAgent → SequencingAgent] {rda2sea_response.output}")
         sequencing_user_prompt = (
             f"Message from `RoomDesignAgent`: {rda2sea_response.output}",
             f"Shopping Cart: {str(ctx.state.shopping_cart)}",
@@ -155,13 +159,16 @@ class RoomDesignNode(BaseNode[RoomDesignState]):
 
         rda2pla_prompt = (
             "Please request the `PlacementAgent` what you would like to achieve in the next design step.",
-            "Your next response will be passed along to the `PlacementAgent`.",
+            # "Your next response will be passed along to the `PlacementAgent`.",
+            "Your next response will be passed along to the `PlacementAgent`. (Just respond in natural language this time!)",
         )
         rda2pla_response = await room_design_agent.run(
             rda2pla_prompt,
             message_history=rda2sea_response.all_messages(),
             output_type=str,
         )
+        if DEBUG:
+            print(f"[RoomDesignAgent → PlacementAgent] {rda2pla_response.output}")
         placement_state = PlacementState(
             room=room,
             room_plan=ctx.state.room_plan,
@@ -184,6 +191,8 @@ class RoomDesignNode(BaseNode[RoomDesignState]):
         #       meaning it can be as simple as how many objects are left and their names, or their thumbnails & sizes),
 
         return RoomDesignVisualFeedback()
+    
+        # TODO: if DEBUG, make it dump (latest) state & .blend to a file at every turn. or maybe all turns. for web viz.
 
         # TODO: decide whether to finalize the scene, or to continue designing.
         # TODO: if deciding to continue, choose what to place next.

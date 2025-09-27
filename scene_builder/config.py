@@ -9,7 +9,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # General
-DEBUG: bool = False
+DEBUG: bool = True
+# DEBUG: bool = False
 
 # Dependencies
 # graphics-db
