@@ -15,7 +15,7 @@ from scipy.spatial.transform import Rotation
 from mathutils.geometry import tessellate_polygon
 from mathutils import Vector
 
-from scene_builder.config import TEST_ASSET_DIR
+from scene_builder.config import BLENDER_LOG_FILE, TEST_ASSET_DIR
 from scene_builder.definition.scene import Object, Room, Scene
 from scene_builder.importer import objaverse_importer, test_asset_importer
 from scene_builder.logging import logger
@@ -31,11 +31,15 @@ BACKGROUND_COLOR = (0.02, 0.02, 0.02, 1.0)
 
 
 @contextmanager
-def suppress_blender_logs():
-    """A context manager that redirects stdout and stderr to devnull.
+def suppress_blender_logs(log_file_path: str = BLENDER_LOG_FILE):
+    """A context manager that redirects stdout and stderr to a file or devnull.
 
     This is used to suppress verbose console output from Blender operations
     that cannot be controlled through Python's logging module.
+
+    Args:
+        log_file_path: If provided, logs are written to this file.
+                      If None, logs are discarded to devnull.
     """
     # Save the original stdout and stderr file descriptors
     original_stdout_fd = sys.stdout.fileno()
@@ -45,13 +49,16 @@ def suppress_blender_logs():
     saved_stdout_fd = os.dup(original_stdout_fd)
     saved_stderr_fd = os.dup(original_stderr_fd)
 
-    # Open /dev/null or 'nul' depending on the OS
-    devnull_fd = os.open(os.devnull, os.O_WRONLY)
+    # Open log file or devnull depending on parameter
+    if log_file_path:
+        target_fd = os.open(log_file_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+    else:
+        target_fd = os.open(os.devnull, os.O_WRONLY)
 
     try:
-        # Redirect stdout and stderr to the null device
-        os.dup2(devnull_fd, original_stdout_fd)
-        os.dup2(devnull_fd, original_stderr_fd)
+        # Redirect stdout and stderr to the target
+        os.dup2(target_fd, original_stdout_fd)
+        os.dup2(target_fd, original_stderr_fd)
 
         # Yield control back to the 'with' block
         yield
@@ -61,7 +68,7 @@ def suppress_blender_logs():
         os.dup2(saved_stderr_fd, original_stderr_fd)
 
         # Close the file descriptors we opened
-        os.close(devnull_fd)
+        os.close(target_fd)
         os.close(saved_stdout_fd)
         os.close(saved_stderr_fd)
 
@@ -891,7 +898,7 @@ def _configure_output_image(format: str, resolution: int):
 
 
 def _configure_render_settings(
-    engine: str = None, samples: int = 256, enable_gpu: bool = True
+    engine: str = None, samples: int = 256, enable_gpu: bool = False
 ):
     """Selects a compatible render engine and configures render settings."""
     try:
@@ -921,14 +928,17 @@ def _configure_render_settings(
 
     # Configure samples based on selected engine
     if samples is not None:
-        if bpy.context.scene.render.engine == "CYCLES":
-            bpy.context.scene.cycles.samples = samples
-        elif bpy.context.scene.render.engine in ["BLENDER_EEVEE_NEXT", "EEVEE"]:
-            bpy.context.scene.eevee.taa_render_samples = samples
+        # NOTE: set sample count for all engines, since the choice of rendering engine may be
+        #       reverted later (and we don't want to waste time rendering 4096 samples of Cycles)
+        # if bpy.context.scene.render.engine == "CYCLES":
+        bpy.context.scene.cycles.samples = samples
+        # elif bpy.context.scene.render.engine in ["BLENDER_EEVEE_NEXT", "EEVEE"]:
+        bpy.context.scene.eevee.taa_render_samples = samples
 
     # Enable GPU rendering for Cycles if requested
     if enable_gpu and bpy.context.scene.render.engine == "CYCLES":
         try:
+            # NOTE: seems to fail here
             prefs = bpy.context.preferences.addons["cycles"].preferences
             prefs.compute_device_type = "CUDA"  # Try CUDA first
             bpy.context.scene.cycles.device = "GPU"
@@ -1021,6 +1031,10 @@ def render_to_file(output_path: str | Path) -> Path:
     # Render the scene
     logger.debug(f"Rendering scene to {output_path}")
     with suppress_blender_logs():
+        # NOTE: `bpy` seems to switch context between `_configure_render_settings()` call
+        #       and render call, reverting the rendering engine back to Cycles.
+        # print(f"{bpy.context.scene.render.engine=}")  # TEMP
+        bpy.context.scene.render.engine = "BLENDER_EEVEE_NEXT"  # TEMP HACK
         bpy.ops.render.render(write_still=True)
 
     if output_path.exists():
