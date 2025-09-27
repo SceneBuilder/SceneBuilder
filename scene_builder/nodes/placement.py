@@ -30,6 +30,10 @@ class PlacementNode(BaseNode[PlacementState]):
         else:
             user_prompt = ""
 
+        # TODO: See if user_prompt is lost after the first iteration
+        if ctx.state.user_prompt:
+            user_prompt += ctx.state.user_prompt
+
         if user_prompt != "":
             response = await placement_agent.run(
                 user_prompt=user_prompt, deps=ctx.state
@@ -68,6 +72,8 @@ class PlacementVisualFeedback(BaseNode[PlacementState]):
         prev_room.viz.append(isometric_render)
         ctx.state.room_history.append(prev_room)
         return PlacementNode()
+        # NOTE: I think the feedback (in the form of text) should be generated here, not in the PlacementNode. 
+        #       Even though the PlacementNode probably needs to see the same images as well
 
 
 placement_graph = Graph(

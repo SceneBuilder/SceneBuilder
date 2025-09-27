@@ -28,8 +28,9 @@ def configure_logging(level="INFO", sink=sys.stderr, format="{level: <9} {messag
     Returns:
         The configured logger instance.
     """
-    logger.remove()
-    logger.add(sink, format=format, level=level)
+    # NOTE: The default logger in loguru has nice defaults, so let's just use that instead.
+    # logger.remove()
+    # logger.add(sink, format=format, level=level)
     
     if enable_logfire:
         logfire.configure(
