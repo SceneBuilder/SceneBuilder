@@ -3,8 +3,15 @@ from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.providers.google import GoogleProvider
 from pydantic_ai.providers.openrouter import OpenRouterProvider
 from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.openai import OpenAIProvider
 
-from scene_builder.definition.scene import Room, Object, ObjectBlueprint, FloorDimensions
+from scene_builder.config import VLLM_BASE_URL
+from scene_builder.definition.scene import (
+    Room,
+    Object,
+    ObjectBlueprint,
+    FloorDimensions,
+)
 from scene_builder.tools.read_file import read_media_file
 from scene_builder.database.object import ObjectDatabase
 from scene_builder.utils.pai import transform_paths_to_binary
@@ -26,15 +33,26 @@ from scene_builder.workflow.states import (
 import os
 
 
-# model = GoogleModel("gemini-2.5-pro")
-model = GoogleModel("gemini-2.5-flash")
+model = GoogleModel("gemini-2.5-pro")
+# model = GoogleModel("gemini-2.5-flash")
+# model = OpenAIChatModel("gpt-5")
 # model = OpenAIChatModel("gpt-5-mini")
 # model = OpenAIChatModel("gpt-5-nano")
 # model = OpenAIChatModel(
-#     'x-ai/grok-4-fast:free',
+#     "x-ai/grok-4-fast:free",
 #     provider=OpenRouterProvider(api_key=os.getenv("OPENROUTER_API_KEY")),
 # )
+# vLLM server (OpenAI-compatible API)
+# model = OpenAIChatModel(
+#     "Qwen/Qwen2.5-VL-7B-Instruct-AWQ",
+#     provider=OpenAIProvider(base_url=VLLM_BASE_URL),
+# )
+
 obj_db = ObjectDatabase()
+
+generic_agent = Agent(
+    model,
+)
 
 floor_plan_agent = Agent(
     model,
@@ -74,9 +92,7 @@ floor_size_agent = Agent(
 
 
 sequencing_agent = Agent(
-    model,
-    system_prompt=SEQUENCING_AGENT_PROMPT,
-    output_type=list[ObjectBlueprint]
+    model, system_prompt=SEQUENCING_AGENT_PROMPT, output_type=list[ObjectBlueprint]
 )
 
 # Shopping agent for finding 3D assets from graphics database
@@ -91,21 +107,22 @@ shopping_agent = Agent(
 # TODO(?): implement a logic to filter / boil down what assets to choose out of returned *candidates*
 # TODO: make sure that the markdown report generated from `obj_db.search()` undergoes proper processing
 #       of multimedia data - in other words, make sure that the VLM is able to *see* the thumbnails.
-#       This is because multimedia content within user prompt seems to undergo proper processing, but 
+#       This is because multimedia content within user prompt seems to undergo proper processing, but
 #       those within system prompt does not seem to. The tool call result probably will have a separate
 #       channel of communication (how it is stored in the conversation history, and how that conversation history
-#       transforms into LLM API calls). This can be seen by debugging thru PydAI's source code and inspecting Logfire. 
+#       transforms into LLM API calls). This can be seen by debugging thru PydAI's source code and inspecting Logfire.
 
 room_design_agent = Agent(
     model,
-    deps_type=RoomDesignState,
+    # deps_type=RoomDesignState,
     system_prompt=ROOM_DESIGN_AGENT_PROMPT,
-    output_type=RoomDesignResponse,
-    tools=[read_media_file],
+    # output_type=RoomDesignResponse,  # ORIG
+    # output_type=str,  # ALT
+    # tools=[read_media_file],
 )
 
-@room_design_agent.system_prompt
-async def add_room_design_state(ctx: RunContext[RoomDesignState]) -> str:
-    room_design_state = ctx.deps
-    return f"The current placement state:\n {room_design_state}"
-    # NOTE: see note in `add_placement_state()`
+# @room_design_agent.system_prompt
+# async def add_room_design_state(ctx: RunContext[RoomDesignState]) -> str:
+#     room_design_state = ctx.deps
+#     return f"The current placement state:\n {room_design_state}"
+#     # NOTE: see note in `add_placement_state()`

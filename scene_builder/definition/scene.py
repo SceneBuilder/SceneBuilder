@@ -101,10 +101,10 @@ class Room(BaseModel):
     id: str
     category: str | None = None
     tags: list[str] | None = None
-    plan: GenericPlan | None = None
+    # plan: GenericPlan | None = None
     boundary: list[Vector2] | None = None
-    floor_dimensions: FloorDimensions | None = None
-    viz: list[Path] = []
+    # floor_dimensions: FloorDimensions | None = None
+    # viz: list[Path] = []
     objects: list[Object] = []
     # objects: list[Object] = Field(default_factory=list)
     # objects: list[Object | Section] = Field(default_factory=list)
