@@ -25,7 +25,6 @@ from scene_builder.nodes.placement import (
 )
 
 # from scene_builder.nodes.feedback import VisualFeedback
-from scene_builder.tools.material_workflow import apply_floor_material
 from scene_builder.utils.conversions import pydantic_from_yaml
 from scene_builder.utils.image import create_gif_from_images
 from scene_builder.workflow.agents import room_design_agent
@@ -394,14 +393,14 @@ def test_room_design_workflow(case: str):
     )
     print(f"Floor mesh created: {floor_result.get('status', 'unknown')}")
 
-    # TEMP
-    material_prompt = f"Could you write a search query for a material (texture) that will be applied to the floor, based on the room description?: {description}"
-    # material_prompt = f"Could you write a super concise (a few words max) search query for a material (texture) that will be applied to the floor, based on the room description?: {description}"  # ALT
-    response = room_design_agent.run_sync(material_prompt, output_type=str)
-    material_result = apply_floor_material(response.output, boundary=boundary)
-    print(f"Material applied: {material_result}")
-
     async def run_graph():
+        # TEMP - moved inside async context to share event loop
+        material_prompt = f"Could you write a search query for a material (texture) that will be applied to the floor, based on the room description?: {description}"
+        # material_prompt = f"Could you write a super concise (a few words max) search query for a material (texture) that will be applied to the floor, based on the room description?: {description}"  # ALT
+        response = await room_design_agent.run(material_prompt, output_type=str)
+        material_result = blender.apply_floor_material(response.output, boundary=boundary)
+        print(f"Material applied: {material_result}")
+        
         # return await room_design_graph.run(RoomDesignNode(), state=initial_room_state)
         return await room_design_graph.run(
             RoomDesignVisualFeedback(), state=initial_room_state

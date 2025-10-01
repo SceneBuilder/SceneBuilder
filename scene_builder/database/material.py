@@ -4,10 +4,12 @@ Integrates Graphics-DB search with Blender material application.
 """
 
 from typing import List, Optional, Dict, Any
-from pathlib import Path
 
-from .graphics_db_client import GraphicsDBClient, search_and_download_materials
-from .material_applicator import texture_floor_mesh, find_floor_objects
+from scene_builder.database.graphics_db_client import GraphicsDBClient
+from scene_builder.tools.material_applicator import (
+    texture_floor_mesh,
+    find_floor_objects,
+)
 
 BASE_UV_SCALE = 30.0  # reference target to use for textures (TEMP)
 
@@ -28,7 +30,7 @@ class MaterialWorkflow:
         self,
         query: str,
         floor_objects: Optional[List[str]] = None,
-        uv_scale: float = 2.0,  # 변경해가면서
+        uv_scale: float = 2.0,
         material_index: int = 0,
     ) -> Dict[str, Any]:
         """
@@ -141,62 +143,4 @@ class MaterialWorkflow:
         return result["success"]
 
 
-def apply_floor_material(
-    query: str,
-    uv_scale: Optional[float] = None,
-    boundary: Optional[List] = None
-) -> Dict[str, Any]:
-    """
-    Function to search and apply a material to all floor objects.
-    If boundary is provided, calculates appropriate UV scale automatically.
-
-    Args:
-        query: Material search query (e.g., "wood floor parquet")
-        uv_scale: UV scaling for texture tiling (optional if boundary provided)
-        boundary: List of Vector2 points for UV scale calculation
-
-    Returns:
-        Results dictionary with status information
-    """
-    from ..decoder import blender
-
-    # Calculate UV scale from boundary if provided
-    if boundary is not None and uv_scale is None:
-        # Convert boundary points to tuples for _calculate_bounds
-        boundary_tuples = []
-        for point in boundary:
-            if hasattr(point, "x"):  # Vector2 object
-                boundary_tuples.append((point.x, point.y))
-            else:  # Dictionary format
-                boundary_tuples.append((point["x"], point["y"]))
-
-        bounds = blender._calculate_bounds(boundary_tuples)
-        current_size = max(bounds["width"], bounds["height"])
-        reference_size = 10.0  # 10x10 room -> uv_scale=30.0 base
-        reference_uv_scale = 30.0
-        calculated_uv_scale = reference_uv_scale * (current_size / reference_size)
-        uv_scale = calculated_uv_scale
-    elif uv_scale is None:
-        # Default UV scale if neither boundary nor uv_scale provided
-        uv_scale = 2.0
-
-    workflow = MaterialWorkflow()
-    return workflow.texture_floors_with_query(query, uv_scale=uv_scale)
-
-
-def texture_floor_with_material(
-    floor_name: str, query: str, uv_scale: float = 2.0
-) -> bool:
-    """
-    function to texture a specific floor with a material.
-
-    Args:
-        floor_name: Name of the floor object
-        query: Material search query
-        uv_scale: UV scaling factor
-
-    Returns:
-        True if successful, False otherwise
-    """
-    workflow = MaterialWorkflow()
-    return workflow.texture_specific_floor(floor_name, query, uv_scale)
+# These functions have been moved to scene_builder.decoder.blender module

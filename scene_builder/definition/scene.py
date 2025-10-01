@@ -83,18 +83,6 @@ class Section(BaseModel):
     children: list[Object] = Field(default_factory=list)
 
 
-class FloorDimensions(BaseModel):
-    """Represents floor dimensions and metadata from LLM analysis."""
-    
-    width: float  # Floor width in meters (x-axis)
-    length: float  # Floor length/depth in meters (y-axis)
-    ceiling_height: float = 2.7  # Room height in meters (z-axis), default standard height
-    area_sqm: float | None = None
-    shape: str | None = None  # rectangular, L-shaped, irregular, etc.
-    confidence: float | None = None  # LLM confidence score
-    llm_analysis: str | None = None  # Raw LLM description
-
-
 class Room(BaseModel):
     """Represents a single room in the scene."""
 
@@ -103,7 +91,6 @@ class Room(BaseModel):
     tags: list[str] | None = None
     plan: GenericPlan | None = None
     boundary: list[Vector2] | None = None
-    floor_dimensions: FloorDimensions | None = None
     viz: list[Path] = []
     objects: list[Object] = []
     # objects: list[Object] = Field(default_factory=list)

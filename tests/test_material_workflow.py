@@ -7,7 +7,8 @@ from pathlib import Path
 
 from scene_builder.definition.scene import Vector2
 from scene_builder.decoder import blender
-from scene_builder.tools.material_workflow import MaterialWorkflow, apply_floor_material
+from scene_builder.database.material import MaterialWorkflow
+from scene_builder.decoder.blender import apply_floor_material
 
 
 def test_material_workflow_integration():
@@ -22,13 +23,10 @@ def test_material_workflow_integration():
         # Vector2(x=-10, y=10),
         # Vector2(x=-10, y=-10),
         # Vector2(x=10, y=-10),
-
         Vector2(x=5, y=5),
         Vector2(x=-5, y=5),
         Vector2(x=-5, y=-5),
         Vector2(x=5, y=-5),
-
-
         # Vector2(x=1, y=1),
         # Vector2(x=-1, y=1),
         # Vector2(x=-1, y=-1),
@@ -76,13 +74,13 @@ def test_material_workflow_integration():
 
 def test_graphics_db_client():
     """Test the Graphics-DB client (fail if server not running)."""
-    from scene_builder.tools.graphics_db_client import GraphicsDBClient
+    from scene_builder.database.graphics_db_client import GraphicsDBClient
 
     print("\n=== Testing Graphics-DB Client ===")
 
     client = GraphicsDBClient()
 
-    # Test search 
+    # Test search
     materials = client.search_materials("wood floor", top_k=3)
 
     assert isinstance(materials, list), "Should return list even if empty"

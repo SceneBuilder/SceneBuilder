@@ -2,7 +2,7 @@ from pydantic_ai import Agent, RunContext
 from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.providers.google import GoogleProvider
 
-from scene_builder.definition.scene import Room, Object, ObjectBlueprint, FloorDimensions
+from scene_builder.definition.scene import Room, Object, ObjectBlueprint
 from scene_builder.tools.read_file import read_media_file
 from scene_builder.database.object import ObjectDatabase
 from scene_builder.utils.pai import transform_paths_to_binary
@@ -10,7 +10,6 @@ from scene_builder.workflow.prompts import (
     BUILDING_PLAN_AGENT_PROMPT,
     FLOOR_PLAN_AGENT_PROMPT,
     PLACEMENT_AGENT_PROMPT,
-    FLOOR_SIZE_AGENT_PROMPT,
     ROOM_DESIGN_AGENT_PROMPT,
     SEQUENCING_AGENT_PROMPT,
     SHOPPING_AGENT_PROMPT,
@@ -59,12 +58,6 @@ async def add_placement_state(ctx: RunContext[PlacementState]) -> str:
 planning_agent = Agent(
     model,
     system_prompt=BUILDING_PLAN_AGENT_PROMPT,
-)
-
-floor_size_agent = Agent(
-    model,
-    system_prompt=FLOOR_SIZE_AGENT_PROMPT,
-    output_type=FloorDimensions,
 )
 
 
