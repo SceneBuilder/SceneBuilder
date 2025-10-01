@@ -14,12 +14,13 @@ sys.path.append(str(MSD_PATH))
 
 from graphs import get_geometries_from_id, extract_access_graph
 from constants import ROOM_NAMES
+from scene_builder.config import MSD_CSV_PATH
 
 
 class MSDLoader:
     def __init__(self, csv_path: Optional[str] = None):
         if csv_path is None:
-            csv_path = MSD_PATH / "data" / "raw" / "mds_V2_5.372k.csv"
+            csv_path = MSD_CSV_PATH
 
         self.csv_path = Path(csv_path)
         self._df = None
