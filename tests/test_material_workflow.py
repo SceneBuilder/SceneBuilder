@@ -4,10 +4,6 @@ Test the material workflow integration with floor mesh creation.
 
 import pytest
 from pathlib import Path
-import sys
-
-# Add project root to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from scene_builder.definition.scene import Vector2
 from scene_builder.decoder import blender
@@ -70,7 +66,7 @@ def test_material_workflow_integration():
     print("Test scene saved")
 
     try:
-        render_path = blender.render_top_down(".")
+        render_path = blender.create_scene_visualization(output_dir=".")
         print(f"Top-down render saved: {render_path}")
     except Exception as e:
         print(f"⚠️  Top-down render failed: {e}")

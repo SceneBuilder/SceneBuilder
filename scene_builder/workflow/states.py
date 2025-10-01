@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import Literal
 
 from graphics_db_server.schemas.asset import Asset
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from pydantic_ai.messages import ModelMessage
 
 
@@ -31,12 +31,15 @@ class KeepEditingOrFinalize(BaseModel):
 
 
 class PlacementState(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     room: Room
     room_plan: RoomPlan
     what_to_place: (
         Object | ObjectBlueprint | Section
     )  # NOTE: maybe rename to `placeable`
     room_history: list[Room] = []  # NOTE: maybe rename to `history`
+    run_count: int = 0  # DEBUG - track iterations
 
 
 class PlacementAction(BaseModel):

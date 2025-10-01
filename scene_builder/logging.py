@@ -5,7 +5,7 @@ import sys
 import logfire
 from loguru import logger
 
-from .config import LOGFIRE_SERVICE_NAME
+from scene_builder.config import LOGFIRE_SERVICE_NAME, LOGFIRE_TOKEN
 
 
 def configure_logging(level="INFO", sink=sys.stderr, format="{level: <9} {message}", enable_logfire=True):
@@ -28,11 +28,13 @@ def configure_logging(level="INFO", sink=sys.stderr, format="{level: <9} {messag
     Returns:
         The configured logger instance.
     """
-    logger.remove()
-    logger.add(sink, format=format, level=level)
+    # NOTE: The default logger in loguru has nice defaults, so let's just use that instead.
+    # logger.remove()
+    # logger.add(sink, format=format, level=level)
     
     if enable_logfire:
         logfire.configure(
+            token=LOGFIRE_TOKEN,
             send_to_logfire='if-token-present',
             service_name=LOGFIRE_SERVICE_NAME,
         )

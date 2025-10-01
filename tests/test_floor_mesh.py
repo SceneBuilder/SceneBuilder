@@ -1,7 +1,8 @@
 import pytest
 from pathlib import Path
-from scene_builder.definition.scene import Vector2
+
 from scene_builder.decoder import blender
+from scene_builder.definition.scene import Vector2
 
 def test_floor_mesh():
     boundary = [Vector2(x=4,y=2), Vector2(x=-4,y=2), Vector2(x=-4,y=-2), Vector2(x=4,y=-2)] 
@@ -9,7 +10,7 @@ def test_floor_mesh():
     print(result)
 
     blender.save_scene("test_room.blend")
-    blender.render_top_down()
+    blender.create_scene_visualization(output_dir=".")
 
 def test_bound_calculation():
     bounds = blender._calculate_bounds([])

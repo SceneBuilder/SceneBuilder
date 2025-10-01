@@ -7,13 +7,25 @@ from rich.console import Console
 from scene_builder.config import DEBUG
 from scene_builder.database.object import ObjectDatabase
 from scene_builder.decoder import blender
+
 # from scene_builder.definition.scene import Object, Room, Vector3
 from scene_builder.definition.scene import Object, Room, Scene, Vector3
+
 # from scene_builder.nodes.feedback import VisualFeedback
 # from scene_builder.nodes.placement import PlacementNode, VisualFeedback
-from scene_builder.nodes.placement import PlacementNode, PlacementVisualFeedback, placement_graph
+from scene_builder.nodes.placement import (
+    PlacementNode,
+    PlacementVisualFeedback,
+    placement_graph,
+)
+
 # from scene_builder.nodes.routing import DesignLoopRouter
-from scene_builder.workflow.agents import room_design_agent, sequencing_agent, shopping_agent
+from scene_builder.workflow.agents import (
+    room_design_agent,
+    sequencing_agent,
+    shopping_agent,
+)
+
 # from scene_builder.workflow.graphs import placement_graph # hopefully no circular import... -> BRUH.
 # from scene_builder.workflow.states import PlacementState, RoomDesignState
 from scene_builder.workflow.states import PlacementState, RoomDesignState, MainState
@@ -44,7 +56,11 @@ class RoomDesignNode(BaseNode[RoomDesignState]):
     ) -> RoomDesignVisualFeedback | End[Room]:
         console.print("[bold cyan]Executing Node:[/] RoomDesignNode")
         room = ctx.state.room
-        response = await room_design_agent.run(deps=ctx.state)
+        response = await room_design_agent.run(
+            # "Please decide whether to continue designing the room, or if you are satisfied with the current state of the room.",
+            "Please decide whether to continue designing the room, or if you are complete with designing the room.",
+            deps=ctx.state,
+        )
 
         if DEBUG:
             print(f"[RoomDesignNode]: {response.output.decision}")
@@ -52,8 +68,17 @@ class RoomDesignNode(BaseNode[RoomDesignState]):
         if response.output.decision == "finalize":
             return End(ctx.state.room)
 
-        # else:
+        # rda2sha_prompt = "Please tell the `ShoppingAgent` what you would like to achieve in the next design step."
+        # rda2sha_prompt = "Please communicate with the `ShoppingAgent` what you would like to achieve in the next design step."
+        rda2sha_prompt = (
+            "Please request the `ShoppingAgent` if you would like it to find specific objects from the object database.",
+            "Your next response will be passed along to the `ShoppingAgent`.",
+        )
+        rda2sha_response = await room_design_agent.run(
+            rda2sha_prompt, message_history=response.all_messages(), output_type=str
+        )
         shopping_user_prompt = (
+            f"Message from `RoomDesignAgent`: {rda2sha_response.output}"
             f"Room id: '{room.id}'.",
             f"Room category: '{room.category}'.",
             f"Room plan: {ctx.state.room_plan}.",
@@ -83,36 +108,75 @@ class RoomDesignNode(BaseNode[RoomDesignState]):
         # # TEMP: choose the first item in the shopping cart
         # what_to_place = ctx.state.shopping_cart[0]
 
+        rda2sea_prompt = (
+            # "Please communicate with the `SequencingAgent` what you would like to achieve in the next design step.",
+            "Please communicate with the `SequencingAgent` what you would like to achieve (e.g., which objects to place first) in the next design step.",
+            # "Your next response will be passed along to the `SequencingAgent`.",
+            "Your next response will be passed along to the `SequencingAgent`. (Just respond in natural language this time!)",
+        )
+        rda2sea_response = await room_design_agent.run(
+            rda2sea_prompt,
+            message_history=rda2sha_response.all_messages(),
+            output_type=str,
+        )
+        if DEBUG:
+            print(f"[RoomDesignAgent → SequencingAgent] {rda2sea_response.output}")
         sequencing_user_prompt = (
-            str(ctx.state.shopping_cart)
+            f"Message from `RoomDesignAgent`: {rda2sea_response.output}",
+            f"Shopping Cart: {str(ctx.state.shopping_cart)}",
         )  # stuff to include:
         # shopping cart content: names, thumbnails, metadata
         # scene vizs that show room evolution history (?),
         # ^ maybe some text that describe what was changed (like a commmit msg) is helpful?
-        # probably the room plan, 
+        # probably the room plan,
         # probably the visual feedback content (text) from prev iter
         sequencing_response = await sequencing_agent.run(sequencing_user_prompt)
         sequence = sequencing_response.output
         what_to_place = sequence[0]
         # NOTE: if it gives a multi-length sequence, maybe let's consume it all before consulting it again
         #       (as long as it's not unreasonable - like it specifies the whole damn shopping cart. we can do sanity checks.)
-        console.print(
-            f"[bold cyan]Placing Next:[/] {what_to_place}"
-        )
+        console.print(f"[bold cyan]Placing Next:[/] {what_to_place}")
         # Remove the object (blueprint) from shopping cart to prevent excessive repeats
         # NOTE: since the shopping cart does not have a quantity property, we assume quantity=1 for now
-        idx = next((i for i, obj in enumerate(ctx.state.shopping_cart) if obj == what_to_place), None)
-        ctx.state.shopping_cart.pop(idx)
+        idx = next(
+            (
+                i
+                for i, obj in enumerate(ctx.state.shopping_cart)
+                if obj == what_to_place
+            ),
+            None,
+        )
+        if idx is not None:
+            ctx.state.shopping_cart.pop(idx)
 
         # NOTE: It would be interesting if the room design agent can "think" of
         #       certain opinions and feed it to PlacementNode as text guidance.
+        #       Like describing what it wants in natural language, based on contexts.
+        #         (Then, why doesn't it do everything itself, since it knows the context already? Hmm...)
+
+        # NOTE: Or lowkey PlacementAgent can take care of what to do (altho language comm prolly is useful & better)
+        #       and we just do termination management by measuring the number of objects it add and terminating @ 1? Idk.
+
+        rda2pla_prompt = (
+            "Please request the `PlacementAgent` what you would like to achieve in the next design step.",
+            # "Your next response will be passed along to the `PlacementAgent`.",
+            "Your next response will be passed along to the `PlacementAgent`. (Just respond in natural language this time!)",
+        )
+        rda2pla_response = await room_design_agent.run(
+            rda2pla_prompt,
+            message_history=rda2sea_response.all_messages(),
+            output_type=str,
+        )
+        if DEBUG:
+            print(f"[RoomDesignAgent → PlacementAgent] {rda2pla_response.output}")
         placement_state = PlacementState(
             room=room,
             room_plan=ctx.state.room_plan,
             what_to_place=what_to_place,
+            user_prompt=f"Message from `RoomDesignAgent`: {rda2pla_response}",
         )
 
-        # PROBLEM(?): placement_graph runs for extended periods and places multiple objects. 
+        # PROBLEM(?): placement_graph runs for extended periods and places multiple objects.
 
         placement_subgraph_response = await placement_graph.run(
             PlacementNode(), state=placement_state
@@ -127,6 +191,8 @@ class RoomDesignNode(BaseNode[RoomDesignState]):
         #       meaning it can be as simple as how many objects are left and their names, or their thumbnails & sizes),
 
         return RoomDesignVisualFeedback()
+    
+        # TODO: if DEBUG, make it dump (latest) state & .blend to a file at every turn. or maybe all turns. for web viz.
 
         # TODO: decide whether to finalize the scene, or to continue designing.
         # TODO: if deciding to continue, choose what to place next.
@@ -149,6 +215,7 @@ class RoomDesignNode(BaseNode[RoomDesignState]):
 
 class RoomDesignVisualFeedback(BaseNode[RoomDesignState]):
     # NOTE: see PlacementVisualFeedback in `placement.py` for notes and design decisions.
+    # NOTE: I think this node must take care of room design termination management (e.g., invoking it).
     async def run(self, ctx: GraphRunContext[RoomDesignState]) -> RoomDesignNode:
         blender.parse_room_definition(ctx.state.room)
         top_down_render = blender.create_scene_visualization(output_dir="test_output")

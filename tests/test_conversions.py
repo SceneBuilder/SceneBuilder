@@ -1,6 +1,6 @@
 import unittest
-from pathlib import Path
 import yaml
+from pathlib import Path
 from pydantic import BaseModel
 
 from scene_builder.utils.conversions import pydantic_from_yaml

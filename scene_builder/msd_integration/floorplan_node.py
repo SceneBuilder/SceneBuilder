@@ -13,7 +13,7 @@ from scene_builder.definition.scene import Scene, Room
 from scene_builder.workflow.states import MainState
 from scene_builder.msd_integration.loader import MSDLoader
 from scene_builder.msd_integration.converter import GraphToSceneConverter
-from scene_builder.workflow.graph import DesignLoopEntry
+from scene_builder.nodes.planning import DesignLoopEntry
 
 console = Console()
 

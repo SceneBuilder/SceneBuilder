@@ -1,9 +1,12 @@
 import os
 import tempfile
 import math
+import sys
 import time
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Optional
+from dataclasses import dataclass
+from typing import Any, Optional, Dict, Tuple
 
 import bpy
 import bmesh
@@ -13,6 +16,7 @@ from scipy.spatial.transform import Rotation
 from mathutils.geometry import tessellate_polygon
 from mathutils import Vector
 
+from scene_builder.config import BLENDER_LOG_FILE, TEST_ASSET_DIR
 from scene_builder.definition.scene import Object, Room, Scene
 from scene_builder.importer import objaverse_importer, test_asset_importer
 from scene_builder.logging import logger
@@ -22,9 +26,129 @@ from scene_builder.database.material import MaterialWorkflow
 
 
 
+@dataclass
+class BlenderObjectState:
+    """Tracks state of objects created in Blender."""
+    blender_name: str
+    object_id: str
+    source_id: str
+    position: Tuple[float, float, float]
+    rotation: Tuple[float, float, float]
+    scale: Tuple[float, float, float]
+
+
+class BlenderSceneTracker:
+    """Tracks created objects by ID with readable position/rotation data."""
+
+    def __init__(self):
+        # Key: object_id, Value: BlenderObjectState
+        self._objects: Dict[str, BlenderObjectState] = {}
+
+    def object_exists_unchanged(self, object_id: str, pos: dict, rot: dict) -> bool:
+        """Check if object exists with exact same position/rotation."""
+        if object_id not in self._objects:
+            return False
+
+        existing = self._objects[object_id]
+        pos_tuple = (pos["x"], pos["y"], pos["z"])
+        rot_tuple = (rot["x"], rot["y"], rot["z"])
+
+        return (existing.position == pos_tuple and
+                existing.rotation == rot_tuple)
+
+    def object_exists_but_moved(self, object_id: str, pos: dict, rot: dict) -> bool:
+        """Check if object exists but has moved to different position/rotation."""
+        if object_id not in self._objects:
+            return False
+
+        # If it exists but positions/rotations don't match, it moved
+        return not self.object_exists_unchanged(object_id, pos, rot)
+
+    def register_object(self, obj_data: dict, blender_name: str):
+        """Register a newly created object (overwrites if object moved)."""
+        object_id = obj_data["id"]
+        source_id = obj_data["source_id"]
+        pos = obj_data.get["position"]
+        rot = obj_data.get["rotation"]
+        scale = obj_data.get["scale"]
+
+        self._objects[object_id] = BlenderObjectState(
+            blender_name=blender_name,
+            object_id=object_id,
+            source_id=source_id,
+            position=(pos["x"], pos["y"], pos["z"]),
+            rotation=(rot["x"], rot["y"], rot["z"]),
+            scale=(scale["x"], scale["y"], scale["z"])
+        )
+
+    def clear_all(self):
+        """Clear all tracked objects."""
+        self._objects.clear()
+        logger.debug("Cleared all object tracking")
+
+    def get_object_count(self) -> int:
+        """Get total count of tracked objects."""
+        return len(self._objects)
+
+    def get_object_state(self, object_id: str) -> Optional[BlenderObjectState]:
+        """Get current state for a specific object."""
+        return self._objects.get(object_id)
+
+
+# Global scene tracker instance
+_scene_tracker = BlenderSceneTracker()
+from scene_builder.database.material import MaterialWorkflow
+
+
+
 HDRI_FILE_PATH = Path(
-    "~/GitHub/SceneBuilder-Test-Assets/hdri/autumn_field_puresky_4k.exr"
+    f"{TEST_ASSET_DIR}/hdri/autumn_field_puresky_4k.exr"
 ).expanduser()  # TEMP HACK
+
+BACKGROUND_COLOR = (0.02, 0.02, 0.02, 1.0)
+
+
+@contextmanager
+def suppress_blender_logs(log_file_path: str = BLENDER_LOG_FILE):
+    """A context manager that redirects stdout and stderr to a file or devnull.
+
+    This is used to suppress verbose console output from Blender operations
+    that cannot be controlled through Python's logging module.
+
+    Args:
+        log_file_path: If provided, logs are written to this file.
+                      If None, logs are discarded to devnull.
+    """
+    # Save the original stdout and stderr file descriptors
+    original_stdout_fd = sys.stdout.fileno()
+    original_stderr_fd = sys.stderr.fileno()
+
+    # Create duplicates of the original file descriptors
+    saved_stdout_fd = os.dup(original_stdout_fd)
+    saved_stderr_fd = os.dup(original_stderr_fd)
+
+    # Open log file or devnull depending on parameter
+    if log_file_path:
+        target_fd = os.open(log_file_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+    else:
+        target_fd = os.open(os.devnull, os.O_WRONLY)
+
+    try:
+        # Redirect stdout and stderr to the target
+        os.dup2(target_fd, original_stdout_fd)
+        os.dup2(target_fd, original_stderr_fd)
+
+        # Yield control back to the 'with' block
+        yield
+    finally:
+        # Restore the original stdout and stderr
+        os.dup2(saved_stdout_fd, original_stdout_fd)
+        os.dup2(saved_stderr_fd, original_stderr_fd)
+
+        # Close the file descriptors we opened
+        os.close(target_fd)
+        os.close(saved_stdout_fd)
+        os.close(saved_stderr_fd)
 
 
 def parse_scene_definition(scene_data: dict[str, Any]):
@@ -39,11 +163,12 @@ def parse_scene_definition(scene_data: dict[str, Any]):
     if isinstance(scene_data, Scene):
         scene_data = pydantic_to_dict(scene_data)
 
-    # Clear the existing scene
-    _clear_scene()
+    with suppress_blender_logs():
+        # Clear the existing scene
+        _clear_scene()
 
-    for room_data in scene_data.get("rooms", []):
-        _create_room(room_data)
+        for room_data in scene_data.get("rooms", []):
+            _create_room(room_data)
 
 
 def parse_room_definition(room_data: dict[str, Any], clear=False):
@@ -61,17 +186,23 @@ def parse_room_definition(room_data: dict[str, Any], clear=False):
     if isinstance(room_data, Room):
         room_data = pydantic_to_dict(room_data)
 
-    # Clear the existing scene
-    if clear:
-        _clear_scene()
+    with suppress_blender_logs():
+        # Clear the existing scene
+        if clear:
+            _clear_scene()
 
-    _create_room(room_data)
+        _create_room(room_data)
 
 
 def _clear_scene():
     """Clears all objects from the current Blender scene."""
-    bpy.ops.object.select_all(action="SELECT")
-    bpy.ops.object.delete()
+    with suppress_blender_logs():
+        bpy.ops.object.select_all(action="SELECT")
+        bpy.ops.object.delete()
+
+    # Clear object tracking as well
+    _scene_tracker.clear_all()
+
     logger.debug("Cleared existing scene.")
 
 
@@ -112,6 +243,62 @@ def _create_room(room_data: dict[str, Any]):
     # for obj_data in room_data.get("objects", []):
     #     _create_object(obj_data)
 
+def _check_object_duplicate_status(obj_data: dict[str, Any]) -> str:
+    """
+    Check if object already exists and determine what action to take.
+
+    Args:
+        obj_data: Dictionary containing object data
+
+    Returns:
+        String indicating status: "skip_unchanged", "recreate_moved", or "proceed_new"
+    """
+    object_id = obj_data.get("id")
+    object_name = obj_data.get("name", "Unnamed Object")
+    pos = obj_data.get("position", {"x": 0, "y": 0, "z": 0})
+    rot = obj_data.get("rotation", {"x": 0, "y": 0, "z": 0})
+
+    if not object_id:
+        return "proceed_new"
+
+    if _scene_tracker.object_exists_unchanged(object_id, pos, rot):
+        logger.debug(f"Skipping duplicate object: {object_name} (id: {object_id}) - unchanged at {pos}")
+        return "skip_unchanged"
+
+    if _scene_tracker.object_exists_but_moved(object_id, pos, rot):
+        logger.debug(f"Object {object_name} (id: {object_id}) has moved - will recreate at {pos}")
+        return "recreate_moved"
+
+    return "proceed_new"
+
+def _check_object_duplicate_status(obj_data: dict[str, Any]) -> str:
+    """
+    Check if object already exists and determine what action to take.
+
+    Args:
+        obj_data: Dictionary containing object data
+
+    Returns:
+        String indicating status: "skip_unchanged", "recreate_moved", or "proceed_new"
+    """
+    object_id = obj_data.get("id")
+    object_name = obj_data.get("name", "Unnamed Object")
+    pos = obj_data.get("position", {"x": 0, "y": 0, "z": 0})
+    rot = obj_data.get("rotation", {"x": 0, "y": 0, "z": 0})
+
+    if not object_id:
+        return "proceed_new"
+
+    if _scene_tracker.object_exists_unchanged(object_id, pos, rot):
+        logger.debug(f"Skipping duplicate object: {object_name} (id: {object_id}) - unchanged at {pos}")
+        return "skip_unchanged"
+
+    if _scene_tracker.object_exists_but_moved(object_id, pos, rot):
+        logger.debug(f"Object {object_name} (id: {object_id}) has moved - will recreate at {pos}")
+        return "recreate_moved"
+
+    return "proceed_new"
+
 
 def _create_object(obj_data: dict[str, Any], parent_location: str = "origin"):
     """
@@ -126,12 +313,27 @@ def _create_object(obj_data: dict[str, Any], parent_location: str = "origin"):
     if isinstance(obj_data, Object):
         obj_data = pydantic_to_dict(obj_data)
 
+    # Load data from object
     object_name = obj_data.get("name", "Unnamed Object")
-    logger.debug(f"Creating object: {object_name}")
+    object_id = obj_data["id"]
+    pos = obj_data.get("position", {"x": 0, "y": 0, "z": 0})
+    rot = obj_data.get("rotation", {"x": 0, "y": 0, "z": 0})
+    # scl = obj_data.get("scale", {"x": 1, "y": 1, "z": 1})
+    # NOTE: I think LLMs think scale to be a size (dimensions) attribute in meters,
+    #       not the scaling factor (0-1.0 float). Probs bc they're not fed with dims.
+    scl = {"x": 1, "y": 1, "z": 1}  # TEMP HACK
+
+    # Check for duplicates and determine action
+    status = _check_object_duplicate_status(obj_data)
+    if status == "skip_unchanged":
+        return
+    # TODO: Handle "recreate_moved" case if needed (remove old Blender object)
+
+    logger.debug(f"Creating object: {object_name} (id: {object_id})")
 
     blender_obj = None
 
-    if obj_data.get("source") == "objaverse":
+    if obj_data.get("source").lower() == "objaverse":
         source_id = obj_data.get("source_id")
         if not source_id:
             raise ValueError(
@@ -152,6 +354,8 @@ def _create_object(obj_data: dict[str, Any], parent_location: str = "origin"):
         # We can either raise an error or create a placeholder.
         # Raising an error is more explicit about what's happening.
         source = obj_data.get("source", "unknown")
+        logger.warning(f"Unknown object source: {source}. For now, overwriting with objaverse.")
+        source = "objaverse"  # TEMP HACK
         raise NotImplementedError(
             f"Object source '{source}' is not yet supported for '{object_name}'."
         )
@@ -160,10 +364,11 @@ def _create_object(obj_data: dict[str, Any], parent_location: str = "origin"):
     if object_path and object_path.endswith(".glb"):
         try:
             # Deselect all objects before import to ensure clean selection
-            bpy.ops.object.select_all(action="DESELECT")
+            with suppress_blender_logs():
+                bpy.ops.object.select_all(action="DESELECT")
 
-            # Import the GLTF file - imported objects will be selected
-            bpy.ops.import_scene.gltf(filepath=object_path)
+                # Import the GLTF file - imported objects will be selected
+                bpy.ops.import_scene.gltf(filepath=object_path)
 
             # Get only top-level imported objects (no parents) to preserve hierarchy
             imported_objects = [
@@ -204,7 +409,8 @@ def _create_object(obj_data: dict[str, Any], parent_location: str = "origin"):
                 empty_location = (0, 0, 0)
 
             # Create Empty at the calculated location
-            bpy.ops.object.empty_add(type="PLAIN_AXES", location=empty_location)
+            with suppress_blender_logs():
+                bpy.ops.object.empty_add(type="PLAIN_AXES", location=empty_location)
             blender_obj = bpy.context.active_object
             blender_obj.name = object_name
 
@@ -222,24 +428,22 @@ def _create_object(obj_data: dict[str, Any], parent_location: str = "origin"):
             f"The file path was not found or was not a .glb file. Path: '{object_path}'"
         )
 
-    # Set position, rotation, and scale from the object data
-    pos = obj_data.get("position", {"x": 0, "y": 0, "z": 0})
-    rot = obj_data.get("rotation", {"x": 0, "y": 0, "z": 0})
-    # scl = obj_data.get("scale", {"x": 1, "y": 1, "z": 1})
-    # NOTE: I think LLMs think scale to be a size (dimensions) attribute in meters,
-    #       not the scaling factor (0-1.0 float). Probs bc they're not fed with dims.
-    scl = {"x": 1, "y": 1, "z": 1}  # TEMP HACK
-
+    # Set position, rotation, and scale
     blender_obj.location = (pos["x"], pos["y"], pos["z"])
     blender_obj.scale = (scl["x"], scl["y"], scl["z"])
 
     # Combine the original rotation with the rotation from the scene definition.
     original_rotation = Rotation.from_euler("xyz", blender_obj.rotation_euler)
-    new_rotation = Rotation.from_euler("xyz", [rot["x"], rot["y"], rot["z"]])
+    new_rotation = Rotation.from_euler("xyz", [rot["x"], rot["y"], rot["z"]], degrees=True)
     combined_rotation = new_rotation * original_rotation
 
     # Apply the combined rotation.
     blender_obj.rotation_euler = combined_rotation.as_euler("xyz")
+
+    # Register the created object in tracker
+    if object_id and blender_obj:
+        _scene_tracker.register_object(obj_data, blender_obj.name)
+        logger.debug(f"Registered object in tracker: {object_name} (id: {object_id})")
 
 
 def _create_floor_mesh(
@@ -387,12 +591,13 @@ def _create_floor_mesh(
 
         # Generate UV coordinates for texturing
         bpy.context.view_layer.objects.active = floor_obj
-        bpy.ops.object.select_all(action="DESELECT")
-        floor_obj.select_set(True)
-        bpy.ops.object.mode_set(mode="EDIT")
-        bpy.ops.mesh.select_all(action="SELECT")
-        bpy.ops.uv.unwrap(method="ANGLE_BASED", margin=0.001)
-        bpy.ops.object.mode_set(mode="OBJECT")
+        with suppress_blender_logs():
+            bpy.ops.object.select_all(action="DESELECT")
+            floor_obj.select_set(True)
+            bpy.ops.object.mode_set(mode="EDIT")
+            bpy.ops.mesh.select_all(action="SELECT")
+            bpy.ops.uv.unwrap(method="ANGLE_BASED", margin=0.001)
+            bpy.ops.object.mode_set(mode="OBJECT")
         logger.debug(f"Generated UV coordinates for floor: {floor_name}")
 
     finally:
@@ -490,6 +695,132 @@ def _ensure_collection(collection_name: str):
     return collection
 
 
+def _create_unlit_material(name: str, color: tuple[float, float, float, float]):
+    """Creates or gets an unlit material with the specified name and color."""
+    if name in bpy.data.materials:
+        material = bpy.data.materials[name]
+    else:
+        material = bpy.data.materials.new(name=name)
+
+    material.use_nodes = True
+    # Clear existing nodes to start fresh
+    for node in material.node_tree.nodes:
+        material.node_tree.nodes.remove(node)
+
+    # Create the new Emission and Material Output nodes
+    nodes = material.node_tree.nodes
+    links = material.node_tree.links
+    emission_node = nodes.new(type='ShaderNodeEmission')
+    output_node = nodes.new(type='ShaderNodeOutputMaterial')
+
+    # Set the color and link the nodes
+    emission_node.inputs['Color'].default_value = color
+    links.new(emission_node.outputs['Emission'], output_node.inputs['Surface'])
+    return material
+
+
+def _create_grid(
+    grid_size_meters: int = 20,
+    wireframe_thickness: float = 0.01,
+    grid_color: tuple[float, float, float, float] = (0.2, 0.2, 0.2, 1.0),
+    axis_thickness: float = 0.02,
+    axis_extension: float = 1.0,
+    axis_x_color: tuple[float, float, float, float] = (0.8, 0.1, 0.1, 1.0),
+    axis_y_color: tuple[float, float, float, float] = (0.1, 0.8, 0.1, 1.0),
+):
+    """
+    Creates a customizable grid in Blender with red (X) and green (Y) axis lines.
+
+    Args:
+        grid_size_meters: The width and height of the grid in meters
+        wireframe_thickness: Thickness of the grid wireframe
+        grid_color: RGBA color for the grid
+        axis_thickness: Thickness of the axis lines
+        axis_extension: How many meters the axis lines extend beyond the grid
+        axis_x_color: RGBA color for the X-axis (red)
+        axis_y_color: RGBA color for the Y-axis (green)
+    """
+    GRID_NAME = "Grid"
+
+    # Check if grid already exists
+    if GRID_NAME in bpy.data.objects:
+        logger.debug(f"Grid '{GRID_NAME}' already exists, skipping creation")
+        return
+
+    with suppress_blender_logs():
+        # Ensure we are in Object Mode
+        if bpy.context.object and bpy.context.object.mode != 'OBJECT':
+            bpy.ops.object.mode_set(mode='OBJECT')
+
+        # Delete any existing grid objects to avoid duplicates
+        for name in [GRID_NAME, "X_Axis", "Y_Axis"]:
+            if name in bpy.data.objects:
+                obj = bpy.data.objects[name]
+                bpy.data.objects.remove(obj, do_unlink=True)
+
+        # 1. Create the Plane mesh for the grid
+        bpy.ops.mesh.primitive_plane_add(
+            size=grid_size_meters,
+            enter_editmode=False,
+            align='WORLD',
+            location=(0, 0, 0)
+        )
+        grid_object = bpy.context.active_object
+        grid_object.name = GRID_NAME
+
+        # 2. Subdivide the plane to create 1x1 meter squares
+        subdivision_cuts = grid_size_meters - 1
+        bpy.ops.object.mode_set(mode='EDIT')
+        bpy.ops.mesh.subdivide(number_cuts=subdivision_cuts)
+        bpy.ops.object.mode_set(mode='OBJECT')
+
+        # 3. Apply the Wireframe modifier
+        wireframe_mod = grid_object.modifiers.new(name="GridWire", type='WIREFRAME')
+        wireframe_mod.thickness = wireframe_thickness
+        wireframe_mod.use_replace = True
+
+        # 4. Create and apply the grid material
+        grid_material = _create_unlit_material("GridMaterial_Unlit", grid_color)
+        if grid_object.data.materials:
+            grid_object.data.materials[0] = grid_material
+        else:
+            grid_object.data.materials.append(grid_material)
+
+        # 5. Create Axis Visualization
+        total_axis_length = grid_size_meters + (axis_extension * 2)
+
+        # X-Axis (Red Line)
+        bpy.ops.mesh.primitive_cube_add(
+            location=(0, 0, 0.001)  # Place slightly above grid to prevent z-fighting
+        )
+        x_axis_obj = bpy.context.active_object
+        x_axis_obj.name = "X_Axis"
+        x_axis_obj.scale = (total_axis_length / 2, axis_thickness / 2, 0.001)
+        x_axis_mat = _create_unlit_material("Axis_X_Material", axis_x_color)
+        x_axis_obj.data.materials.append(x_axis_mat)
+
+        # Y-Axis (Green Line)
+        bpy.ops.mesh.primitive_cube_add(
+            location=(0, 0, 0.001)
+        )
+        y_axis_obj = bpy.context.active_object
+        y_axis_obj.name = "Y_Axis"
+        y_axis_obj.scale = (axis_thickness / 2, total_axis_length / 2, 0.001)
+        y_axis_mat = _create_unlit_material("Axis_Y_Material", axis_y_color)
+        y_axis_obj.data.materials.append(y_axis_mat)
+
+        # 6. Parent axes to the grid so they move together
+        x_axis_obj.parent = grid_object
+        y_axis_obj.parent = grid_object
+
+        # 7. Clean up selection state
+        bpy.ops.object.select_all(action='DESELECT')
+        grid_object.select_set(True)
+        bpy.context.view_layer.objects.active = grid_object
+
+    logger.debug(f"Successfully created '{GRID_NAME}' object with axis lines")
+
+
 def load_template(path: str, clear_scene: bool):
     """
     Loads a template .blend file.
@@ -504,7 +835,8 @@ def load_template(path: str, clear_scene: bool):
     if clear_scene:
         _clear_scene()
 
-    bpy.ops.wm.open_mainfile(filepath=path)
+    with suppress_blender_logs():
+        bpy.ops.wm.open_mainfile(filepath=path)
     logger.debug(f"Loaded template from {path}")
 
 
@@ -515,7 +847,8 @@ def save_scene(filepath: str):
 
     # Pack all external images into the .blend file
     try:
-        bpy.ops.file.pack_all()
+        with suppress_blender_logs():
+            bpy.ops.file.pack_all()
         logger.debug("✅ Packed all external images into .blend file")
     except Exception as e:
         logger.debug(f"⚠️  Warning: Could not pack images: {e}")
@@ -528,7 +861,8 @@ def save_scene(filepath: str):
                     space.shading.type = "MATERIAL"
                     break
 
-    bpy.ops.wm.save_as_mainfile(filepath=filepath)
+    with suppress_blender_logs():
+        bpy.ops.wm.save_as_mainfile(filepath=filepath)
     logger.debug(f"Scene saved to {filepath}")
 
 
@@ -545,7 +879,7 @@ def render_top_down(output_dir: str = None) -> Path:
     logger.debug("Setting up top-down orthographic render...")
 
     # Use existing modular functions instead of duplicating code
-    _select_render_engine()
+    _configure_render_settings()
     _configure_output_image("PNG", 1024)
     _setup_top_down_camera()
     _setup_lighting(energy=0.5)
@@ -572,7 +906,7 @@ def render() -> np.ndarray:
     """
     logger.debug("Setting up top-down orthographic render...")
 
-    _select_render_engine()
+    _configure_render_settings()
     _configure_output_image("PNG", 1024)
     _setup_top_down_camera()
     _setup_lighting(energy=5.0)
@@ -604,22 +938,60 @@ def _configure_output_image(format: str, resolution: int):
     bpy.context.scene.render.resolution_percentage = 100
 
 
-def _select_render_engine():
-    """Selects a compatible render engine."""
+def _configure_render_settings(
+    engine: str = None, samples: int = 256, enable_gpu: bool = False
+):
+    """Selects a compatible render engine and configures render settings."""
     try:
         engine_prop = bpy.context.scene.render.bl_rna.properties["engine"]
         available_engines = [item.identifier for item in engine_prop.enum_items]
     except Exception:
         available_engines = []
 
-    preferred_engines = ["BLENDER_EEVEE_NEXT", "EEVEE", "CYCLES", "BLENDER_WORKBENCH"]
-    for candidate in preferred_engines:
-        if candidate in available_engines:
-            bpy.context.scene.render.engine = candidate
-            break
+    # Use specified engine if provided and available
+    if engine and engine in available_engines:
+        bpy.context.scene.render.engine = engine
     else:
-        # Fallback to whatever is currently set if preferences are unavailable
-        pass
+        # Fallback to preferred engines
+        preferred_engines = [
+            "BLENDER_EEVEE_NEXT",
+            "EEVEE",
+            "CYCLES",
+            "BLENDER_WORKBENCH",
+        ]
+        for candidate in preferred_engines:
+            if candidate in available_engines:
+                bpy.context.scene.render.engine = candidate
+                break
+        else:
+            # Fallback to whatever is currently set if preferences are unavailable
+            pass
+
+    # Configure samples based on selected engine
+    if samples is not None:
+        # NOTE: set sample count for all engines, since the choice of rendering engine may be
+        #       reverted later (and we don't want to waste time rendering 4096 samples of Cycles)
+        # if bpy.context.scene.render.engine == "CYCLES":
+        bpy.context.scene.cycles.samples = samples
+        # elif bpy.context.scene.render.engine in ["BLENDER_EEVEE_NEXT", "EEVEE"]:
+        bpy.context.scene.eevee.taa_render_samples = samples
+
+    # Enable GPU rendering for Cycles if requested
+    if enable_gpu and bpy.context.scene.render.engine == "CYCLES":
+        try:
+            # NOTE: seems to fail here
+            prefs = bpy.context.preferences.addons["cycles"].preferences
+            prefs.compute_device_type = "CUDA"  # Try CUDA first
+            bpy.context.scene.cycles.device = "GPU"
+        except Exception:
+            # Fallback if CUDA not available or addon not found
+            try:
+                prefs = bpy.context.preferences.addons["cycles"].preferences
+                prefs.compute_device_type = "OPENCL"
+                bpy.context.scene.cycles.device = "GPU"
+            except Exception:
+                # GPU acceleration not available, continue with CPU
+                pass
 
 
 def _setup_top_down_camera():
@@ -630,7 +1002,8 @@ def _setup_top_down_camera():
             bpy.data.objects.remove(obj, do_unlink=True)
 
     # Add top-down orthographic camera
-    bpy.ops.object.camera_add(location=(0, 0, 10))  # 10 units above origin
+    with suppress_blender_logs():
+        bpy.ops.object.camera_add(location=(0, 0, 10))  # 10 units above origin
     camera = bpy.context.object
     camera.name = "TopDownCamera"
 
@@ -653,7 +1026,8 @@ def _setup_isometric_camera():
             bpy.data.objects.remove(obj, do_unlink=True)
 
     # Add isometric orthographic camera
-    bpy.ops.object.camera_add(location=(10, -10, 10))
+    with suppress_blender_logs():
+        bpy.ops.object.camera_add(location=(10, -10, 10))
     camera = bpy.context.object
     camera.name = "IsometricCamera"
     camera.data.type = "ORTHO"
@@ -669,7 +1043,8 @@ def _setup_isometric_camera():
 def _setup_lighting(energy: float = 1.0):
     """Sets up basic lighting for the scene."""
     if not any(obj.type == "LIGHT" for obj in bpy.context.scene.objects):
-        bpy.ops.object.light_add(type="SUN", location=(0, 0, 15))
+        with suppress_blender_logs():
+            bpy.ops.object.light_add(type="SUN", location=(0, 0, 15))
         light = bpy.context.object
         light.data.energy = energy
         light.rotation_euler = (0, 0, 0)  # Light pointing down
@@ -695,8 +1070,13 @@ def render_to_file(output_path: str | Path) -> Path:
     bpy.context.scene.render.filepath = str(output_path)
 
     # Render the scene
-    logger.debug(f"Rendering scene to {output_path}")
-    bpy.ops.render.render(write_still=True)
+    # logger.debug(f"Rendering scene to {output_path}")
+    with suppress_blender_logs():
+        # NOTE: `bpy` seems to switch context between `_configure_render_settings()` call
+        #       and render call, reverting the rendering engine back to Cycles.
+        # print(f"{bpy.context.scene.render.engine=}")  # TEMP
+        bpy.context.scene.render.engine = "BLENDER_EEVEE_NEXT"  # TEMP HACK
+        bpy.ops.render.render(write_still=True)
 
     if output_path.exists():
         logger.debug(f"Render completed: {output_path}")
@@ -713,7 +1093,8 @@ def render_to_numpy() -> np.ndarray:
         NumPy array of rendered image data.
     """
     # Render to Blender's internal buffer
-    bpy.ops.render.render()
+    with suppress_blender_logs():
+        bpy.ops.render.render()
 
     # Get rendered image from Blender
     render_result = bpy.context.scene.render
@@ -730,7 +1111,12 @@ def render_to_numpy() -> np.ndarray:
 
 
 def create_scene_visualization(
-    resolution=1024, format="jpg", output_dir: str = None, view: str = "top_down"
+    resolution=1024,
+    format="jpg",
+    output_dir: str = None,
+    view: str = "top_down",
+    background_color: tuple[float, float, float, float] = BACKGROUND_COLOR,
+    show_grid: bool = False,
 ) -> Path:
     """
     Creates a visualization of the current scene.
@@ -740,23 +1126,13 @@ def create_scene_visualization(
         format: The format of the output image.
         output_dir: The directory to save the output image to.
         view: The view to render from. Can be 'top_down' or 'isometric'.
+        background_color: RGBA color for the background.
+        show_grid: Whether to show a grid in the visualization.
 
     Returns:
         Path to the rendered scene visualization file.
     """
     logger.debug(f"Setting up {view} orthographic render...")
-
-    _select_render_engine()
-    _configure_output_image(format, resolution)
-    if view == "top_down":
-        _setup_top_down_camera()
-    elif view == "isometric":
-        _setup_isometric_camera()
-    else:
-        raise ValueError(
-            f"Unsupported view type: {view}. Must be 'top_down' or 'isometric'."
-        )
-    _setup_lighting(energy=0.5)
 
     # Prepare output filepath
     if output_dir is None:
@@ -769,9 +1145,27 @@ def create_scene_visualization(
         strategy="increment",
     )
 
-    scene = bpy.context.scene
-    setup_lighting_foundation(scene)
-    setup_post_processing(scene)
+    # Suppress verbose Blender output during scene setup and rendering
+    with suppress_blender_logs():
+        _configure_render_settings()
+        _configure_output_image(format, resolution)
+        if view == "top_down":
+            _setup_top_down_camera()
+        elif view == "isometric":
+            _setup_isometric_camera()
+        else:
+            raise ValueError(
+                f"Unsupported view type: {view}. Must be 'top_down' or 'isometric'."
+            )
+        _setup_lighting(energy=0.5)
+
+        # Create grid if requested
+        if show_grid:
+            _create_grid()
+
+        scene = bpy.context.scene
+        setup_lighting_foundation(scene, background_color=background_color)
+        setup_post_processing(scene)
 
     return render_to_file(output_path)
 
@@ -796,6 +1190,7 @@ def setup_lighting_foundation(
     scene: bpy.types.Scene,
     hdri_path: Optional[str | Path] = HDRI_FILE_PATH,
     hdri_strength: float = 1.0,
+    background_color: tuple[float, float, float, float] = BACKGROUND_COLOR,
 ):
     """Sets up global illumination and world environment lighting."""
     print("Setting up foundation lighting...")
@@ -803,7 +1198,7 @@ def setup_lighting_foundation(
     cycles_settings = scene.cycles
 
     # Configure GI bounces
-    cycles_settings.max_bounces = 12
+    cycles_settings.max_bounces = 6
     cycles_settings.diffuse_bounces = 4
     cycles_settings.glossy_bounces = 4
 
@@ -817,19 +1212,76 @@ def setup_lighting_foundation(
     nt = world.node_tree
     nt.nodes.clear()
 
-    # Create and link shader nodes
-    bg_node = nt.nodes.new(type="ShaderNodeBackground")
+    # Create nodes for separating HDRI lighting from background color
     output_node = nt.nodes.new(type="ShaderNodeOutputWorld")
-    bg_node.inputs["Strength"].default_value = hdri_strength
+    output_node.location = (400, 0)
 
+    # Mix Shader to combine HDRI lighting and background color
+    mix_node = nt.nodes.new(type="ShaderNodeMixShader")
+    mix_node.location = (200, 0)
+
+    # Background node for HDRI lighting
+    bg_hdri_node = nt.nodes.new(type="ShaderNodeBackground")
+    bg_hdri_node.location = (0, 100)
+    bg_hdri_node.inputs["Strength"].default_value = hdri_strength
+
+    # Background node for solid color background
+    bg_color_node = nt.nodes.new(type="ShaderNodeBackground")
+    bg_color_node.location = (0, -100)
+    bg_color_node.inputs["Color"].default_value = background_color
+    bg_color_node.inputs["Strength"].default_value = 1.0
+
+    # Light Path node to distinguish camera rays from other rays
+    light_path_node = nt.nodes.new(type="ShaderNodeLightPath")
+    light_path_node.location = (0, -250)
+
+    # Set up HDRI or fallback color for lighting
     if hdri_path and Path(hdri_path).exists():
         env_node = nt.nodes.new(type="ShaderNodeTexEnvironment")
+        env_node.location = (-200, 100)
         env_node.image = bpy.data.images.load(str(hdri_path))
-        nt.links.new(env_node.outputs["Color"], bg_node.inputs["Color"])
+        nt.links.new(env_node.outputs["Color"], bg_hdri_node.inputs["Color"])
     else:
-        bg_node.inputs["Color"].default_value = (0.1, 0.1, 0.1, 1.0)
+        # Fallback to a neutral color for lighting
+        bg_hdri_node.inputs["Color"].default_value = (0.1, 0.1, 0.1, 1.0)
 
-    nt.links.new(bg_node.outputs["Background"], output_node.inputs["Surface"])
+    # Connect nodes: HDRI for lighting, solid color for camera-visible background
+    nt.links.new(bg_hdri_node.outputs["Background"], mix_node.inputs[1])
+    nt.links.new(bg_color_node.outputs["Background"], mix_node.inputs[2])
+    nt.links.new(light_path_node.outputs["Is Camera Ray"], mix_node.inputs["Fac"])
+    nt.links.new(mix_node.outputs["Shader"], output_node.inputs["Surface"])
+
+
+# TODO: Implement this function to work with windows built by SceneBuilder.
+# def add_motivated_lights(scene: bpy.types.Scene, sun_energy: float = 5.0):
+#     """Adds key lights based on semantic information in the scene."""
+#     print("Adding motivated lights...")
+#     bpy.ops.object.light_add(type='SUN', location=(0, 0, 10))
+#     sun = bpy.context.active_object
+#     sun.data.energy = sun_energy
+#     sun.data.angle = math.radians(0.53)
+
+#     # --- Your Custom Logic Goes Here ---
+#     # Example: Find windows and add portals
+#     for obj in scene.objects:
+#         if "window" in obj.name.lower():
+#             print(f"Found window: {obj.name}. Adding light portal.")
+#             bpy.ops.object.light_add(type='AREA', location=obj.location)
+#             portal = bpy.context.active_object
+#             portal.data.is_portal = True
+#             portal.scale = (obj.dimensions.x, obj.dimensions.y, 1)
+
+
+# def add_fill_lights():
+#     """Adds subtle, non-shadow-casting lights to brighten dark areas."""
+#     print("Adding fill lights...")
+#     bpy.ops.object.light_add(type='POINT', location=(-3, -3, 1.5))
+#     fill_light = bpy.context.active_object
+#     fill_light.name = "FillLight"
+
+#     fill_light.data.energy = 20.0
+#     fill_light.data.shadow_soft_size = 3.0
+#     fill_light.visible_shadow = False
 
 
 def setup_post_processing(scene: bpy.types.Scene):

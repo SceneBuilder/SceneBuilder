@@ -4,6 +4,7 @@ import random
 import tempfile
 from typing import Any, Dict, List
 
+from scene_builder.config import TEST_ASSET_DIR
 from scene_builder.definition.scene import ObjectBlueprint
 
 # Mock database of assets available for testing.
@@ -88,4 +89,4 @@ def search_test_asset(object_category: str) -> ObjectBlueprint:
 
 
 def import_test_asset(id: str) -> str:
-    return str(Path(f"test_assets/objects/{id}.glb"))
+    return str(Path(f"{TEST_ASSET_DIR}/objects/{id}.glb"))

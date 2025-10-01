@@ -47,6 +47,30 @@ class Object(BaseModel):
     scale: Vector3
     tags: list[str] | None = None
 
+    @classmethod
+    def from_blueprint(
+        cls,
+        blueprint: "ObjectBlueprint",
+        id: str,
+        position: Vector3,
+        rotation: Vector3,
+        scale: Vector3,
+        tags: list[str] | None = None,
+        name: str | None = None,
+    ) -> "Object":
+        """Create an Object from an ObjectBlueprint with additional required properties."""
+        return cls(
+            name=name or blueprint.name or "Unnamed Object",
+            id=id,
+            source=blueprint.source,
+            source_id=blueprint.source_id,
+            description=blueprint.description,
+            position=position,
+            rotation=rotation,
+            scale=scale,
+            tags=tags,
+        )
+
 
 class Section(BaseModel):
     # NOTE: not sure whether to allow recursive sections (e.g., section of sections)
