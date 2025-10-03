@@ -68,9 +68,9 @@ class BlenderSceneTracker:
         """Register a newly created object (overwrites if object moved)."""
         object_id = obj_data["id"]
         source_id = obj_data["source_id"]
-        pos = obj_data.get["position"]
-        rot = obj_data.get["rotation"]
-        scale = obj_data.get["scale"]
+        pos = obj_data["position"]
+        rot = obj_data["rotation"]
+        scale = obj_data["scale"]
 
         self._objects[object_id] = BlenderObjectState(
             blender_name=blender_name,

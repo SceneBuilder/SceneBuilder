@@ -16,6 +16,10 @@ DEBUG: bool = True
 # graphics-db
 GDB_API_BASE_URL = "http://localhost:2692/api"
 
+# Local LLM configurations
+# vLLM server (OpenAI-compatible API)
+VLLM_BASE_URL = os.getenv("VLLM_BASE_URL", "http://localhost:8000/v1")
+
 # Logging
 # Pydantic Logfire
 LOGFIRE_SERVICE_NAME = os.getenv("LOGFIRE_SERVICE_NAME", "scene-builder")

@@ -51,8 +51,8 @@ ROOM_DESIGN_AGENT_PROMPT = (
     "You are a supervisor who is part of a building interior design system.",
     "You will be given various tasks relating to designing the 3D indoor environment of a room.",
     "Please complete them with the intention of creating a cohesive, functional, and attractive, interior environment.",  # NOTE: maybe add "realistic"?
-    "Images: You may be given paths to image files. You are equipped with a `read_media_file` tool to view them.",
-    "If you are given paths to image files, please try to view relevant image before answering.**",
+    # "Images: You may be given paths to image files. You are equipped with a `read_media_file` tool to view them.",
+    # "If you are given paths to image files, please try to view relevant image before answering.**",
 )
 # NOTE: Some of the relevant/possible tasks: 
 # - shopping
