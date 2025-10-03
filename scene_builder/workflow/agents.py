@@ -19,7 +19,6 @@ from scene_builder.workflow.prompts import (
     BUILDING_PLAN_AGENT_PROMPT,
     FLOOR_PLAN_AGENT_PROMPT,
     PLACEMENT_AGENT_PROMPT,
-    FLOOR_SIZE_AGENT_PROMPT,
     ROOM_DESIGN_AGENT_PROMPT,
     SEQUENCING_AGENT_PROMPT,
     SHOPPING_AGENT_PROMPT,
@@ -82,12 +81,6 @@ async def add_placement_state(ctx: RunContext[PlacementState]) -> str:
 planning_agent = Agent(
     model,
     system_prompt=BUILDING_PLAN_AGENT_PROMPT,
-)
-
-floor_size_agent = Agent(
-    model,
-    system_prompt=FLOOR_SIZE_AGENT_PROMPT,
-    output_type=FloorDimensions,
 )
 
 

@@ -22,6 +22,8 @@ from scene_builder.importer import objaverse_importer, test_asset_importer
 from scene_builder.logging import logger
 from scene_builder.utils.conversions import pydantic_to_dict
 from scene_builder.utils.file import get_filename
+from scene_builder.database.material import MaterialWorkflow
+
 
 
 @dataclass
@@ -95,6 +97,8 @@ class BlenderSceneTracker:
 
 # Global scene tracker instance
 _scene_tracker = BlenderSceneTracker()
+from scene_builder.database.material import MaterialWorkflow
+
 
 
 HDRI_FILE_PATH = Path(
@@ -216,44 +220,56 @@ def _create_room(room_data: dict[str, Any]):
     if boundary:
         logger.debug(f"Creating floor mesh for room: {room_id}")
         try:
-            # Extract LLM metadata if available
-            llm_metadata = {}
-            if "floor_dimensions" in room_data:
-                floor_dims = room_data["floor_dimensions"]
-                llm_metadata = {
-                    "width": floor_dims.get("width", 0),
-                    "height": floor_dims.get("height", 0),
-                    "area_sqm": floor_dims.get("area_sqm", 0),
-                    "shape": floor_dims.get("shape", "unknown"),
-                    "confidence": floor_dims.get("confidence", 0),
-                    "llm_analysis": floor_dims.get("llm_analysis", ""),
-                }
-
-            floor_result = _create_floor_mesh(
-                boundary, room_id, llm_metadata=llm_metadata
-            )
+            floor_result = _create_floor_mesh(boundary, room_id)
             logger.debug(f"Floor mesh created: {floor_result.get('status', 'unknown')}")
         except Exception as e:
             logger.error(f"Failed to create floor mesh for room {room_id}: {e}")
 
     # Create walls from boundary if ceiling height is available
-    if boundary and room_data.get("floor_dimensions"):
-        floor_dims = room_data["floor_dimensions"]
-        ceiling_height = floor_dims.get(
-            "ceiling_height", 2.7
-        )  # Default to 2.7m if not specified
+    # if boundary and room_data.get("floor_dimensions"):
+    #     floor_dims = room_data["floor_dimensions"]
+    #     ceiling_height = floor_dims.get(
+    #         "ceiling_height", 2.7
+    #     )  # Default to 2.7m if not specified
 
-        logger.debug(f"Creating walls for room: {room_id} (height: {ceiling_height}m)")
-        try:
-            wall_result = _create_walls_from_boundary(boundary, room_id, ceiling_height)
-            logger.debug(f"Walls created: {wall_result.get('status', 'unknown')}")
-        except Exception as e:
-            logger.error(f"Failed to create walls for room {room_id}: {e}")
+    #     logger.debug(f"Creating walls for room: {room_id} (height: {ceiling_height}m)")
+    #     try:
+    #         wall_result = _create_walls_from_boundary(boundary, room_id, ceiling_height)
+    #         logger.debug(f"Walls created: {wall_result.get('status', 'unknown')}")
+    #     except Exception as e:
+    #         logger.error(f"Failed to create walls for room {room_id}: {e}")
 
-    # Create objects in the room
-    for obj_data in room_data.get("objects", []):
-        _create_object(obj_data)
+    # # Create objects in the room
+    # for obj_data in room_data.get("objects", []):
+    #     _create_object(obj_data)
 
+def _check_object_duplicate_status(obj_data: dict[str, Any]) -> str:
+    """
+    Check if object already exists and determine what action to take.
+
+    Args:
+        obj_data: Dictionary containing object data
+
+    Returns:
+        String indicating status: "skip_unchanged", "recreate_moved", or "proceed_new"
+    """
+    object_id = obj_data.get("id")
+    object_name = obj_data.get("name", "Unnamed Object")
+    pos = obj_data.get("position", {"x": 0, "y": 0, "z": 0})
+    rot = obj_data.get("rotation", {"x": 0, "y": 0, "z": 0})
+
+    if not object_id:
+        return "proceed_new"
+
+    if _scene_tracker.object_exists_unchanged(object_id, pos, rot):
+        logger.debug(f"Skipping duplicate object: {object_name} (id: {object_id}) - unchanged at {pos}")
+        return "skip_unchanged"
+
+    if _scene_tracker.object_exists_but_moved(object_id, pos, rot):
+        logger.debug(f"Object {object_name} (id: {object_id}) has moved - will recreate at {pos}")
+        return "recreate_moved"
+
+    return "proceed_new"
 
 def _check_object_duplicate_status(obj_data: dict[str, Any]) -> str:
     """
@@ -435,17 +451,13 @@ def _create_floor_mesh(
     room_id: str,
     floor_thickness_m: float = 0.1,
     origin: str = "center",
-    llm_metadata: dict[str, Any] = None,
 ) -> dict[str, Any]:
     """
-    Creates a watertight floor mesh from room boundary points with LLM metadata integration.
-
     Args:
         boundary: List of Vector2 points from room.boundary [{"x": float, "y": float}, ...]
         room_id: Room identifier for naming
         floor_thickness_m: Thickness of the floor in meters (default: 0.1)
         origin: Origin placement - "center" or "min" (default: "center")
-        llm_metadata: LLM analysis data from floor_dimensions
 
     Returns:
         Dictionary with creation status and metadata
@@ -619,160 +631,7 @@ def _create_floor_mesh(
         "timestamp": timestamp,
     }
 
-    # Add LLM metadata to result
-    if llm_metadata:
-        result["llm_metadata"] = llm_metadata
-        if llm_metadata.get("llm_analysis"):
-            result["llm_analysis"] = llm_metadata["llm_analysis"]
-
     return result
-
-
-def _create_walls_from_boundary(
-    boundary: list[dict[str, float]],
-    room_id: str,
-    ceiling_height: float = 2.7,
-    wall_thickness: float = 0.2,
-) -> dict[str, Any]:
-    """
-    Creates wall meshes from room boundary points.
-
-    Args:
-        boundary: List of Vector2 points from room.boundary [{"x": float, "y": float}, ...]
-        room_id: Room identifier for naming
-        ceiling_height: Height of walls in meters (default: 2.7)
-        wall_thickness: Thickness of walls in meters (default: 0.2)
-
-    Returns:
-        Dictionary with creation status and metadata
-    """
-
-    if not boundary or len(boundary) < 3:
-        return {
-            "status": "error",
-            "message": f"Room {room_id}: At least 3 boundary points required for wall creation",
-            "timestamp": int(time.time()),
-        }
-
-    try:
-        # Generate timestamp for naming
-        timestamp = int(time.time())
-
-        # Ensure NavGo_Walls collection exists
-        collection = _ensure_collection("NavGo_Walls")
-
-        # Convert boundary points to 2D coordinates
-        vertices_2d = []
-        for point in boundary:
-            if hasattr(point, "x"):  # Vector2 object
-                vertices_2d.append((point.x, point.y))
-            else:  # Dictionary format
-                vertices_2d.append((point["x"], point["y"]))
-
-        walls_created = 0
-
-        # Create walls between consecutive boundary points
-        num_points = len(vertices_2d)
-        for i in range(num_points):
-            next_i = (i + 1) % num_points
-
-            # Get current and next point
-            p1 = vertices_2d[i]
-            p2 = vertices_2d[next_i]
-
-            # Create wall segment
-            wall_name = f"Wall_{room_id}_{i}_{timestamp}"
-            mesh_name = f"WallMesh_{room_id}_{i}_{timestamp}"
-
-            # Calculate wall direction and normal for thickness
-            wall_dir_x = p2[0] - p1[0]
-            wall_dir_y = p2[1] - p1[1]
-            wall_length = (wall_dir_x**2 + wall_dir_y**2) ** 0.5
-
-            if wall_length < 0.01:  # Skip very short walls
-                continue
-
-            # Normalize direction vector
-            wall_dir_x /= wall_length
-            wall_dir_y /= wall_length
-
-            # Calculate perpendicular vector for wall thickness (inward normal only)
-            # Boundary points are the outer edge, walls extend inward
-            inward_normal_x = -wall_dir_y * wall_thickness
-            inward_normal_y = wall_dir_x * wall_thickness
-
-            # Create wall vertices (rectangular wall segment)
-            wall_verts = [
-                # Bottom face - outer edge stays at boundary, inner edge moves inward
-                (p1[0], p1[1], 0.0),  # Bottom left outer (at boundary)
-                (p2[0], p2[1], 0.0),  # Bottom right outer (at boundary)
-                (
-                    p2[0] + inward_normal_x,
-                    p2[1] + inward_normal_y,
-                    0.0,
-                ),  # Bottom right inner
-                (
-                    p1[0] + inward_normal_x,
-                    p1[1] + inward_normal_y,
-                    0.0,
-                ),  # Bottom left inner
-                # Top face
-                (p1[0], p1[1], ceiling_height),  # Top left outer (at boundary)
-                (p2[0], p2[1], ceiling_height),  # Top right outer (at boundary)
-                (
-                    p2[0] + inward_normal_x,
-                    p2[1] + inward_normal_y,
-                    ceiling_height,
-                ),  # Top right inner
-                (
-                    p1[0] + inward_normal_x,
-                    p1[1] + inward_normal_y,
-                    ceiling_height,
-                ),  # Top left inner
-            ]
-
-            # Define faces for the wall (quads)
-            wall_faces = [
-                # Outer face
-                (0, 1, 5, 4),
-                # Inner face
-                (3, 7, 6, 2),
-                # End faces
-                (0, 4, 7, 3),  # Left end
-                (1, 2, 6, 5),  # Right end
-                # Top face
-                (4, 5, 6, 7),
-                # Bottom face (optional, usually covered by floor)
-                (0, 3, 2, 1),
-            ]
-
-            # Create mesh
-            mesh = bpy.data.meshes.new(mesh_name)
-            mesh.from_pydata(wall_verts, [], wall_faces)
-            mesh.update()
-
-            # Create object
-            wall_obj = bpy.data.objects.new(wall_name, mesh)
-            collection.objects.link(wall_obj)
-
-            walls_created += 1
-
-        return {
-            "status": "success",
-            "room_id": room_id,
-            "walls_created": walls_created,
-            "collection": "NavGo_Walls",
-            "ceiling_height": ceiling_height,
-            "wall_thickness": wall_thickness,
-            "timestamp": timestamp,
-        }
-
-    except Exception as e:
-        return {
-            "status": "error",
-            "message": f"Wall creation failed for room {room_id}: {str(e)}",
-            "timestamp": int(time.time()),
-        }
 
 
 def _calculate_bounds(
@@ -1005,6 +864,66 @@ def save_scene(filepath: str):
     with suppress_blender_logs():
         bpy.ops.wm.save_as_mainfile(filepath=filepath)
     logger.debug(f"Scene saved to {filepath}")
+
+
+def render_top_down(output_dir: str = None) -> Path:
+    """
+    Brief Pipeline:
+    1. Build the scene in Blender (bpy)
+    2. Set the camera to top-down + orthographic, then render
+    3. Save the rendered image as a file (PNG)
+
+    Returns:
+        Path to the rendered top-down PNG file.
+    """
+    logger.debug("Setting up top-down orthographic render...")
+
+    # Use existing modular functions instead of duplicating code
+    _configure_render_settings()
+    _configure_output_image("PNG", 1024)
+    _setup_top_down_camera()
+    _setup_lighting(energy=0.5)
+
+    # Prepare output filepath
+    if output_dir is None:
+        output_dir = tempfile.gettempdir()
+
+    output_path = (
+        Path(output_dir)
+        / f"room_topdown_{abs(hash(str(bpy.context.scene.objects)))}.png"
+    )
+
+    return render_to_file(output_path)
+
+
+def render() -> np.ndarray:
+    """
+    Main render function for the workflow - renders scene to NumPy array.
+    Sets up top-down orthographic view and renders directly to memory.
+
+    Returns:
+        NumPy array of rendered top-down image data (RGBA format).
+    """
+    logger.debug("Setting up top-down orthographic render...")
+
+    _configure_render_settings()
+    _configure_output_image("PNG", 1024)
+    _setup_top_down_camera()
+    _setup_lighting(energy=5.0)
+
+    logger.debug("Rendering top-down view to memory...")
+    bpy.ops.render.render()
+
+    render_result = bpy.context.scene.render
+    width = render_result.resolution_x
+    height = render_result.resolution_y
+
+    pixels = bpy.data.images["Render Result"].pixels[:]
+
+    image_array = np.array(pixels).reshape((height, width, 4))
+
+    logger.debug(f"Render completed: {width}x{height} RGBA array")
+    return image_array
 
 
 def _configure_output_image(format: str, resolution: int):
@@ -1326,18 +1245,10 @@ def setup_lighting_foundation(
         # Fallback to a neutral color for lighting
         bg_hdri_node.inputs["Color"].default_value = (0.1, 0.1, 0.1, 1.0)
 
-    # Link nodes together
-    # HDRI background to first slot of Mix Shader
+    # Connect nodes: HDRI for lighting, solid color for camera-visible background
     nt.links.new(bg_hdri_node.outputs["Background"], mix_node.inputs[1])
-
-    # Color background to second slot of Mix Shader
     nt.links.new(bg_color_node.outputs["Background"], mix_node.inputs[2])
-
-    # Light Path "Is Camera Ray" controls the mix factor
-    # Camera rays (value 1) use the color background, other rays (value 0) use HDRI
     nt.links.new(light_path_node.outputs["Is Camera Ray"], mix_node.inputs["Fac"])
-
-    # Mix Shader output to World Output
     nt.links.new(mix_node.outputs["Shader"], output_node.inputs["Surface"])
 
 
@@ -1393,3 +1304,65 @@ def setup_post_processing(scene: bpy.types.Scene):
 
     nt.links.new(render_layers.outputs["Image"], glare_node.inputs["Image"])
     nt.links.new(glare_node.outputs["Image"], composite_output.inputs["Image"])
+
+
+def apply_floor_material(
+    query: str,
+    uv_scale: Optional[float] = None,
+    boundary: Optional[list] = None
+) -> dict[str, Any]:
+    """
+    Function to search and apply a material to all floor objects.
+    If boundary is provided, calculates appropriate UV scale automatically.
+
+    Args:
+        query: Material search query (e.g., "wood floor parquet")
+        uv_scale: UV scaling for texture tiling (optional if boundary provided)
+        boundary: List of Vector2 points for UV scale calculation
+
+    Returns:
+        Results dictionary with status information
+    """
+    from scene_builder.database.material import MaterialWorkflow
+
+    # Calculate UV scale from boundary if provided
+    if boundary is not None and uv_scale is None:
+        # Convert boundary points to tuples for _calculate_bounds
+        boundary_tuples = []
+        for point in boundary:
+            if hasattr(point, "x"):  # Vector2 object
+                boundary_tuples.append((point.x, point.y))
+            else:  # Dictionary format
+                boundary_tuples.append((point["x"], point["y"]))
+
+        bounds = _calculate_bounds(boundary_tuples)
+        current_size = max(bounds["width"], bounds["height"])
+        reference_size = 10.0  # 10x10 room -> uv_scale=30.0 base
+        reference_uv_scale = 30.0
+        calculated_uv_scale = reference_uv_scale * (current_size / reference_size)
+        uv_scale = calculated_uv_scale
+    elif uv_scale is None:
+        # Default UV scale if neither boundary nor uv_scale provided
+        uv_scale = 2.0
+
+    workflow = MaterialWorkflow()
+    return workflow.texture_floors_with_query(query, uv_scale=uv_scale)
+
+
+def texture_floor_with_material(
+    floor_name: str, query: str, uv_scale: float = 2.0
+) -> bool:
+    """
+    Function to texture a specific floor with a material.
+
+    Args:
+        floor_name: Name of the floor object
+        query: Material search query
+        uv_scale: UV scaling factor
+
+    Returns:
+        True if successful, False otherwise
+    """
+
+    workflow = MaterialWorkflow()
+    return workflow.texture_specific_floor(floor_name, query, uv_scale)

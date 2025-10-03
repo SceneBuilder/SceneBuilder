@@ -25,7 +25,6 @@ from scene_builder.nodes.placement import (
 )
 
 # from scene_builder.nodes.feedback import VisualFeedback
-from scene_builder.tools.material_workflow import apply_floor_material
 from scene_builder.utils.conversions import pydantic_from_yaml
 from scene_builder.utils.image import create_gif_from_images
 from scene_builder.workflow.agents import generic_agent, room_design_agent
