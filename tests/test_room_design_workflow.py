@@ -27,6 +27,7 @@ from scene_builder.nodes.placement import (
 # from scene_builder.nodes.feedback import VisualFeedback
 from scene_builder.utils.conversions import pydantic_from_yaml
 from scene_builder.utils.image import create_gif_from_images
+from scene_builder.utils.pydantic import save_yaml
 from scene_builder.workflow.agents import generic_agent, room_design_agent
 
 # from scene_builder.workflow.graphs import (
@@ -412,6 +413,7 @@ def test_room_design_workflow(case: str):
 
     result: RoomDesignState = asyncio.run(run_graph())
     blender.save_scene(f"test_output/test_room_design_workflow_{case}.blend")
+    save_yaml(f"test_output/test_room_design_workflow_{case}.yaml")
 
 
 if __name__ == "__main__":
@@ -419,7 +421,7 @@ if __name__ == "__main__":
     # test_single_object_placement(hardcoded_object=False)
     # test_partial_room_completion()
     # test_room_design_workflow("classroom")
-    test_room_design_workflow("garage")
+    # test_room_design_workflow("garage")
     # test_room_design_workflow("kitchen")
     # test_room_design_workflow("bedroom")
     # test_room_design_workflow("office")
@@ -436,7 +438,7 @@ if __name__ == "__main__":
     # test_room_design_workflow("warehouse")
     # test_room_design_workflow("conference_room")
     # test_room_design_workflow("art_gallery")
-    # test_room_design_workflow("bar")
+    test_room_design_workflow("bar")
     # test_room_design_workflow("theater_backstage")
     # test_room_design_workflow("factory_floor")
     # test_room_design_workflow("diffuscene")

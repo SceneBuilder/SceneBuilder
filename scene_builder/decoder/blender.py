@@ -43,6 +43,8 @@ class BlenderSceneTracker:
     def __init__(self):
         # Key: object_id, Value: BlenderObjectState
         self._objects: Dict[str, BlenderObjectState] = {}
+        # Cache: Key: source_id, Value: blender_name of the Empty parent
+        self._source_cache: Dict[str, str] = {}
 
     def object_exists_unchanged(self, object_id: str, pos: dict, rot: dict) -> bool:
         """Check if object exists with exact same position/rotation."""
@@ -84,6 +86,7 @@ class BlenderSceneTracker:
     def clear_all(self):
         """Clear all tracked objects."""
         self._objects.clear()
+        self._source_cache.clear()
         logger.debug("Cleared all object tracking")
 
     def get_object_count(self) -> int:
@@ -93,6 +96,38 @@ class BlenderSceneTracker:
     def get_object_state(self, object_id: str) -> Optional[BlenderObjectState]:
         """Get current state for a specific object."""
         return self._objects.get(object_id)
+
+    def get_cached_empty(self, source_id: str) -> Optional[Any]:
+        """Get cached Empty parent object for a source_id if it exists.
+
+        Args:
+            source_id: The source_id to look up in cache
+
+        Returns:
+            Blender Empty object if found in cache and still exists, None otherwise
+        """
+        if source_id not in self._source_cache:
+            return None
+
+        blender_name = self._source_cache[source_id]
+
+        # Verify the object still exists in Blender
+        if blender_name in bpy.data.objects:
+            return bpy.data.objects[blender_name]
+        else:
+            # Object was deleted, clean up cache
+            del self._source_cache[source_id]
+            return None
+
+    def register_source_cache(self, source_id: str, blender_name: str):
+        """Register a source_id -> Empty parent mapping in cache.
+
+        Args:
+            source_id: The source identifier (e.g., Objaverse ID)
+            blender_name: The name of the Empty parent object in Blender
+        """
+        self._source_cache[source_id] = blender_name
+        logger.debug(f"Cached source_id '{source_id}' -> Empty '{blender_name}'")
 
 
 # Global scene tracker instance
@@ -239,9 +274,9 @@ def _create_room(room_data: dict[str, Any]):
     #     except Exception as e:
     #         logger.error(f"Failed to create walls for room {room_id}: {e}")
 
-    # # Create objects in the room
-    # for obj_data in room_data.get("objects", []):
-    #     _create_object(obj_data)
+    # Create objects in the room
+    for obj_data in room_data.get("objects", []):
+        _create_object(obj_data)
 
 def _check_object_duplicate_status(obj_data: dict[str, Any]) -> str:
     """
@@ -332,9 +367,48 @@ def _create_object(obj_data: dict[str, Any], parent_location: str = "origin"):
     logger.debug(f"Creating object: {object_name} (id: {object_id})")
 
     blender_obj = None
+    source_id = obj_data.get("source_id")
+
+    # Check if we've already imported this source_id
+    if source_id:
+        cached_empty = _scene_tracker.get_cached_empty(source_id)
+        if cached_empty:
+            logger.debug(f"Reusing cached model for source_id: {source_id}")
+
+            # Create new Empty parent with linked duplicate children
+            with suppress_blender_logs():
+                bpy.ops.object.empty_add(type="PLAIN_AXES", location=(0, 0, 0))
+            blender_obj = bpy.context.active_object
+            blender_obj.name = object_name
+
+            # Create linked duplicates of all children
+            for child in cached_empty.children:
+                new_child = child.copy()
+                new_child.data = child.data  # Share mesh data (linked duplicate)
+                bpy.context.collection.objects.link(new_child)
+                new_child.parent = blender_obj
+
+            # Skip to transformation section
+            # (Set position, rotation, and scale)
+            blender_obj.location = (pos["x"], pos["y"], pos["z"])
+            blender_obj.scale = (scl["x"], scl["y"], scl["z"])
+
+            # Combine the original rotation with the rotation from the scene definition.
+            original_rotation = Rotation.from_euler("xyz", blender_obj.rotation_euler)
+            new_rotation = Rotation.from_euler("xyz", [rot["x"], rot["y"], rot["z"]], degrees=True)
+            combined_rotation = new_rotation * original_rotation
+
+            # Apply the combined rotation.
+            blender_obj.rotation_euler = combined_rotation.as_euler("xyz")
+
+            # Register the created object in tracker
+            if object_id and blender_obj:
+                _scene_tracker.register_object(obj_data, blender_obj.name)
+                logger.debug(f"Registered object in tracker: {object_name} (id: {object_id})")
+
+            return
 
     if obj_data.get("source").lower() == "objaverse":
-        source_id = obj_data.get("source_id")
         if not source_id:
             raise ValueError(
                 f"Object '{object_name}' has source 'objaverse' but no 'source_id'."
@@ -356,9 +430,9 @@ def _create_object(obj_data: dict[str, Any], parent_location: str = "origin"):
         source = obj_data.get("source", "unknown")
         logger.warning(f"Unknown object source: {source}. For now, overwriting with objaverse.")
         source = "objaverse"  # TEMP HACK
-        raise NotImplementedError(
-            f"Object source '{source}' is not yet supported for '{object_name}'."
-        )
+        # raise NotImplementedError(
+        #     f"Object source '{source}' is not yet supported for '{object_name}'."
+        # )
 
     # Import the .glb file
     if object_path and object_path.endswith(".glb"):
@@ -417,6 +491,10 @@ def _create_object(obj_data: dict[str, Any], parent_location: str = "origin"):
             # Parent all imported objects to the Empty
             for obj in imported_objects:
                 obj.parent = blender_obj
+
+            # Register this Empty in the source cache for future reuse
+            if source_id:
+                _scene_tracker.register_source_cache(source_id, blender_obj.name)
 
         except Exception as e:
             raise IOError(

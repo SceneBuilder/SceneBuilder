@@ -1,5 +1,6 @@
 import pytest
 import unittest.mock as mock
+import yaml
 from pathlib import Path
 
 from scene_builder.config import TEST_ASSET_DIR
@@ -163,27 +164,57 @@ def test_grid_visualization():
 
     # Test top-down view with grid
     output_path_top_grid = blender.create_scene_visualization(
-        view="top_down",
-        show_grid=True,
-        resolution=512
+        view="top_down", show_grid=True, resolution=512
     )
     assert output_path_top_grid.exists()
 
     # Test isometric view with grid
     output_path_iso_grid = blender.create_scene_visualization(
-        view="isometric",
-        show_grid=True,
-        resolution=512
+        view="isometric", show_grid=True, resolution=512
     )
     assert output_path_iso_grid.exists()
 
     # Test that grid can be called multiple times (stateless behavior)
     output_path_repeat = blender.create_scene_visualization(
-        view="top_down",
-        show_grid=True,
-        resolution=512
+        view="top_down", show_grid=True, resolution=512
     )
     assert output_path_repeat.exists()
+
+
+def test_room_loading(
+    room_data_path: str = "test_output/test_room_design_workflow_garage.yaml",
+):
+    """
+    Tests loading a room from a YAML file and rendering it.
+
+    Args:
+        room_data_path: Path to the room YAML file (relative to project root)
+    """
+    yaml_path = Path(room_data_path)
+    if not yaml_path.is_absolute():
+        # Make path relative to project root
+        yaml_path = Path(__file__).parent.parent / yaml_path
+
+    assert yaml_path.exists(), f"Room data file not found: {yaml_path}"
+
+    # Load room data from YAML
+    with open(yaml_path, "r") as f:
+        room_data = yaml.safe_load(f)
+
+    # Parse room definition in Blender
+    blender.parse_room_definition(room_data, clear=True)
+
+    # Render top-down view
+    output_path = blender.create_scene_visualization(
+        view="top_down", show_grid=True, resolution=1024
+    )
+    assert output_path.exists()
+    print(f"✅ Rendered room to: {output_path}")
+
+    # Optionally save the .blend file
+    blend_path = yaml_path.parent / f"{yaml_path.stem}.blend"
+    blender.save_scene(str(blend_path))
+    print(f"✅ Saved Blender file to: {blend_path}")
 
 
 if __name__ == "__main__":
@@ -191,4 +222,4 @@ if __name__ == "__main__":
     test_template_loading()
     test_isometric_render()
     test_grid_visualization()
-
+    test_room_loading()
