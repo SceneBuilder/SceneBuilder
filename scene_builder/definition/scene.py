@@ -83,6 +83,12 @@ class Section(BaseModel):
     children: list[Object] = Field(default_factory=list)
 
 
+class Floor(BaseModel):
+    """Represents a single floor in a room."""
+
+    material_id: str | None = None
+
+
 class Room(BaseModel):
     """Represents a single room in the scene."""
 
@@ -94,6 +100,7 @@ class Room(BaseModel):
     # floor_dimensions: FloorDimensions | None = None
     # viz: list[Path] = []
     objects: list[Object] = []
+    floor: Floor | None = None
     # objects: list[Object] = Field(default_factory=list)
     # objects: list[Object | Section] = Field(default_factory=list)
 

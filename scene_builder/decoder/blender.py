@@ -16,13 +16,14 @@ from mathutils import Vector
 from mathutils.geometry import tessellate_polygon
 
 from scene_builder.config import BLENDER_LOG_FILE, TEST_ASSET_DIR
+from scene_builder.database.material import MaterialDatabase
 from scene_builder.definition.scene import Object, Room, Scene
 from scene_builder.importer import objaverse_importer, test_asset_importer
 from scene_builder.logging import logger
+from scene_builder.tools.material_applicator import texture_floor_mesh
 from scene_builder.utils.blender import SceneSwitcher
 from scene_builder.utils.conversions import pydantic_to_dict
 from scene_builder.utils.file import get_filename
-from scene_builder.database.material import MaterialWorkflow
 
 
 HDRI_FILE_PATH = Path(
@@ -252,6 +253,16 @@ def _create_room(room_data: dict[str, Any]):
     # Create floor mesh
     floor_result = _create_floor_mesh(room_data["boundary"], room_id)
     logger.debug(f"Created floor: {floor_result['status']}")
+
+    # Apply floor material
+    if room_data["floor"]:
+        material_id = room_data["floor"]["material_id"]
+        apply_floor_material(
+            material_id=material_id,
+            floor_object_name=floor_result["object_name"],
+            boundary=room_data["boundary"]
+        )
+        logger.debug(f"Applied material {material_id} to floor")
 
     # Create walls from boundary if ceiling height is available
     # if boundary and room_data.get("floor_dimensions"):
@@ -1396,23 +1407,24 @@ def setup_post_processing(scene: bpy.types.Scene):
 
 
 def apply_floor_material(
-    query: str,
+    material_id: str,
+    floor_object_name: str,
     uv_scale: Optional[float] = None,
     boundary: Optional[list] = None
-) -> dict[str, Any]:
+) -> bool:
     """
-    Function to search and apply a material to all floor objects.
-    If boundary is provided, calculates appropriate UV scale automatically.
+    Apply a material to a floor object in Blender.
+    Material should already be selected by LLM workflow.
 
     Args:
-        query: Material search query (e.g., "wood floor parquet")
+        material_id: Material UID from Graphics-DB (already selected by workflow)
+        floor_object_name: Name of the floor object in Blender
         uv_scale: UV scaling for texture tiling (optional if boundary provided)
         boundary: List of Vector2 points for UV scale calculation
 
     Returns:
-        Results dictionary with status information
+        True if successful, False otherwise
     """
-    from scene_builder.database.material import MaterialWorkflow
 
     # Calculate UV scale from boundary if provided
     if boundary is not None and uv_scale is None:
@@ -1431,27 +1443,28 @@ def apply_floor_material(
         calculated_uv_scale = reference_uv_scale * (current_size / reference_size)
         uv_scale = calculated_uv_scale
     elif uv_scale is None:
-        # Default UV scale if neither boundary nor uv_scale provided
+        # Default UV scale
         uv_scale = 2.0
 
-    workflow = MaterialWorkflow()
-    return workflow.texture_floors_with_query(query, uv_scale=uv_scale)
+    # Download texture using MaterialDatabase
+    material_db = MaterialDatabase()
+    texture_path = material_db.download_texture(material_id)
 
+    if not texture_path:
+        logger.debug(f"Failed to download texture for material: {material_id}")
+        return False
 
-def texture_floor_with_material(
-    floor_name: str, query: str, uv_scale: float = 2.0
-) -> bool:
-    """
-    Function to texture a specific floor with a material.
+    # Apply texture using material_applicator
+    success = texture_floor_mesh(
+        floor_object_name=floor_object_name,
+        texture_path=texture_path,
+        uv_scale=uv_scale,
+    )
 
-    Args:
-        floor_name: Name of the floor object
-        query: Material search query
-        uv_scale: UV scaling factor
+    if success:
+        logger.debug(f"Applied material {material_id} to floor {floor_object_name}")
+    else:
+        logger.debug(f"Failed to apply material to floor {floor_object_name}")
 
-    Returns:
-        True if successful, False otherwise
-    """
+    return success
 
-    workflow = MaterialWorkflow()
-    return workflow.texture_specific_floor(floor_name, query, uv_scale)

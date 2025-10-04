@@ -1,146 +1,61 @@
 """
-Complete material workflow for floor texturing.
-Integrates Graphics-DB search with Blender material application.
+Material database for querying and downloading materials.
+Similar to ObjectDatabase - provides search interface without Blender dependencies.
 """
 
 from typing import List, Optional, Dict, Any
 
 from scene_builder.database.graphics_db_client import GraphicsDBClient
-from scene_builder.tools.material_applicator import (
-    texture_floor_mesh,
-    find_floor_objects,
-)
-
-BASE_UV_SCALE = 30.0  # reference target to use for textures (TEMP)
 
 
-class MaterialWorkflow:
-    """Complete workflow for searching and applying materials to floor meshes."""
+class MaterialDatabase:
+    """
+    A wrapper for a material database (Graphics-DB) that can
+    query and download materials without Blender dependencies.
+    """
 
     def __init__(self, graphics_db_url: str = "http://localhost:2692/api/v0"):
         """
-        Initialize the material workflow.
+        Initialize the MaterialDatabase.
 
         Args:
             graphics_db_url: URL for the Graphics-DB API
         """
         self.client = GraphicsDBClient(graphics_db_url)
 
-    def texture_floors_with_query(
-        self,
-        query: str,
-        floor_objects: Optional[List[str]] = None,
-        uv_scale: float = 2.0,
-        material_index: int = 0,
-    ) -> Dict[str, Any]:
+    def query(self, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
         """
-        Search for materials and apply to floor objects.
+        Query the material database.
 
         Args:
-            query: Natural language material description (e.g., "wood floor parquet")
-            floor_objects: List of floor object names (auto-detected if None)
-            uv_scale: UV scaling for texture tiling
-            material_index: Which search result to use (0 = best match)
+            query: Natural language description (e.g., "wood floor parquet")
+            top_k: Number of top results to return (default: 5)
 
         Returns:
-            Dictionary with results and status information
+            List of material dictionaries with uid, tags, etc.
         """
-        results = {
-            "success": False,
-            "query": query,
-            "materials_found": 0,
-            "floors_textured": 0,
-            "textured_objects": [],
-            "errors": [],
-        }
+        return self.client.search_materials(query, top_k=top_k)
 
-        try:
-            # Find floor objects if not provided
-            if floor_objects is None:
-                floor_objects = find_floor_objects()
-                print(f"Auto-detected floor objects: {floor_objects}")
-
-            if not floor_objects:
-                results["errors"].append("No floor objects found in scene")
-                return results
-
-            # Search for materials
-            materials = self.client.search_materials(query, top_k=5)
-            results["materials_found"] = len(materials)
-
-            if not materials:
-                results["errors"].append(f"No materials found for query: '{query}'")
-                return results
-
-            # Use the specified material (default to best match)
-            if material_index >= len(materials):
-                material_index = 0
-
-            selected_material = materials[material_index]
-            material_uid = selected_material["uid"]
-
-            print(
-                f"Selected material: {material_uid} (tags: {selected_material.get('tags', [])})"
-            )
-
-            # Download texture
-            texture_path = self.client.download_diffuse_texture(material_uid)
-            if not texture_path:
-                results["errors"].append(
-                    f"Failed to download texture for material: {material_uid}"
-                )
-                return results
-
-            # Apply texture to all floor objects
-            for floor_name in floor_objects:
-                success = texture_floor_mesh(
-                    floor_object_name=floor_name,
-                    texture_path=texture_path,
-                    uv_scale=uv_scale,
-                )
-
-                if success:
-                    results["textured_objects"].append(floor_name)
-                    results["floors_textured"] += 1
-                else:
-                    results["errors"].append(f"Failed to texture floor: {floor_name}")
-
-            results["success"] = results["floors_textured"] > 0
-            results["material_uid"] = material_uid
-            results["texture_path"] = texture_path
-
-        except Exception as e:
-            results["errors"].append(f"Workflow error: {str(e)}")
-
-        return results
-
-    def texture_specific_floor(
-        self,
-        floor_object_name: str,
-        query: str,
-        uv_scale: float = 2.0,
-        material_index: int = 0,
-    ) -> bool:
+    def download_texture(self, material_uid: str) -> Optional[str]:
         """
-        Texture a specific floor object with a material search query.
+        Download diffuse texture for a material.
 
         Args:
-            floor_object_name: Name of the floor object to texture
-            query: Material search query
-            uv_scale: UV scaling factor
-            material_index: Which search result to use
+            material_uid: Unique identifier for the material
 
         Returns:
-            True if successful, False otherwise
+            Local file path to downloaded texture, or None if failed
         """
-        result = self.texture_floors_with_query(
-            query=query,
-            floor_objects=[floor_object_name],
-            uv_scale=uv_scale,
-            material_index=material_index,
-        )
+        return self.client.download_diffuse_texture(material_uid)
 
-        return result["success"]
+    def get_metadata(self, material_uid: str) -> Optional[Dict[str, Any]]:
+        """
+        Get metadata for a material.
 
+        Args:
+            material_uid: Unique identifier for the material
 
-# These functions have been moved to scene_builder.decoder.blender module
+        Returns:
+            Material metadata dictionary or None if failed
+        """
+        return self.client.get_material_metadata(material_uid)

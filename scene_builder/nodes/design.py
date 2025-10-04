@@ -1,4 +1,5 @@
 from __future__ import annotations
+from typing import Literal
 
 from pydantic import BaseModel, Field
 from pydantic_graph import BaseNode, End, Graph, GraphRunContext
@@ -8,7 +9,8 @@ from scene_builder.config import DEBUG
 from scene_builder.database.object import ObjectDatabase
 from scene_builder.decoder import blender
 # from scene_builder.definition.scene import Object, Room, Vector3
-from scene_builder.definition.scene import Object, ObjectBlueprint, Room, Scene, Vector3
+from scene_builder.definition.scene import Floor, Object, ObjectBlueprint, Room, Scene, Vector3
+from scene_builder.logging import logger
 # from scene_builder.nodes.feedback import VisualFeedback
 # from scene_builder.nodes.placement import PlacementNode, VisualFeedback
 from scene_builder.utils.pai import transform_paths_to_binary
@@ -26,7 +28,7 @@ from scene_builder.workflow.agents import (
 # from scene_builder.workflow.graphs import placement_graph # hopefully no circular import... -> BRUH.
 # from scene_builder.workflow.states import PlacementState, RoomDesignState
 from scene_builder.workflow.states import CritiqueAction, PlacementState, RoomDesignState, MainState
-from scene_builder.workflow.toolsets import shopping_toolset
+from scene_builder.workflow.toolsets import material_toolset, shopping_toolset
 
 console = Console()
 obj_db = ObjectDatabase()
@@ -46,6 +48,16 @@ class DesignLoopRouter(BaseNode[MainState]):
             return End(ctx.state.scene_definition)
         # TODO: use VisualFeedback to decide if there are rooms that still need designing.
         # TODO:
+
+
+# TODO: move these to the other file with placement action and stuff like that(?)
+class RDAInitialResponse(BaseModel):
+    plan: str
+    complete: bool = False
+
+
+class MaterialAction(BaseModel):
+    action: Literal["change", "keep"]
 
 
 class RoomDesignNode(BaseNode[RoomDesignState]):
@@ -74,10 +86,10 @@ class RoomDesignNode(BaseNode[RoomDesignState]):
             # "Please write a detailed design plan." if ctx.state.run_count == 0 else\  # ALT
             "Do you want to continue designing the room, or are you complete with the design?",
         )
-        response = await room_design_agent.run(
+        rda_initial_response = await room_design_agent.run(
             rda_user_prompt,
             # deps=ctx.state,  # I don't think this means anything anymore (it's just for tool calling)
-            # output_type=str
+            output_type=RDAInitialResponse
         )
         # NOTE: design termination is not handled. 
         #       one idea is to conditionally specify output type based on run count. 
@@ -85,9 +97,17 @@ class RoomDesignNode(BaseNode[RoomDesignState]):
         if DEBUG:
         #     print(f"[RoomDesignNode]: {response.output.decision}")
         #     print(f"[RoomDesignNode]: {response.output.reasoning}")
-            print(f"[RoomDesignNode]: {response.output}")
+            print(f"[RoomDesignNode]: {rda_initial_response.output}")
         # if response.output.decision == "finalize":
         #     return End(ctx.state.room)
+
+        material_change_response = await room_design_agent.run("Do you want to change the floor material (texture), or keep the existing one?", output_type=MaterialAction)
+        # if material_change_response.output:  # is True
+        if material_change_response.output.action == "change":  # is True
+            material_user_prompt = "Could you search for a material (texture) to be applied to the floor?"
+            material_response = await room_design_agent.run(material_user_prompt, toolsets=[material_toolset], output_type=Floor)
+            logger.debug(f"Selected floor material for room {room.id}: {material_response.output.material_id}")
+            ctx.state.room.floor = material_response.output
 
         shopping_user_prompt = (
             "Please explore the object database to choose the objects that you would like to use for designing the room.",
@@ -100,7 +120,7 @@ class RoomDesignNode(BaseNode[RoomDesignState]):
         shopping_response = await room_design_agent.run(
             shopping_user_prompt,
             # deps=ctx.state,
-            message_history=response.all_messages(),
+            message_history=rda_initial_response.all_messages(),
             output_type=list[ObjectBlueprint],
             toolsets=[shopping_toolset],
         )
@@ -298,7 +318,11 @@ class RoomDesignNode(BaseNode[RoomDesignState]):
         # TODO: if DEBUG, make it dump (latest) state & .blend to a file at every turn. or maybe all turns. for web viz.
         ctx.state.run_count += 1  # (TEMP?)
         ctx.state.message_history = critique_response.all_messages()  # TODO: confirm this is correct
-        return RoomDesignNode()  # maybe this is the issue? self-returning function?
+        if rda_initial_response.output.complete:
+            return ctx.state.room
+        else:
+            return RoomDesignNode()  # maybe this is the issue? self-returning function?
+    
     
         # NOTE: don't return `UpdateScene` directly; return a room to caller (DesignLoopRouter)
         #       and let it take care of coalescing it with the entire Scene.

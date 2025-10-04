@@ -179,7 +179,7 @@ COMMERCIAL_BOUNDARY = [
 TEST_CASES = {
     "classroom": {
         "description": CLASSROOM_ROOM_DESCRIPTION,
-        "boundary": SMALL_RECTANGULAR_BOUNDARY,
+        "boundary": LARGE_RECTANGULAR_BOUNDARY,
         "room_id": "classroom-01",
     },
     "garage": {
@@ -390,15 +390,7 @@ def test_single_room_design_workflow(case: str):
     )
     blender._clear_scene()
 
-    # # TEMP
     # NOTE: Big fucking warning: If `run_sync()` is ran before await {agent}.run(), it will silently get stuck. (i mean, wtf? also, it used to work just fine???)
-    # material_prompt = f"Could you write a search query for a material (texture) that will be applied to the floor, based on the room description?: {description}"
-    # # material_prompt = f"Could you write a super concise (a few words max) search query for a material (texture) that will be applied to the floor, based on the room description?: {description}"  # ALT
-    # # response = room_design_agent.run_sync(material_prompt, output_type=str)
-    # response = generic_agent.run_sync(material_prompt, output_type=str)
-    # material_result = apply_floor_material(response.output, boundary=boundary)
-    # print(f"Material applied: {material_result}")
-
     async def run_graph():
         # return await room_design_graph.run(RoomDesignNode(), state=initial_room_state)
         return await room_design_graph.run(
