@@ -215,13 +215,13 @@ def parse_room_definition(room_data: dict[str, Any], clear=True):
 
     # NOTE: not sure if it's good for `clear` to default to True; (it was for testing)
     """
-    logger.debug("Parsing room definition and creating scene")
-
     if isinstance(room_data, Room):
         room_data = pydantic_to_dict(room_data)
 
+    logger.debug(f"Parsing room definition for {room_data['id']} and creating scene")
+
     with suppress_blender_logs():
-        with SceneSwitcher(room_data["id"]):
+        with SceneSwitcher(room_data["id"]) as active_scene:
             # Clear the existing scene
             if clear:
                 _clear_scene()
@@ -776,13 +776,30 @@ def _calculate_bounds(
 
 
 def _ensure_collection(collection_name: str):
-    """Ensures a collection exists and returns it."""
-    if collection_name in bpy.data.collections:
-        return bpy.data.collections[collection_name]
+    """Ensures a collection exists in the current scene and returns it.
 
-    # Create new collection
-    collection = bpy.data.collections.new(collection_name)
-    bpy.context.scene.collection.children.link(collection)
+    Creates scene-specific collections to avoid cross-scene contamination.
+    """
+    current_scene = bpy.context.scene
+
+    # Create scene-specific collection name to avoid conflicts
+    scene_specific_name = f"{collection_name}_{current_scene.name}"
+
+    # Check if scene-specific collection already exists in current scene
+    for collection in current_scene.collection.children:
+        if collection.name == scene_specific_name:
+            return collection
+
+    # Check if it exists globally but not linked to current scene
+    if scene_specific_name in bpy.data.collections:
+        existing_collection = bpy.data.collections[scene_specific_name]
+        current_scene.collection.children.link(existing_collection)
+        return existing_collection
+
+    # Create new scene-specific collection
+    collection = bpy.data.collections.new(scene_specific_name)
+    current_scene.collection.children.link(collection)
+    logger.debug(f"Created collection '{scene_specific_name}' in scene '{current_scene.name}'")
     return collection
 
 

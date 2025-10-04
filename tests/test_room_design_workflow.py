@@ -403,6 +403,62 @@ def test_single_room_design_workflow(case: str):
     save_yaml(f"test_output/test_single_room_design_workflow_{case}.yaml")
 
 
+def test_parallel_room_design_workflow(cases: list[str]):
+    """
+    Test parallel execution of multiple room design graphs.
+
+    Args:
+        cases: List of test case names to run in parallel
+    """
+    # Validate all test cases exist
+    for case in cases:
+        if case not in TEST_CASES:
+            raise ValueError(
+                f"Unknown test case: {case}. Available cases: {list(TEST_CASES.keys())}"
+            )
+
+    # Prepare initial states for each room
+    initial_states = []
+    for case in cases:
+        test_data = TEST_CASES[case]
+        boundary = test_data["boundary"]
+        description = test_data["description"]
+
+        room_state = RoomDesignState(
+            room=Room(
+                id=test_data["room_id"],
+                boundary=boundary,
+            ),
+            room_plan=RoomPlan(room_description=description),
+        )
+        initial_states.append((case, room_state))
+
+    # Clear the main Blender scene once at the start
+    blender._clear_scene()
+
+    async def run_graphs():
+        """Run all room design graphs in parallel using asyncio.gather."""
+        results = await asyncio.gather(
+            *[
+                room_design_graph.run(RoomDesignNode(), state=state)
+                for (case, state) in initial_states
+            ]
+        )
+        return results
+
+    # Execute all graphs in parallel
+    results = asyncio.run(run_graphs())
+
+    # Save results for each room
+    for (case, state), result in zip(initial_states, results):
+        # Each room was designed in an isolated scene (per the implementation)
+        # Save the Blender scene and YAML for each room
+        blender.save_scene(f"test_output/test_multi_room_design_workflow_{case}.blend")
+        save_yaml(result, f"test_output/test_multi_room_design_workflow_{case}.yaml")
+
+    return results
+
+
 def test_multi_room_design_workflow(case: str):
     pass
 
@@ -424,8 +480,10 @@ def test_multi_room_design_workflow(case: str):
 if __name__ == "__main__":
     # test_single_object_placement(hardcoded_object=True)
     # test_single_object_placement(hardcoded_object=False)
+    
     # test_partial_room_completion()
-    test_single_room_design_workflow("classroom")
+    
+    # test_single_room_design_workflow("classroom")
     # test_single_room_design_workflow("garage")
     # test_single_room_design_workflow("kitchen")
     # test_single_room_design_workflow("bedroom")
@@ -447,3 +505,10 @@ if __name__ == "__main__":
     # test_single_room_design_workflow("theater_backstage")
     # test_single_room_design_workflow("factory_floor")
     # test_single_room_design_workflow("diffuscene")
+
+    # Test parallel execution of multiple room designs
+    # test_parallel_room_design_workflow(["bedroom", "office", "bathroom"])
+    # test_parallel_room_design_workflow(["bedroom", "office"])
+    # test_parallel_room_design_workflow(["garage", "library"])
+    test_parallel_room_design_workflow(["bar", "classroom"])
+    # test_parallel_room_design_workflow(["bedroom"])

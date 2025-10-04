@@ -59,6 +59,10 @@ class RDAInitialResponse(BaseModel):
 class MaterialAction(BaseModel):
     action: Literal["change", "keep"]
 
+class MaterialSelection(BaseModel):
+    material_id: str
+    rationale: str
+
 
 class RoomDesignNode(BaseNode[RoomDesignState]):
     async def run(
@@ -89,25 +93,54 @@ class RoomDesignNode(BaseNode[RoomDesignState]):
         rda_initial_response = await room_design_agent.run(
             rda_user_prompt,
             # deps=ctx.state,  # I don't think this means anything anymore (it's just for tool calling)
-            output_type=RDAInitialResponse
+            # output_type=RDAInitialResponse  # WRONG
+            output_type=str if ctx.state.run_count == 0 else RDAInitialResponse
         )
+        # TODO: make sure the plan is added to message_history even if the output type is not plain `str`.
+        # tried to look into variables but they are complex. i guess a possible approach is doing a "blindfolding" experiment!
+        # NOTE!: Tool call results are NOT added to message_history — it failed the blindfolding repeat experiment.
+        
         # NOTE: design termination is not handled. 
         #       one idea is to conditionally specify output type based on run count. 
+        # NOTE: lowkey, design plan is useful even beyond the first step - i want to find a way for it to keep generating (and adding into context) the refined design plans even in later iterations. 
+        #       or maybe we just separate the planning and continuation/completion into two calls. because why not. 
+        # NOTE: oh shoot ig it was not generating the design plan outside of the first step anyway. i thought it was. whoops.
 
         if DEBUG:
         #     print(f"[RoomDesignNode]: {response.output.decision}")
         #     print(f"[RoomDesignNode]: {response.output.reasoning}")
             print(f"[RoomDesignNode]: {rda_initial_response.output}")
+            
+            # TEMP: context blindfolding experiment
+            # experiment_response = await room_design_agent.run(
+            #     "Could you recite the room plan verbatim?",
+            #     message_history=rda_initial_response.all_messages(),
+            #     output_type=str,
+            # )
+            # print(f"[RoomDesignNode]: {experiment_response.output}")
+
         # if response.output.decision == "finalize":
         #     return End(ctx.state.room)
 
-        material_change_response = await room_design_agent.run("Do you want to change the floor material (texture), or keep the existing one?", output_type=MaterialAction)
+        material_change_user_prompt = (
+            "Do you want to change the floor material (texture), or keep the existing one?",
+            f"Current floor state: {dict(room).get('floor', None)}"
+        )
+        material_change_response = await room_design_agent.run(material_change_user_prompt, output_type=MaterialAction)
         # if material_change_response.output:  # is True
         if material_change_response.output.action == "change":  # is True
-            material_user_prompt = "Could you search for a material (texture) to be applied to the floor?"
-            material_response = await room_design_agent.run(material_user_prompt, toolsets=[material_toolset], output_type=Floor)
+            material_user_prompt = (
+                "Could you search for a material (texture) to be applied to the floor?",
+                "The `query` tool provides search results from a material database.",
+                "The `get_metadata` tool provides various metadata about the material.",
+                "Please return the `material_id` of the material of your choice."
+            )
+            material_response = await room_design_agent.run(material_user_prompt, toolsets=[material_toolset], output_type=MaterialSelection)
             logger.debug(f"Selected floor material for room {room.id}: {material_response.output.material_id}")
-            ctx.state.room.floor = material_response.output
+            # logger.debug(f"Selected floor material for room {room.id}: {material_response.output}")
+            # ctx.state.room.floor = material_response.output
+            # ctx.state.room.floor = Floor(material_id=material_response.output)
+            ctx.state.room.floor = Floor(material_id=material_response.output.material_id)
 
         shopping_user_prompt = (
             "Please explore the object database to choose the objects that you would like to use for designing the room.",
@@ -318,7 +351,7 @@ class RoomDesignNode(BaseNode[RoomDesignState]):
         # TODO: if DEBUG, make it dump (latest) state & .blend to a file at every turn. or maybe all turns. for web viz.
         ctx.state.run_count += 1  # (TEMP?)
         ctx.state.message_history = critique_response.all_messages()  # TODO: confirm this is correct
-        if rda_initial_response.output.complete:
+        if ctx.state.run_count > 1 and rda_initial_response.output.complete:
             return ctx.state.room
         else:
             return RoomDesignNode()  # maybe this is the issue? self-returning function?
