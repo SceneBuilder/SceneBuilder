@@ -371,7 +371,7 @@ def test_partial_room_completion():
     blender.save_scene("tests/test_partial_room_completion.blend")
 
 
-def test_room_design_workflow(case: str):
+def test_single_room_design_workflow(case: str):
     if case not in TEST_CASES:
         raise ValueError(
             f"Unknown test case: {case}. Available cases: {list(TEST_CASES.keys())}"
@@ -390,11 +390,6 @@ def test_room_design_workflow(case: str):
     )
     blender._clear_scene()
 
-    floor_result = blender._create_floor_mesh(
-        test_data["boundary"], test_data["room_id"]
-    )
-    print(f"Floor mesh created: {floor_result.get('status', 'unknown')}")
-
     # # TEMP
     # NOTE: Big fucking warning: If `run_sync()` is ran before await {agent}.run(), it will silently get stuck. (i mean, wtf? also, it used to work just fine???)
     # material_prompt = f"Could you write a search query for a material (texture) that will be applied to the floor, based on the room description?: {description}"
@@ -412,33 +407,51 @@ def test_room_design_workflow(case: str):
         )
 
     result: RoomDesignState = asyncio.run(run_graph())
-    blender.save_scene(f"test_output/test_room_design_workflow_{case}.blend")
-    save_yaml(f"test_output/test_room_design_workflow_{case}.yaml")
+    blender.save_scene(f"test_output/test_single_room_design_workflow_{case}.blend")
+    save_yaml(f"test_output/test_single_room_design_workflow_{case}.yaml")
+
+
+def test_multi_room_design_workflow(case: str):
+    pass
+
+    # Retrieve test case from const
+
+    # Import a unit-level floor plan from MSD
+    
+    # Start multiple instances of room_design_graph
+    #   Create a copy of each room and perform origin normalization w.r.t. room boundary
+    #     Store `proxy=True` and `origin_offset` attribute
+    #   ^ This logic probably belongs to `DesignOrchestrator`
+    
+    # I think it's a great idea to build/render each room in an isolated scene,
+    # and then create a linked copy to the higher-level (apartment) unit / building (scene). 
+    # I'm not sure whether Blender decoder will experience unwanted data mutation or race conditions — since it's blocking. 
+
 
 
 if __name__ == "__main__":
     # test_single_object_placement(hardcoded_object=True)
     # test_single_object_placement(hardcoded_object=False)
     # test_partial_room_completion()
-    # test_room_design_workflow("classroom")
-    # test_room_design_workflow("garage")
-    # test_room_design_workflow("kitchen")
-    # test_room_design_workflow("bedroom")
-    # test_room_design_workflow("office")
-    # test_room_design_workflow("living_room")
-    # test_room_design_workflow("bathroom")
-    # test_room_design_workflow("dining_room")
-    # test_room_design_workflow("library")
-    # test_room_design_workflow("gym")
-    # test_room_design_workflow("restaurant_kitchen")
-    # test_room_design_workflow("retail_store")
-    # test_room_design_workflow("hospital")
-    # test_room_design_workflow("hospital_room")
-    # test_room_design_workflow("laboratory")
-    # test_room_design_workflow("warehouse")
-    # test_room_design_workflow("conference_room")
-    # test_room_design_workflow("art_gallery")
-    test_room_design_workflow("bar")
-    # test_room_design_workflow("theater_backstage")
-    # test_room_design_workflow("factory_floor")
-    # test_room_design_workflow("diffuscene")
+    test_single_room_design_workflow("classroom")
+    # test_single_room_design_workflow("garage")
+    # test_single_room_design_workflow("kitchen")
+    # test_single_room_design_workflow("bedroom")
+    # test_single_room_design_workflow("office")
+    # test_single_room_design_workflow("living_room")
+    # test_single_room_design_workflow("bathroom")
+    # test_single_room_design_workflow("dining_room")
+    # test_single_room_design_workflow("library")
+    # test_single_room_design_workflow("gym")
+    # test_single_room_design_workflow("restaurant_kitchen")
+    # test_single_room_design_workflow("retail_store")
+    # test_single_room_design_workflow("hospital")
+    # test_single_room_design_workflow("hospital_room")
+    # test_single_room_design_workflow("laboratory")
+    # test_single_room_design_workflow("warehouse")
+    # test_single_room_design_workflow("conference_room")
+    # test_single_room_design_workflow("art_gallery")
+    # test_single_room_design_workflow("bar")
+    # test_single_room_design_workflow("theater_backstage")
+    # test_single_room_design_workflow("factory_floor")
+    # test_single_room_design_workflow("diffuscene")

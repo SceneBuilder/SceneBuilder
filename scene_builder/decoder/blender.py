@@ -2,7 +2,6 @@ import os
 import tempfile
 import math
 import sys
-import time
 from contextlib import contextmanager
 from pathlib import Path
 from dataclasses import dataclass
@@ -20,10 +19,17 @@ from scene_builder.config import BLENDER_LOG_FILE, TEST_ASSET_DIR
 from scene_builder.definition.scene import Object, Room, Scene
 from scene_builder.importer import objaverse_importer, test_asset_importer
 from scene_builder.logging import logger
+from scene_builder.utils.blender import SceneSwitcher
 from scene_builder.utils.conversions import pydantic_to_dict
 from scene_builder.utils.file import get_filename
 from scene_builder.database.material import MaterialWorkflow
 
+
+HDRI_FILE_PATH = Path(
+    f"{TEST_ASSET_DIR}/hdri/autumn_field_puresky_4k.exr"
+).expanduser()  # TEMP HACK
+
+BACKGROUND_COLOR = (0.02, 0.02, 0.02, 1.0)
 
 
 @dataclass
@@ -132,15 +138,7 @@ class BlenderSceneTracker:
 
 # Global scene tracker instance
 _scene_tracker = BlenderSceneTracker()
-from scene_builder.database.material import MaterialWorkflow
 
-
-
-HDRI_FILE_PATH = Path(
-    f"{TEST_ASSET_DIR}/hdri/autumn_field_puresky_4k.exr"
-).expanduser()  # TEMP HACK
-
-BACKGROUND_COLOR = (0.02, 0.02, 0.02, 1.0)
 
 
 @contextmanager
@@ -206,7 +204,7 @@ def parse_scene_definition(scene_data: dict[str, Any]):
             _create_room(room_data)
 
 
-def parse_room_definition(room_data: dict[str, Any], clear=False):
+def parse_room_definition(room_data: dict[str, Any], clear=True):
     """
     Parses the room definition dictionary and creates the scene in Blender.
 
@@ -222,11 +220,12 @@ def parse_room_definition(room_data: dict[str, Any], clear=False):
         room_data = pydantic_to_dict(room_data)
 
     with suppress_blender_logs():
-        # Clear the existing scene
-        if clear:
-            _clear_scene()
+        with SceneSwitcher(room_data["id"]):
+            # Clear the existing scene
+            if clear:
+                _clear_scene()
 
-        _create_room(room_data)
+            _create_room(room_data)
 
 
 def _clear_scene():
@@ -250,15 +249,9 @@ def _create_room(room_data: dict[str, Any]):
     room_id = room_data.get("id", "unknown_room")
     logger.debug(f"Creating room: {room_id}")
 
-    # Create floor mesh if boundary data exists
-    boundary = room_data.get("boundary")
-    if boundary:
-        logger.debug(f"Creating floor mesh for room: {room_id}")
-        try:
-            floor_result = _create_floor_mesh(boundary, room_id)
-            logger.debug(f"Floor mesh created: {floor_result.get('status', 'unknown')}")
-        except Exception as e:
-            logger.error(f"Failed to create floor mesh for room {room_id}: {e}")
+    # Create floor mesh
+    floor_result = _create_floor_mesh(room_data["boundary"], room_id)
+    logger.debug(f"Created floor: {floor_result['status']}")
 
     # Create walls from boundary if ceiling height is available
     # if boundary and room_data.get("floor_dimensions"):
@@ -545,16 +538,13 @@ def _create_floor_mesh(
         return {
             "status": "error",
             "message": f"Room {room_id}: At least 3 boundary points required for floor mesh",
-            "timestamp": int(time.time()),
         }
 
-    # Generate timestamp for deterministic naming
-    timestamp = int(time.time())
-    floor_name = f"Floor_{room_id}_{timestamp}"
-    mesh_name = f"FloorMesh_{room_id}_{timestamp}"
+    floor_name = f"Floor_{room_id}"
+    mesh_name = f"FloorMesh_{room_id}"
 
-    # Ensure NavGo_Floors collection exists
-    collection = _ensure_collection("NavGo_Floors")
+    # Ensure floor collection exists
+    collection = _ensure_collection("Floor")
 
     # Create new mesh and object
     mesh = bpy.data.meshes.new(mesh_name)
@@ -699,14 +689,13 @@ def _create_floor_mesh(
         "status": "success",
         "object_name": floor_name,
         "mesh_name": mesh_name,
-        "collection": "NavGo_Floors",
+        "collection": "Floor",
         "room_id": room_id,
         "vertex_count": len(vertices_2d),
         "face_count": len(mesh.polygons),
         "thickness_m": floor_thickness_m,
         "origin_mode": origin,
         "bounds": bounds,
-        "timestamp": timestamp,
     }
 
     return result
@@ -1246,6 +1235,15 @@ def create_scene_visualization(
         setup_post_processing(scene)
 
     return render_to_file(output_path)
+
+
+def visualize(scene=None, **kwargs):
+    """
+    A thin wrapper for `create_scene_visualization()` with active scene specifiability.
+    """
+    
+    with SceneSwitcher(scene) as active_scene:
+        return create_scene_visualization(**kwargs)
 
 
 def load_scene_from_yaml(filepath: str) -> dict[str, Any]:
