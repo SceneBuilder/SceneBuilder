@@ -12,8 +12,8 @@ import bmesh
 import numpy as np
 import yaml
 from scipy.spatial.transform import Rotation
-from mathutils.geometry import tessellate_polygon
 from mathutils import Vector
+from mathutils.geometry import tessellate_polygon
 
 from scene_builder.config import BLENDER_LOG_FILE, TEST_ASSET_DIR
 from scene_builder.definition.scene import Object, Room, Scene
@@ -542,6 +542,19 @@ def _create_floor_mesh(
 
     floor_name = f"Floor_{room_id}"
     mesh_name = f"FloorMesh_{room_id}"
+
+    # Check if floor already exists
+    if floor_name in bpy.data.objects:
+        logger.debug(f"Floor '{floor_name}' already exists, skipping creation")
+        existing_floor = bpy.data.objects[floor_name]
+        return {
+            "status": "skipped",
+            "object_name": floor_name,
+            "mesh_name": existing_floor.data.name if existing_floor.data else mesh_name,
+            "collection": "Floor",
+            "room_id": room_id,
+            "message": f"Floor '{floor_name}' already exists",
+        }
 
     # Ensure floor collection exists
     collection = _ensure_collection("Floor")
