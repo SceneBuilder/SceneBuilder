@@ -23,7 +23,7 @@ def get_filename(
     """
     output_dir = Path(output_dir)
     if not output_dir.exists():
-        output_dir.mkdir(exist_ok=True)
+        output_dir.mkdir(parents=True, exist_ok=True)
 
     if strategy == "increment":
         for i in range(1000):
