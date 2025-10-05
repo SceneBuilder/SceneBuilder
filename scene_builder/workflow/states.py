@@ -73,6 +73,8 @@ class RoomDesignState(BaseModel):
     # NOTE: It's possible to put room_history here as well...
     # TODO (yunho-c): make a decision on ^.
 
+    extra_info: Any | None = None
+
 
 # class RoomDesignAction(BaseModel):
 #     updated_room: Room
