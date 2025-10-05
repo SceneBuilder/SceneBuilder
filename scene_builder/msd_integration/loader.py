@@ -117,7 +117,7 @@ def get_dominant_angle(polygons: list[Polygon] | list[list[Vector2]], strategy: 
         # Convert to numpy array based on input type
         if isinstance(poly, Polygon):
             coords = np.array(poly.exterior.coords)
-        elif isinstance(poly, list[Vector2]):
+        elif isinstance(poly, list) and isinstance(poly[0], Vector2) :
             coords = np.array([(v.x, v.y) for v in poly])
         else:
             raise TypeError()
@@ -150,6 +150,105 @@ def get_dominant_angle(polygons: list[Polygon] | list[list[Vector2]], strategy: 
         correction_angle = -dominant_angle
 
     return correction_angle
+
+
+def rotate_boundary(boundary: list[Vector2], angle_degrees: float, origin: tuple[float, float] = (0.0, 0.0)) -> list[Vector2]:
+    """
+    Rotate a room boundary by a given angle around an origin point.
+
+    Args:
+        boundary: List of Vector2 points defining the room boundary
+        angle_degrees: Rotation angle in degrees (positive = counter-clockwise)
+        origin: (x, y) tuple of rotation origin (default: (0, 0))
+
+    Returns:
+        Rotated boundary as list[Vector2]
+    """
+    if not boundary:
+        return boundary
+
+    # Convert to radians
+    angle_rad = np.deg2rad(angle_degrees)
+    cos_a = np.cos(angle_rad)
+    sin_a = np.sin(angle_rad)
+
+    # Rotation matrix
+    ox, oy = origin
+
+    rotated = []
+    for v in boundary:
+        # Translate to origin
+        x = v.x - ox
+        y = v.y - oy
+
+        # Rotate
+        x_new = x * cos_a - y * sin_a
+        y_new = x * sin_a + y * cos_a
+
+        # Translate back
+        rotated.append(Vector2(x=x_new + ox, y=y_new + oy))
+
+    return rotated
+
+
+def calculate_floor_plan_centroid(boundaries: list[list[Vector2]]) -> tuple[float, float]:
+    """
+    Calculate the centroid of all boundaries for use as rotation origin.
+
+    Args:
+        boundaries: List of room boundaries
+
+    Returns:
+        (x, y) tuple of centroid coordinates
+    """
+    all_x = []
+    all_y = []
+
+    for boundary in boundaries:
+        for v in boundary:
+            all_x.append(v.x)
+            all_y.append(v.y)
+
+    if not all_x:
+        return (0.0, 0.0)
+
+    return (sum(all_x) / len(all_x), sum(all_y) / len(all_y))
+
+
+def normalize_floor_plan_orientation(
+    rooms: list[Room],
+    strategy: str = 'length_weighted',
+    angle_threshold: float = 0.1
+) -> tuple[list[Room], float]:
+    """
+    Normalize the orientation of a floor plan by rotating all rooms to be axis-aligned.
+
+    Args:
+        rooms: List of Room objects with boundaries to normalize
+        strategy: 'length_weighted' (robust to segmentation) or 'count' (equal weight)
+        angle_threshold: Minimum angle (degrees) to apply rotation (default: 0.1)
+
+    Returns:
+        Tuple of (normalized_rooms, correction_angle):
+            - normalized_rooms: List of Room objects with rotated boundaries
+            - correction_angle: The angle (in degrees) that was applied
+    """
+    if not rooms:
+        return rooms, 0.0
+
+    # Calculate orientation correction angle
+    room_boundaries = [room.boundary for room in rooms]
+    correction_angle = get_dominant_angle(room_boundaries, strategy=strategy)
+
+    # Apply rotation if angle is significant
+    if abs(correction_angle) > angle_threshold:
+        centroid = calculate_floor_plan_centroid(room_boundaries)
+
+        # Rotate each room's boundary
+        for room in rooms:
+            room.boundary = rotate_boundary(room.boundary, correction_angle, origin=centroid)
+
+    return rooms, correction_angle
 
 
 class MSDLoader:
@@ -267,7 +366,7 @@ class MSDLoader:
         edge_size: int = 3,
         show: bool = False,
         show_label=False
-    ) -> Union[np.ndarray, str, None]:
+    ) -> np.ndarray | str | None:
         """
         Render a floor plan graph to an image file or numpy array.
 
