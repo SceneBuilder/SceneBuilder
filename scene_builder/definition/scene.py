@@ -115,5 +115,5 @@ class Scene(BaseModel):
 
     category: str | None
     tags: list[str] | None
-    height_class: Literal["single_story", "multi_story"]
+    height_class: Literal["single_story", "two-story", "multi_story", "high-rise", "skyscraper"]
     rooms: list[Room] = Field(default_factory=list)
