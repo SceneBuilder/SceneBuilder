@@ -2,7 +2,7 @@ import asyncio
 import os
 from pathlib import Path
 
-from pydantic_graph import GraphRunResult
+from pydantic_graph import Graph, GraphRunResult
 
 from scene_builder.config import TEST_ASSET_DIR
 from scene_builder.database.object import ObjectDatabase
@@ -16,7 +16,7 @@ from scene_builder.nodes.design import (
     # RoomDesignVisualFeedback,
     room_design_graph,
 )
-
+# from scene_builder.nodes.feedback import VisualFeedback
 # from scene_builder.nodes.placement import PlacementNode, placement_graph, VisualFeedback
 from scene_builder.nodes.placement import (
     PlacementNode,
@@ -24,10 +24,11 @@ from scene_builder.nodes.placement import (
     placement_graph,
 )
 
-# from scene_builder.nodes.feedback import VisualFeedback
+from scene_builder.nodes.routing import MultiRoomDesignOrchestrator
 from scene_builder.msd_integration.loader import MSDLoader
 from scene_builder.utils.conversions import pydantic_from_yaml
 from scene_builder.utils.image import create_gif_from_images
+from scene_builder.utils.pai import transform_paths_to_binary
 from scene_builder.utils.pydantic import save_yaml
 from scene_builder.workflow.agents import generic_agent, room_design_agent
 
@@ -35,7 +36,7 @@ from scene_builder.workflow.agents import generic_agent, room_design_agent
 #     room_design_graph,
 #     placement_graph,
 # )
-from scene_builder.workflow.states import PlacementState, RoomDesignState
+from scene_builder.workflow.states import PlacementState, RoomDesignState, RoomDesignStateBlueprint
 
 configure_logging(level="DEBUG")
 # configure_logging(level="DEBUG", enable_logfire=False)
@@ -516,7 +517,7 @@ def test_single_room_design_workflow(case: str):
 
     result: RoomDesignState = asyncio.run(run_graph())
     blender.save_scene(f"test_output/test_single_room_design_workflow_{case}.blend")
-    save_yaml(f"test_output/test_single_room_design_workflow_{case}.yaml")
+    save_yaml(result.state.room, f"test_output/test_single_room_design_workflow_{case}.yaml")
 
 
 def test_parallel_room_design_workflow(cases: list[str]):
@@ -576,6 +577,17 @@ def test_parallel_room_design_workflow(cases: list[str]):
 
 
 def test_multi_room_design_workflow(case: str):
+    """
+    Test multi-room design workflow using MSD floor plans.
+
+    This function:
+    - Loads a floor plan from MSD dataset
+    - Uses MultiRoomDesignOrchestrator to design all rooms in parallel
+    - Saves the complete scene with all designed rooms
+
+    Args:
+        case: Test case name (must have 'floor_plan_id' in TEST_CASES)
+    """
     if case not in TEST_CASES:
         raise ValueError(f"Unknown test case: {case}. Available cases: {list(TEST_CASES.keys())}")
 
@@ -583,12 +595,71 @@ def test_multi_room_design_workflow(case: str):
     
     # Import a unit-level floor plan from MSD
     floor_plan_id = test_data["floor_plan_id"]
-    scene_data = msd_loader.get_scene(floor_plan_id)
+    # scene_data = msd_loader.get_scene(floor_plan_id)
+    graph = msd_loader.create_graph(floor_plan_id)
+    scene_data = msd_loader.graph_to_scene_data(graph)
+    # floor_plan_img = msd_loader.render_floor_plan(graph, node_size=225, edge_size=0, show_label=True)
+    floor_plan_img_path = msd_loader.render_floor_plan(graph, output_path=f"test_output/{case}_floor_plan.jpg", node_size=225, edge_size=0, show_label=True)
+    
+    images = transform_paths_to_binary([floor_plan_img_path])
+    room_plan_user_prompt = (
+        "You are a design orchestration agent who is part of a building interior design system. ",
+        "Given the description of the desired place by the user and an image of the floor plan, ",
+        "please write a more detailed design plan for each room, selecting which room (in the floor plan) best fits which role (from the description).",
+        "",
+        f"Place Description: {test_data['description']}",
+        "",
+        f"Data: ```\n{scene_data['rooms']}\n```",
+        "",
+        "Floor Plan: ",
+        *images,
+        "Formatting: Please return in the specified struct. Please make sure to keep the `boundary` and `tags` attributes intact!",
+    )
 
-    # Start multiple instances of room_design_graph
-    #   Create a copy of each room and perform origin normalization w.r.t. room boundary
-    #     Store `proxy=True` and `origin_offset` attribute
-    #   ^ This logic probably belongs to `DesignOrchestrator`
+    # Create graph with the orchestrator
+    multi_room_graph = Graph(nodes=[MultiRoomDesignOrchestrator])
+
+    # Clear Blender scene
+    blender._clear_scene()
+
+    async def run_multi_room_design():
+        """Get initial room designs and run the multi-room design orchestrator."""
+        # First, get initial room designs from the agent
+        initial_room_design_state_result = await generic_agent.run(
+            room_plan_user_prompt, output_type=list[RoomDesignStateBlueprint]
+        )
+
+        # Extract and convert to RoomDesignState objects
+        initial_room_design_states = []
+        for room_design_state_blueprint in initial_room_design_state_result.output:
+            initial_room_design_states.append(
+                RoomDesignState(
+                    room=room_design_state_blueprint.room,
+                    room_plan=RoomPlan(room_description=room_design_state_blueprint.room_plan),
+                )
+            )
+
+        # Then run the multi-room design orchestrator
+        return await multi_room_graph.run(
+            MultiRoomDesignOrchestrator(),
+            state=initial_room_design_states
+        )
+
+    # Execute the multi-room design workflow (single asyncio.run call)
+    result = asyncio.run(run_multi_room_design())
+    designed_rooms = result.output
+
+    # Create final scene with all designed rooms
+    final_scene = Scene(
+        category=scene_data.get("category", "residential"),
+        tags=scene_data.get("tags", ["msd"]),
+        height_class=scene_data.get("height_class", "single_story"),
+        rooms=designed_rooms,
+    )
+
+    # Save results
+    save_yaml(final_scene, f"test_output/test_multi_room_design_workflow_{case}.yaml")
+    blender.save_scene(f"test_output/test_multi_room_design_workflow_{case}.blend")
 
     # I think it's a great idea to build/render each room in an isolated scene,
     # and then create a linked copy to the higher-level (apartment) unit / building (scene).
@@ -601,6 +672,7 @@ if __name__ == "__main__":
 
     # test_partial_room_completion()
 
+    # Test single room design workflow
     # test_single_room_design_workflow("classroom")
     # test_single_room_design_workflow("garage")
     # test_single_room_design_workflow("kitchen")
@@ -624,9 +696,16 @@ if __name__ == "__main__":
     # test_single_room_design_workflow("factory_floor")
     # test_single_room_design_workflow("diffuscene")
 
-    # Test parallel execution of multiple room designs
+    # Test parallel room design workflow
     # test_parallel_room_design_workflow(["bedroom", "office", "bathroom"])
     # test_parallel_room_design_workflow(["bedroom", "office"])
     # test_parallel_room_design_workflow(["garage", "library"])
-    test_parallel_room_design_workflow(["bar", "classroom"])
+    # test_parallel_room_design_workflow(["bar", "classroom"])
     # test_parallel_room_design_workflow(["bedroom"])
+
+    # Test multi room design workflow
+    # test_multi_room_design_workflow("apartment")
+    # test_multi_room_design_workflow("community_hospital")
+    
+    test_multi_room_design_workflow("city_hall")
+    # test_multi_room_design_workflow("local_museum")

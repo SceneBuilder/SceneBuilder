@@ -57,6 +57,12 @@ class PlacementResponse(BaseModel):
     reasoning: str
 
 
+class RoomDesignStateBlueprint(BaseModel):
+    room: Room
+    # room_plan: RoomPlan
+    room_plan: str
+
+
 class RoomDesignState(BaseModel):
     room: Room
     room_plan: RoomPlan

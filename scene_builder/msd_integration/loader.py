@@ -56,7 +56,7 @@ def parse_polygon(geom_string: str) -> list[Vector2]:
     try:
         for pair in match.group(1).split(","):
             x_str, y_str = pair.strip().split()
-            coords.append(Vector2(x=float(x_str), y=float(y_str)))
+            coords.append(Vector2(x=round(float(x_str), 3), y=round(float(y_str), 3)))
     except Exception as e:
         print(f"ERROR: Failed to parse coordinates from: '{match.group(1)}' - {str(e)}")
         return []
@@ -155,7 +155,7 @@ class MSDLoader:
             geometry_data = attrs["geometry"]
             if isinstance(geometry_data, list):
                 # Already parsed coordinates
-                coords = [Vector2(x=float(p[0]), y=float(p[1])) for p in geometry_data]
+                coords = [Vector2(x=round(float(p[0]), 3), y=round(float(p[1]), 3)) for p in geometry_data]
             else:
                 coords = []
 
@@ -212,6 +212,7 @@ class MSDLoader:
         node_size: int = 50,
         edge_size: int = 3,
         show: bool = False,
+        show_label=False
     ) -> Union[np.ndarray, str, None]:
         """
         Render a floor plan graph to an image file or numpy array.
@@ -222,6 +223,7 @@ class MSDLoader:
             node_size: Size of room centroid nodes (default: 50)
             edge_size: Width of connection edges (default: 3)
             show: If True, display the plot interactively (default: False)
+            show_label: If True, shows room label
 
         Returns:
             - If output_path is provided: Path to the saved image file
@@ -240,7 +242,7 @@ class MSDLoader:
         fig, ax = set_figure(nc=1, nr=1)
 
         # Plot floor plan with access graph
-        plot_floor(graph, ax, node_size=node_size, edge_size=edge_size)
+        plot_floor(graph, ax, node_size=node_size, edge_size=edge_size, show_labels=show_label)
 
         # Set aspect ratio and remove axes
         ax.set_aspect("equal")

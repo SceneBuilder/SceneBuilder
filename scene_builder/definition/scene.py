@@ -103,7 +103,17 @@ class Room(BaseModel):
     floor: Floor | None = None
     # objects: list[Object] = Field(default_factory=list)
     # objects: list[Object | Section] = Field(default_factory=list)
+    
+    # NOTE: for origin normalization state tracking, for now
+    extra_info: Any | None = None
 
+
+# NOTE: Let's not have anything extraneous to the scene definition in the `Room` (or other scene-def-related) stuff.
+#       For example: text, images, etc. 
+#       One way to think about it is: it's a pure-data struct;
+#       The fundamental, most-reduced set of information need to recreate a scene in Blender (or other decoders).
+#       The rationale is that we don't want to have the LLM output those long texts at every design iteration — it lowers SNR.
+#       Maybe there is another way to achieve it, though — like private attribute? Not sure how private attrs work in pydantic_ai. 
 
 #     NOTE: don't delete!
 #     type: str | None = None
@@ -114,6 +124,6 @@ class Scene(BaseModel):
     """Represents the entire 3D scene."""
 
     category: str | None
-    tags: list[str] | None
     height_class: Literal["single_story", "two-story", "multi_story", "high-rise", "skyscraper"]
     rooms: list[Room] = Field(default_factory=list)
+    tags: list[str] | None

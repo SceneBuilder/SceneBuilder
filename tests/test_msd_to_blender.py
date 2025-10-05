@@ -11,6 +11,7 @@ def test_msd_to_blender():
     apartment_id = loader.get_random_apartment()
     graph = loader.create_graph(apartment_id)
     floor_plan_img = loader.render_floor_plan(graph)
+    floor_plan_img_alt = loader.render_floor_plan(graph, node_size=225, edge_size=0, show_label=True)
     scene_data = loader.graph_to_scene_data(graph)
 
     # Parse scene definition in Blender

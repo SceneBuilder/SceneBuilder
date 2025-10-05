@@ -351,8 +351,10 @@ class RoomDesignNode(BaseNode[RoomDesignState]):
         # TODO: if DEBUG, make it dump (latest) state & .blend to a file at every turn. or maybe all turns. for web viz.
         ctx.state.run_count += 1  # (TEMP?)
         ctx.state.message_history = critique_response.all_messages()  # TODO: confirm this is correct
+        # if ctx.state.run_count >= 2:  # TEMP: test that it ends successfully
+        #     return End(ctx.state.room)
         if ctx.state.run_count > 1 and rda_initial_response.output.complete:
-            return ctx.state.room
+            return End(ctx.state.room)
         else:
             return RoomDesignNode()  # maybe this is the issue? self-returning function?
     
