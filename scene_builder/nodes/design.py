@@ -72,9 +72,10 @@ class RoomDesignNode(BaseNode[RoomDesignState]):
         console.print("[bold cyan]Executing Node:[/] RoomDesignNode")
         room = ctx.state.room
         blender.parse_room_definition(room)
-        top_down_render = blender.create_scene_visualization(output_dir="test_output", show_grid=True)
-        isometric_render = blender.create_scene_visualization(
-            output_dir="test_output", view="isometric", show_grid=True
+        output_dir = f"test_output/{ctx.state.extra_info['building_name']}/{ctx.state.room.id}"
+        top_down_render = blender.visualize(scene=room.id, output_dir=output_dir, show_grid=True)
+        isometric_render = blender.visualize(
+            scene=room.id, output_dir=output_dir, view="isometric", show_grid=True
         )
         renders = transform_paths_to_binary([top_down_render, isometric_render])
         room_plan = transform_paths_to_binary(ctx.state.room_plan)
@@ -191,9 +192,9 @@ class RoomDesignNode(BaseNode[RoomDesignState]):
             
             # post-placement render
             blender.parse_room_definition(room)
-            top_down_render = blender.visualize(scene=room.id, output_dir="test_output", show_grid=True)
+            top_down_render = blender.visualize(scene=room.id, output_dir=output_dir, show_grid=True)
             isometric_render = blender.visualize(
-                scene=room.id, output_dir="test_output", view="isometric", show_grid=True
+                scene=room.id, output_dir=output_dir, view="isometric", show_grid=True
             )
             renders = transform_paths_to_binary([top_down_render, isometric_render])
 
