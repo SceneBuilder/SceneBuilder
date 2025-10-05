@@ -40,7 +40,7 @@ class MetadataAgent(BaseNode[MainState]):
         initial_scene = Scene(
             category="residential",
             tags=["modern", "minimalist"],
-            floorType="single",
+            height_class="single",
             rooms=[],
         )
         ctx.state.scene_definition = initial_scene
@@ -56,9 +56,7 @@ class BuildingPlanAgent(BaseNode[MainState]):
             console.print("[bold yellow]Debug mode: Using hardcoded scene plan.[/]")
             ctx.state.plan = "1. Create a living room.\n2. Add a sofa."
         else:
-            console.print(
-                "[bold green]Production mode: Generating scene plan via LLM.[/]"
-            )
+            console.print("[bold green]Production mode: Generating scene plan via LLM.[/]")
             response = await planning_agent.run(ctx.state.user_input)
             ctx.state.plan = response.content
             console.print(f"[bold cyan]Generated Plan:[/] {ctx.state.plan}")
@@ -83,9 +81,7 @@ class FloorPlanAgent(BaseNode[MainState]):
             )
 
             # Generate rooms with LLM using building plan context
-            console.print(
-                "[bold cyan]Generating room layout with architectural intelligence...[/]"
-            )
+            console.print("[bold cyan]Generating room layout with architectural intelligence...[/]")
             room_generation_prompt = (
                 f"Create a room layout for: {ctx.state.user_input}\n"
                 f"Building plan context: {ctx.state.plan}\n"
@@ -121,9 +117,7 @@ class DesignLoopEntry(BaseNode[MainState]):
         console.print("[bold yellow]Entering room design loop...[/]")
         if ctx.state.current_room_index < len(ctx.state.scene_definition.rooms):
             console.print("[magenta]Decision:[/] Design next room.")
-            subgraph_result = await room_design_graph.run(
-                RoomDesignAgent(ctx.state.initial_number)
-            )
+            subgraph_result = await room_design_graph.run(RoomDesignAgent(ctx.state.initial_number))
             ctx.state.scene_definition.rooms.append(subgraph_result)
         else:
             console.print("[magenta]Decision:[/] Finish.")
@@ -152,9 +146,7 @@ class RoomDesignAgent(BaseNode[MainState]):
             )
             room_to_design.objects.append(new_object)
         else:
-            console.print(
-                "[bold green]Production mode: Designing room via LLM and real data.[/]"
-            )
+            console.print("[bold green]Production mode: Designing room via LLM and real data.[/]")
             room_design_agent = Agent(
                 "openai:gpt-4o",
                 system_prompt="You are a room designer. Your goal is to add objects to the room based on the user's request. Use the provided tools to find appropriate objects.",
@@ -164,18 +156,14 @@ class RoomDesignAgent(BaseNode[MainState]):
             prompt = f"Design the room '{room_to_design.category}' with id '{room_to_design.id}'. The overall user request is: '{ctx.state.user_input}'. The scene plan is: {ctx.state.plan}"
             new_objects = await room_design_agent.run(prompt)
             room_to_design.objects.extend(new_objects)
-            console.print(
-                f"[bold cyan]Added Objects:[/] {[obj.name for obj in new_objects]}"
-            )
+            console.print(f"[bold cyan]Added Objects:[/] {[obj.name for obj in new_objects]}")
             ctx.state.designed_room
 
         return UpdateScene()
 
 
 class PlacementAgent(BaseNode[PlacementState]):
-    async def run(
-        self, ctx: GraphRunContext[PlacementState]
-    ) -> VisualFeedback | End[Room]:
+    async def run(self, ctx: GraphRunContext[PlacementState]) -> VisualFeedback | End[Room]:
         # user_prompt = "By the way, I have a quick question: are you able to read the deps (the PlacementState)?"
         # user_prompt = "Could you repeat exactly what was provided to you (in terms of the depedencies) into the 'reasoning' output?"
         # user_prompt = "Were you provided the current room boundaries (list[Vector2])? What is it?" # -> NO!
@@ -183,9 +171,7 @@ class PlacementAgent(BaseNode[PlacementState]):
         user_prompt = ""
 
         if user_prompt != "":
-            response = await placement_agent.run(
-                user_prompt=user_prompt, deps=ctx.state
-            )
+            response = await placement_agent.run(user_prompt=user_prompt, deps=ctx.state)
             # response = await placement_agent.run(ctx.state, user_prompt=user_prompt)
             # NOTE: when not using a kwarg, the first arg is understood as user prompt.
         else:

@@ -205,7 +205,7 @@ def parse_scene_definition(scene_data: dict[str, Any]):
             _create_room(room_data)
 
 
-def parse_room_definition(room_data: dict[str, Any], clear=True):
+def parse_room_definition(room_data: dict[str, Any], clear=False):
     """
     Parses the room definition dictionary and creates the scene in Blender.
 
@@ -214,6 +214,7 @@ def parse_room_definition(room_data: dict[str, Any], clear=True):
         clear: Whether to clear the Blender scene before building room.
 
     # NOTE: not sure if it's good for `clear` to default to True; (it was for testing)
+    # NOTE: I think there's a bug where if `clear=True`, not all assets are recreated at next iteration's `parse_room_definition()` call. this happens after critique's rejection. look into it!
     """
     if isinstance(room_data, Room):
         room_data = pydantic_to_dict(room_data)

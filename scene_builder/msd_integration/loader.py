@@ -1,7 +1,9 @@
 """
 Loads MSD apartment data from CSV, creates NetworkX graphs, and converts into SceneBuilder format.
 
-NOTE (yunho-c): This script is hardly stateful and will probably be cleaner if it is not class-based. 
+NOTE (yunho-c): This script is hardly stateful and will probably be cleaner if it is not class-based.
+
+TODO: add rounding (safe-rounding) to boundary, to keep scene def files clean and lightweight
 """
 
 import io
@@ -111,9 +113,7 @@ class MSDLoader:
     def get_apartment_list(self, min_rooms: int = 5, max_rooms: int = 30) -> list[str]:
         """Get list of apartment IDs"""
         # Count actual rooms per apartment
-        room_counts = (
-            self.df[self.df["entity_type"] == "area"].groupby("apartment_id").size()
-        )
+        room_counts = self.df[self.df["entity_type"] == "area"].groupby("apartment_id").size()
 
         # Filter by room count
         suitable = room_counts[
@@ -133,9 +133,7 @@ class MSDLoader:
         # Use first floor first
         floor_id = apt_data["floor_id"].iloc[0]
 
-        geoms, geom_types = get_geometries_from_id(
-            apt_data, floor_id, column="roomtype"
-        )
+        geoms, geom_types = get_geometries_from_id(apt_data, floor_id, column="roomtype")
         graph = extract_access_graph(geoms, geom_types, ROOM_NAMES, floor_id)
 
         # Add metadata
@@ -186,7 +184,7 @@ class MSDLoader:
         return {
             "category": "residential",
             "tags": ["msd", "apartment"],
-            "floorType": "multi",
+            "height_class": "multi",
             "rooms": rooms,
             "metadata": {
                 "apartment_id": graph.graph.get("apartment_id", "unknown"),
@@ -245,8 +243,8 @@ class MSDLoader:
         plot_floor(graph, ax, node_size=node_size, edge_size=edge_size)
 
         # Set aspect ratio and remove axes
-        ax.set_aspect('equal')
-        ax.axis('off')
+        ax.set_aspect("equal")
+        ax.axis("off")
 
         if show:
             plt.show()
@@ -255,7 +253,7 @@ class MSDLoader:
         elif output_path is None:
             # Return as numpy array
             buf = io.BytesIO()
-            plt.savefig(buf, format='png', bbox_inches='tight', dpi=150)
+            plt.savefig(buf, format="png", bbox_inches="tight", dpi=150)
             buf.seek(0)
 
             # Convert to numpy array
@@ -267,6 +265,6 @@ class MSDLoader:
             return img_array
         else:
             # Save to file
-            plt.savefig(output_path, bbox_inches='tight', dpi=150)
+            plt.savefig(output_path, bbox_inches="tight", dpi=150)
             plt.close(fig)
             return output_path

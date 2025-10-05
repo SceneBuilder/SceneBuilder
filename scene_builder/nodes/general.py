@@ -3,6 +3,7 @@ from rich.console import Console
 
 from scene_builder.definition.scene import Scene
 from scene_builder.nodes.planning import BuildingPlanNode
+
 # from scene_builder.nodes.routing import DesignLoopRouter
 from scene_builder.nodes.design import DesignLoopRouter
 from scene_builder.workflow.states import MainState
@@ -17,7 +18,7 @@ class MetadataNode(BaseNode[MainState]):
         initial_scene = Scene(
             category="residential",
             tags=["modern", "minimalist"],
-            floorType="single",
+            height_class="single_story",
             rooms=[],
         )
         ctx.state.scene_definition = initial_scene

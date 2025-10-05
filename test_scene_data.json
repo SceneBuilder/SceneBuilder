@@ -4,7 +4,7 @@
     "msd",
     "apartment"
   ],
-  "floorType": "multi",
+  "height_class": "single_story",
   "metadata": {
     "apartment_id": "cd689fd3bb25aadeb79479ed28228ad8",
     "room_count": 9,
