@@ -42,7 +42,6 @@ def calculate_polygon_metrics(coords: List[Vector2]) -> dict:
             "area": 0.0,
             "perimeter": 0.0,
             "vertices": len(coords),
-            "complexity": "invalid",
         }
 
     # Calculate area using shoelace formula
@@ -72,21 +71,34 @@ def calculate_polygon_metrics(coords: List[Vector2]) -> dict:
 class GraphToSceneConverter:
     """Convert MSD graph to SceneBuilder format"""
 
-    # Room type mapping (MSD index → SceneBuilder category)
-    ROOM_TYPE_MAP = {
-        0: "bedroom",  # Bedroom
-        1: "living_room",  # Livingroom
-        2: "kitchen",  # Kitchen
-        3: "dining",  # Dining
-        4: "corridor",  # Corridor
-        5: "stairs",  # Stairs
-        6: "storeroom",  # Storeroom
-        7: "bathroom",  # Bathroom
-        8: "balcony",  # Balcony
+    ENTITY_SUBTYPE_MAP = {
+        "BEDROOM": "bedroom",
+        "ROOM": "room",
+        "LIVING_ROOM": "living_room",
+        "LIVING_DINING": "living_dining",
+        "KITCHEN": "kitchen",
+        "KITCHEN_DINING": "kitchen_dining",
+        "DINING": "dining",
+        "BATHROOM": "bathroom",
+        "CORRIDOR": "corridor",
+        "CORRIDORS_AND_HALLS": "corridors_and_halls",
+        # "STAIRCASE": "staircase",
+        # "STOREROOM": "storeroom",
+        # "BALCONY": "balcony",
+        # "TERRACE": "terrace",
+        # "ELEVATOR": "elevator",
+        # "SHAFT": "shaft",
+        # "VOID": "void",
+        # "WALL": "wall",
+        # "COLUMN": "column",
+        "RAILING": "railing",
+        "ENTRANCE_DOOR": "entrance_door",
+        "DOOR": "door",
+        # "WINDOW": "window",
     }
 
     def convert_graph_to_rooms(self, graph: nx.Graph) -> List[Room]:
-        """Convert NetworkX graph nodes to SceneBuilder Room objects"""
+        """Convert NetworkX graph nodes to SceneBuilder Room objects (all entities)"""
         rooms = []
 
         for node_id, attrs in graph.nodes(data=True):
@@ -96,7 +108,7 @@ class GraphToSceneConverter:
 
             # Parse geometry
             geometry_data = attrs["geometry"]
-            if isinstance(geometry_data, list):
+            if isinstance(geometry_data, list) and len(geometry_data) > 0:
                 # Already parsed coordinates
                 coords = [Vector2(x=float(p[0]), y=float(p[1])) for p in geometry_data]
             else:
@@ -105,8 +117,12 @@ class GraphToSceneConverter:
             if not coords:
                 continue
 
-            room_type_idx = attrs.get("room_type", 0)
-            category = self.ROOM_TYPE_MAP.get(room_type_idx, "room")
+            # Get entity_subtype from node attributes (already UPPERCASE from MSD CSV)
+            entity_subtype = attrs.get("entity_subtype")
+            category = self.ENTITY_SUBTYPE_MAP.get(entity_subtype)
+            
+            if category is None:
+                continue
 
             room = Room(
                 id=f"msd_room_{node_id}",
@@ -127,7 +143,7 @@ class GraphToSceneConverter:
         return {
             "category": "residential",
             "tags": ["msd", "apartment"],
-            "floorType": "multi",
+            "floorType": "single",  # Using first floor only to avoid overlapping
             "rooms": rooms,
             "metadata": {
                 "apartment_id": graph.graph.get("apartment_id", "unknown"),
