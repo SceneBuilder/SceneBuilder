@@ -12,6 +12,12 @@
 #     name: python3
 # ---
 
+# %% [markdown]
+# # **MSD Orientation Normalization**
+
+# %% [markdown]
+# ## **Setup**
+
 # %%
 import numpy as np
 import matplotlib.pyplot as plt
@@ -21,20 +27,28 @@ from shapely.affinity import rotate
 from scene_builder.msd_integration.loader import MSDLoader
 
 
+# %% [markdown]
+# ## **Functions**
+
 # %%
-def get_dominant_angle(polygons, visualize_histogram=False):
+def get_dominant_angle(polygons, visualize_histogram=False, strategy='length_weighted'):
     """
     Calculates the dominant angle of a set of polygons using a histogram.
 
     Args:
         polygons (list): A list of shapely Polygon objects.
         visualize_histogram (bool): If True, display a histogram of edge angles.
+        strategy (str): Weighting strategy for histogram:
+            - 'length_weighted': Weight edges by their length (robust to segmentation)
+            - 'count': Each edge gets equal weight (legacy behavior)
 
     Returns:
         float: The dominant angle in degrees to correct for, i.e.,
                the angle to rotate by to make the shapes axis-aligned.
     """
     angles = []
+    edge_lengths = []
+
     for poly in polygons:
         # Extract the exterior coordinates
         coords = np.array(poly.exterior.coords)
@@ -49,7 +63,11 @@ def get_dominant_angle(polygons, visualize_histogram=False):
         # Convert angles to degrees and normalize to [0, 180)
         edge_angles_deg = np.rad2deg(edge_angles) % 180
 
+        # Calculate edge lengths
+        lengths = np.linalg.norm(vectors, axis=1)
+
         angles.extend(edge_angles_deg)
+        edge_lengths.extend(lengths)
 
     # Now, normalize all angles to the range [0, 90) to treat
     # parallel and perpendicular lines the same.
@@ -57,7 +75,18 @@ def get_dominant_angle(polygons, visualize_histogram=False):
 
     # Use a histogram to find the most frequent angle "bin"
     # We use 90 bins for 0-89 degrees.
-    hist, bin_edges = np.histogram(normalized_angles, bins=90, range=(0, 90))
+    if strategy == 'length_weighted':
+        # Weight each edge by its length
+        hist, bin_edges = np.histogram(normalized_angles, bins=90, range=(0, 90), weights=edge_lengths)
+        ylabel = 'Weighted Frequency (by length)'
+        title_suffix = ' (Length-Weighted)'
+    elif strategy == 'count':
+        # Each edge gets equal weight (legacy behavior)
+        hist, bin_edges = np.histogram(normalized_angles, bins=90, range=(0, 90))
+        ylabel = 'Frequency'
+        title_suffix = ' (Count-Based)'
+    else:
+        raise ValueError(f"Unknown strategy: {strategy}. Use 'length_weighted' or 'count'.")
 
     # The dominant angle is the center of the bin with the highest count
     dominant_angle_bin = np.argmax(hist)
@@ -77,8 +106,8 @@ def get_dominant_angle(polygons, visualize_histogram=False):
         plt.axvline(dominant_angle, color='red', linestyle='--', linewidth=2,
                    label=f'Dominant angle: {dominant_angle:.2f}°')
         plt.xlabel('Edge Angle (degrees)', fontsize=12)
-        plt.ylabel('Frequency', fontsize=12)
-        plt.title('Distribution of Edge Angles (Normalized to 0-90°)', fontsize=14)
+        plt.ylabel(ylabel, fontsize=12)
+        plt.title(f'Distribution of Edge Angles (Normalized to 0-90°){title_suffix}', fontsize=14)
         plt.xlim(0, 90)
         plt.grid(True, alpha=0.3)
         plt.legend()
@@ -89,13 +118,14 @@ def get_dominant_angle(polygons, visualize_histogram=False):
 
 
 # %%
-def analyze_multiple_floor_plans(n_floor_plans=3, show_vertices=True):
+def analyze_multiple_floor_plans(n_floor_plans=3, show_vertices=True, strategy='length_weighted'):
     """
     Analyze multiple random floor plans and visualize them in a grid.
 
     Args:
         n_floor_plans (int): Number of random floor plans to analyze
         show_vertices (bool): If True, add a fourth column showing vertices
+        strategy (str): Weighting strategy - 'length_weighted' or 'count'
 
     Returns:
         list: List of tuples containing (floor_plan_id, correction_angle)
@@ -126,20 +156,31 @@ def analyze_multiple_floor_plans(n_floor_plans=3, show_vertices=True):
 
         # Calculate correction angle and get histogram data
         angles = []
+        edge_lengths = []
         for poly in polygons:
             coords = np.array(poly.exterior.coords)
             vectors = np.diff(coords, axis=0)
             edge_angles = np.arctan2(vectors[:, 1], vectors[:, 0])
             edge_angles_deg = np.rad2deg(edge_angles) % 180
+            lengths = np.linalg.norm(vectors, axis=1)
             angles.extend(edge_angles_deg)
+            edge_lengths.extend(lengths)
 
         normalized_angles = [angle % 90 for angle in angles]
-        hist, bin_edges = np.histogram(normalized_angles, bins=90, range=(0, 90))
+
+        # Apply strategy
+        if strategy == 'length_weighted':
+            hist, bin_edges = np.histogram(normalized_angles, bins=90, range=(0, 90), weights=edge_lengths)
+        else:
+            hist, bin_edges = np.histogram(normalized_angles, bins=90, range=(0, 90))
+
         dominant_angle_bin = np.argmax(hist)
         dominant_angle = bin_edges[dominant_angle_bin] + 0.5
 
         if dominant_angle > 45:
-            correction_angle = -(90 - dominant_angle)
+            # correction_angle = -(90 - dominant_angle)
+            # correction_angle = -dominant_angle
+            correction_angle = -(dominant_angle - 90)
         else:
             correction_angle = -dominant_angle
 
@@ -178,8 +219,10 @@ def analyze_multiple_floor_plans(n_floor_plans=3, show_vertices=True):
         ax_hist.axvline(dominant_angle, color='red', linestyle='--', linewidth=2,
                        label=f'Dominant: {dominant_angle:.2f}°')
         ax_hist.set_xlabel('Edge Angle (degrees)', fontsize=10)
-        ax_hist.set_ylabel('Frequency', fontsize=10)
-        ax_hist.set_title(f'Edge Angle Distribution\n({len(polygons)} rooms)', fontsize=10)
+        ylabel = 'Weighted Frequency' if strategy == 'length_weighted' else 'Frequency'
+        ax_hist.set_ylabel(ylabel, fontsize=10)
+        strategy_label = 'Length-Weighted' if strategy == 'length_weighted' else 'Count-Based'
+        ax_hist.set_title(f'Edge Angle Distribution ({strategy_label})\n({len(polygons)} rooms)', fontsize=10)
         ax_hist.set_xlim(0, 90)
         ax_hist.grid(True, alpha=0.3)
         ax_hist.legend()
@@ -212,11 +255,10 @@ def analyze_multiple_floor_plans(n_floor_plans=3, show_vertices=True):
 
 
 # %% [markdown]
-# Example Usage - Synthetic Data
+# Example Usage
 
 # %%
-# Let's assume 'all_my_rooms' is a list of your shapely Polygon objects.
-# For demonstration, we'll create some rotated rectangles.
+# Sample Data
 p1 = Polygon([(0, 0), (0, 2), (4, 2), (4, 0)])
 p2 = Polygon([(0, 2.5), (0, 4.5), (1.5, 4.5), (1.5, 2.5)])
 
@@ -241,7 +283,10 @@ aligned_floor_plan = rotate(tilted_floor_plan, correction_angle, origin='center'
 # You can save, plot, or further process these aligned shapes.
 
 # %% [markdown]
-# Real Floor Plan from MSD Dataset
+# ## **Experiment**
+
+# %% [markdown]
+# ### Floor Plans from MSD Dataset
 
 # %%
 # Load MSD floor plan
@@ -273,6 +318,9 @@ print(f"MSD Floor Plan Correction Angle: {msd_correction_angle:.2f} degrees")
 msd_floor_plan = MultiPolygon(msd_polygons)
 aligned_msd_floor_plan = rotate(msd_floor_plan, msd_correction_angle, origin='center')
 
+# %% [markdown]
+# #### Single Floor Plan
+
 # %%
 # Visualize the floor plan before and after alignment
 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 7))
@@ -301,19 +349,27 @@ plt.tight_layout()
 plt.show()
 
 # %% [markdown]
-# Batch Analysis - Multiple Random Floor Plans
+# #### Batch Analysis
 
 # %%
 # Analyze multiple random floor plans at once with vertex visualization
-results = analyze_multiple_floor_plans(n_floor_plans=5, show_vertices=True)
+# Using length-weighted strategy (default, robust to edge segmentation)
+results = analyze_multiple_floor_plans(n_floor_plans=50, show_vertices=True, strategy='length_weighted')
 
 # Print summary
 print("\nSummary of analyzed floor plans:")
 for floor_plan_id, correction_angle in results:
     print(f"  {floor_plan_id}: {correction_angle:.2f}°")
 
-# %%
-# If you want to disable vertex visualization, set show_vertices=False
-# results = analyze_multiple_floor_plans(n_floor_plans=3, show_vertices=False)
+# %% [markdown]
+# #### Strategy Comparison
 
 # %%
+# Compare strategies: length-weighted vs count-based
+# Uncomment to see the difference between the two strategies:
+
+# Length-weighted (recommended - robust to edge segmentation)
+# results_weighted = analyze_multiple_floor_plans(n_floor_plans=3, show_vertices=True, strategy='length_weighted')
+
+# Count-based (legacy behavior - sensitive to edge segmentation)
+# results_count = analyze_multiple_floor_plans(n_floor_plans=3, show_vertices=True, strategy='count')
