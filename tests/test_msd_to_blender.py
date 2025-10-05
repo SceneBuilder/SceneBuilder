@@ -27,45 +27,37 @@ def test_msd_to_blender():
     
     print(f"Loading building {building_id}...\n")
 
-    # Get all apartments and group by floor
+    # Get all apartments in building (all floors)
     apartments = loader.get_apartments_in_building(building_id)
-    
-    # Group apartments by floor_id
-    from collections import defaultdict
-    floors = defaultdict(list)
-    
-    for apt_id in apartments:
-        graph = loader.create_graph(apt_id)
-        if graph:
-            floor_id = graph.graph.get("floor_id")
-            floors[floor_id].append((apt_id, graph))
-    
-    print(f"Found {len(apartments)} apartments across {len(floors)} floors\n")
+    print(f"Found {len(apartments)} apartments across all floors\n")
 
     output_dir = (
         Path(__file__).parent.parent / "scene_builder" / "msd_integration" / "output"
     )
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Process each floor
-    for floor_id, apt_graphs in floors.items():
-        print(f"🏢 Floor {floor_id}: {len(apt_graphs)} apartments")
+    # Process each apartment separately
+    for apt_id in apartments:
+        graph = loader.create_graph(apt_id)
+        if not graph:
+            continue
         
-        all_rooms = []
-        for apt_id, graph in apt_graphs:
-            rooms = converter.convert_graph_to_rooms(graph)
-            all_rooms.extend(rooms)
-            print(f"   📍 {apt_id}: {len(rooms)} entities")
+        floor_id = graph.graph.get("floor_id")
+        print(f"📍 Apartment: {apt_id} (Floor: {floor_id})")
         
-        # Prepare scene data for this floor
+        # Convert graph to rooms
+        rooms = converter.convert_graph_to_rooms(graph)
+        print(f"   {len(rooms)} entities")
+        
+        # Prepare scene data for this apartment
         scene_data = {
             "category": "residential",
-            "tags": ["msd", "floor"],
+            "tags": ["msd", "apartment"],
             "floorType": "single",
             "metadata": {
                 "building_id": building_id,
                 "floor_id": floor_id,
-                "apartment_count": len(apt_graphs),
+                "apartment_id": apt_id,
                 "source": "MSD",
             },
             "rooms": [
@@ -76,14 +68,15 @@ def test_msd_to_blender():
                     "boundary": [{"x": p.x, "y": p.y} for p in room.boundary],
                     "objects": room.objects,
                 }
-                for room in all_rooms
+                for room in rooms
             ],
         }
 
-        # Render this floor
+        # Render this apartment
         blender.parse_scene_definition(scene_data)
         
-        output_file = output_dir / f"msd_building_{building_id}_floor_{floor_id}.blend"
+        # Save with apartment ID in filename
+        output_file = output_dir / f"msd_apartment_{apt_id}.blend"
         blender.save_scene(str(output_file))
         print(f"   ✓ Saved: {output_file.name}")
         
