@@ -10,7 +10,7 @@ from scene_builder.decoder import blender
 from scene_builder.definition.plan import RoomPlan
 from scene_builder.definition.scene import Object, ObjectBlueprint, Room, Vector2, Scene
 from scene_builder.importer.test_asset_importer import search_test_asset
-from scene_builder.logging import configure_logging
+from scene_builder.logging import configure_logging, logger
 from scene_builder.nodes.design import (
     RoomDesignNode,
     # RoomDesignVisualFeedback,
@@ -25,7 +25,7 @@ from scene_builder.nodes.placement import (
 )
 
 from scene_builder.nodes.routing import MultiRoomDesignOrchestrator
-from scene_builder.msd_integration.loader import MSDLoader
+from scene_builder.msd_integration.loader import MSDLoader, normalize_floor_plan_orientation
 from scene_builder.utils.conversions import pydantic_from_yaml
 from scene_builder.utils.image import create_gif_from_images
 from scene_builder.utils.pai import transform_paths_to_binary
@@ -595,12 +595,14 @@ def test_multi_room_design_workflow(case: str):
     
     # Import a unit-level floor plan from MSD
     floor_plan_id = test_data["floor_plan_id"]
-    # scene_data = msd_loader.get_scene(floor_plan_id)
     graph = msd_loader.create_graph(floor_plan_id)
     scene_data = msd_loader.graph_to_scene_data(graph)
-    floor_plan_img = msd_loader.render_floor_plan(graph, node_size=225, edge_size=0, show_label=True)
-    floor_plan_img_path = msd_loader.render_floor_plan(graph, output_path=f"test_output/{case}_floor_plan.jpg", node_size=225, edge_size=0, show_label=True)
+
+    # Normalize floor plan orientation
+    scene_data['rooms'], correction_angle = normalize_floor_plan_orientation(scene_data['rooms'])
+    logger.debug(f"Floor plan normalized with correction angle: {correction_angle:.2f}°")
     
+    floor_plan_img_path = msd_loader.render_floor_plan(graph, output_path=f"test_output/{case}_floor_plan.jpg", node_size=225, edge_size=0, show_label=True)
     images = transform_paths_to_binary([floor_plan_img_path])
     room_plan_user_prompt = (
         "You are a design orchestration agent who is part of a building interior design system. ",
@@ -636,6 +638,7 @@ def test_multi_room_design_workflow(case: str):
                 RoomDesignState(
                     room=room_design_state_blueprint.room,
                     room_plan=RoomPlan(room_description=room_design_state_blueprint.room_plan),
+                    extra_info={"building_name": case}
                 )
             )
 
@@ -704,9 +707,9 @@ if __name__ == "__main__":
     # test_parallel_room_design_workflow(["bedroom"])
 
     # Test multi room design workflow
-    # test_multi_room_design_workflow("apartment")
+    test_multi_room_design_workflow("apartment")
     # test_multi_room_design_workflow("community_hospital")
-    test_multi_room_design_workflow("startup_office")
+    # test_multi_room_design_workflow("startup_office")
     # test_multi_room_design_workflow("city_hall")
     # test_multi_room_design_workflow("pizzeria")
     # test_multi_room_design_workflow("local_museum")
