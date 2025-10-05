@@ -598,7 +598,7 @@ def test_multi_room_design_workflow(case: str):
     # scene_data = msd_loader.get_scene(floor_plan_id)
     graph = msd_loader.create_graph(floor_plan_id)
     scene_data = msd_loader.graph_to_scene_data(graph)
-    # floor_plan_img = msd_loader.render_floor_plan(graph, node_size=225, edge_size=0, show_label=True)
+    floor_plan_img = msd_loader.render_floor_plan(graph, node_size=225, edge_size=0, show_label=True)
     floor_plan_img_path = msd_loader.render_floor_plan(graph, output_path=f"test_output/{case}_floor_plan.jpg", node_size=225, edge_size=0, show_label=True)
     
     images = transform_paths_to_binary([floor_plan_img_path])
@@ -706,6 +706,7 @@ if __name__ == "__main__":
     # Test multi room design workflow
     # test_multi_room_design_workflow("apartment")
     # test_multi_room_design_workflow("community_hospital")
-    
-    test_multi_room_design_workflow("city_hall")
+    test_multi_room_design_workflow("startup_office")
+    # test_multi_room_design_workflow("city_hall")
+    # test_multi_room_design_workflow("pizzeria")
     # test_multi_room_design_workflow("local_museum")

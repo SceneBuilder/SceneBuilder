@@ -10,7 +10,7 @@ import io
 import random
 import re
 from pathlib import Path
-from typing import Optional, Union
+from typing import Optional
 
 import networkx as nx
 import numpy as np
@@ -20,6 +20,7 @@ from msd.graphs import get_geometries_from_id, extract_access_graph
 from msd.constants import ROOM_NAMES
 from msd.plot import plot_floor, set_figure
 from PIL import Image
+from shapely.geometry import Polygon
 
 from scene_builder.config import MSD_CSV_PATH
 from scene_builder.definition.scene import Room, Vector2
@@ -96,6 +97,59 @@ def calculate_polygon_metrics(coords: list[Vector2]) -> dict:
         "bbox_width": bbox_width,
         "bbox_height": bbox_height,
     }
+
+
+def get_dominant_angle(polygons: list[Polygon] | list[list[Vector2]], strategy: str = 'length_weighted') -> float:
+    """
+    Calculate the dominant angle of a set of polygons for orientation normalization.
+
+    Args:
+        polygons: List of shapely Polygon objects or list of list[Vector2] boundaries
+        strategy: 'length_weighted' (robust to segmentation) or 'count' (equal weight)
+
+    Returns:
+        Correction angle in degrees to rotate for axis alignment
+    """
+    angles = []
+    edge_lengths = []
+
+    for poly in polygons:
+        # Convert to numpy array based on input type
+        if isinstance(poly, Polygon):
+            coords = np.array(poly.exterior.coords)
+        elif isinstance(poly, list[Vector2]):
+            coords = np.array([(v.x, v.y) for v in poly])
+        else:
+            raise TypeError()
+
+        vectors = np.diff(coords, axis=0)
+        edge_angles = np.arctan2(vectors[:, 1], vectors[:, 0])
+        edge_angles_deg = np.rad2deg(edge_angles) % 180
+        lengths = np.linalg.norm(vectors, axis=1)
+
+        angles.extend(edge_angles_deg)
+        edge_lengths.extend(lengths)
+
+    # Normalize to [0, 90) to treat parallel/perpendicular lines the same
+    normalized_angles = [angle % 90 for angle in angles]
+
+    # Compute histogram with optional weighting
+    if strategy == 'length_weighted':
+        hist, bin_edges = np.histogram(normalized_angles, bins=90, range=(0, 90), weights=edge_lengths)
+    else:
+        hist, bin_edges = np.histogram(normalized_angles, bins=90, range=(0, 90))
+
+    # Find dominant angle
+    dominant_angle_bin = np.argmax(hist)
+    dominant_angle = bin_edges[dominant_angle_bin] + 0.5
+
+    # Choose smallest rotation to align to 0° or 90°
+    if dominant_angle > 45:
+        correction_angle = -(dominant_angle - 90)
+    else:
+        correction_angle = -dominant_angle
+
+    return correction_angle
 
 
 class MSDLoader:
