@@ -16,7 +16,7 @@ def parse_polygon(geom_string: str) -> List[Vector2]:
     if not geom_string:
         return []
 
-    # Extract coordinates from "POLYGON ((...)))"
+    # Extract coordinates from "POLYGON
     pattern = r"POLYGON\s*\(\(\s*(.*?)\s*\)\)"
     match = re.search(pattern, geom_string)
 
@@ -71,6 +71,7 @@ def calculate_polygon_metrics(coords: List[Vector2]) -> dict:
 class GraphToSceneConverter:
     """Convert MSD graph to SceneBuilder format"""
 
+    # comment or uncomment to add or remove entities
     ENTITY_SUBTYPE_MAP = {
         "BEDROOM": "bedroom",
         "ROOM": "room",
@@ -102,14 +103,12 @@ class GraphToSceneConverter:
         rooms = []
 
         for node_id, attrs in graph.nodes(data=True):
-            # Skip nodes without geometry
             if "geometry" not in attrs:
                 continue
 
             # Parse geometry
             geometry_data = attrs["geometry"]
             if isinstance(geometry_data, list) and len(geometry_data) > 0:
-                # Already parsed coordinates
                 coords = [Vector2(x=float(p[0]), y=float(p[1])) for p in geometry_data]
             else:
                 coords = []
@@ -117,10 +116,9 @@ class GraphToSceneConverter:
             if not coords:
                 continue
 
-            # Get entity_subtype from node attributes (already UPPERCASE from MSD CSV)
             entity_subtype = attrs.get("entity_subtype")
             category = self.ENTITY_SUBTYPE_MAP.get(entity_subtype)
-            
+
             if category is None:
                 continue
 

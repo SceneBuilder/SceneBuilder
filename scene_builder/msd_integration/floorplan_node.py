@@ -39,22 +39,27 @@ class MSDFloorPlanNode(BaseNode[MainState]):
             console.print("[bold red]✗ No building found[/]")
             return DesignLoopEntry()
 
-        graphs = self.loader.create_building_graph(building_id)
+        # Get all apartments in building (all floors)
+        apartments = self.loader.get_apartments_in_building(building_id)
 
-        if not graphs:
-            console.print(f"[bold red]✗ No data found for building {building_id}[/]")
+        if not apartments:
+            console.print(
+                f"[bold red]✗ No apartments found for building {building_id}[/]"
+            )
             return DesignLoopEntry()
 
         all_rooms = []
-        for graph in graphs:
-            rooms = self.converter.convert_graph_to_rooms(graph)
-            all_rooms.extend(rooms)
+        for apt_id in apartments:
+            graph = self.loader.create_graph(apt_id)
+            if graph:
+                rooms = self.converter.convert_graph_to_rooms(graph)
+                all_rooms.extend(rooms)
 
         ctx.state.scene_definition.rooms.extend(all_rooms)
         ctx.state.scene_definition.tags.extend(["msd", "building"])
 
         console.print(
-            f"[bold green]✓ Generated {len(all_rooms)} rooms from {len(graphs)} apartments in building {building_id}[/]"
+            f"[bold green]✓ Generated {len(all_rooms)} rooms from {len(apartments)} apartments in building {building_id}[/]"
         )
 
         return DesignLoopEntry()
