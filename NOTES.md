@@ -440,3 +440,87 @@ I will now create a detailed, step-by-step plan to build this system.
   You've correctly identified a key architectural component. For now, the name is well-chosen, but it's smart to keep these alternatives in mind.
 
   Would you like me to rename the folder now, or are you happy with the current structure?
+
+---
+
+## Running Multiple Agents in Parallel with Pydantic-AI
+
+### Key Approach: `asyncio.gather()`
+
+Pydantic-AI agents are async-first, making parallel execution natural with Python's asyncio. The recommended pattern for running multiple agents or the same agent in a batched manner is using `asyncio.gather()`:
+
+```python
+import asyncio
+from pydantic_ai import Agent
+
+agent = Agent('openai:gpt-4o')
+
+async def run_forecast(prompt: str, user_id: int):
+    result = await agent.run(prompt)
+    # process result...
+
+# Run multiple agent calls in parallel
+user_prompts = [("prompt1", 1), ("prompt2", 2), ("prompt3", 3)]
+await asyncio.gather(
+    *(run_forecast(prompt, user_id) for (prompt, user_id) in user_prompts)
+)
+```
+
+### Key Insights:
+
+1. **Same agent, multiple runs**: You can use the same `Agent` instance and call `.run()` multiple times concurrently with `asyncio.gather()`
+
+2. **Shared dependencies**: If you need shared resources (like HTTP clients), pass them via the `deps` parameter to all concurrent runs:
+
+```python
+async with httpx.AsyncClient() as client:
+    deps = ClientAndKey(client, 'api_key')
+    await asyncio.gather(
+        agent.run('prompt1', deps=deps),
+        agent.run('prompt2', deps=deps),
+        agent.run('prompt3', deps=deps),
+    )
+```
+
+3. **Usage tracking**: Each run has its own `result.usage()` tracking, or you can share usage tracking across agents by passing `usage=ctx.usage` when delegating to other agents
+
+4. **Agent delegation**: When delegating to other agents within tools, pass both `deps` and `usage` from the parent context:
+
+```python
+@parent_agent.tool
+async def delegate_task(ctx: RunContext[MyDeps], query: str) -> str:
+    result = await child_agent.run(
+        query,
+        deps=ctx.deps,      # Share dependencies
+        usage=ctx.usage,    # Track cumulative usage
+    )
+    return result.output
+```
+
+### Example: Batch Processing with Weather Forecasts
+
+```python
+from pydantic_ai import Agent, RunContext
+from weather_service import WeatherService
+from fake_database import DatabaseConn
+
+weather_agent = Agent('openai:gpt-4o', deps_type=WeatherService)
+
+async def run_weather_forecast(
+    user_prompts: list[tuple[str, int]],
+    conn: DatabaseConn
+):
+    """Run weather forecast for a list of user prompts and save."""
+    async with WeatherService() as weather_service:
+
+        async def run_forecast(prompt: str, user_id: int):
+            result = await weather_agent.run(prompt, deps=weather_service)
+            await conn.store_forecast(user_id, result.output)
+
+        # Run all prompts in parallel
+        await asyncio.gather(
+            *(run_forecast(prompt, user_id) for (prompt, user_id) in user_prompts)
+        )
+```
+
+This pattern allows for efficient parallel execution while maintaining proper dependency and usage tracking across all agent runs.
