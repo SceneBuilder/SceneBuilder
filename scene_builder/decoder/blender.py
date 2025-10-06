@@ -2,7 +2,6 @@ import os
 import tempfile
 import math
 import sys
-import time
 from contextlib import contextmanager
 from pathlib import Path
 from dataclasses import dataclass
@@ -13,22 +12,31 @@ import bmesh
 import numpy as np
 import yaml
 from scipy.spatial.transform import Rotation
-from mathutils.geometry import tessellate_polygon
 from mathutils import Vector
+from mathutils.geometry import tessellate_polygon
 
 from scene_builder.config import BLENDER_LOG_FILE, TEST_ASSET_DIR
+from scene_builder.database.material import MaterialDatabase
 from scene_builder.definition.scene import Object, Room, Scene
 from scene_builder.importer import objaverse_importer, test_asset_importer
 from scene_builder.logging import logger
+from scene_builder.tools.material_applicator import texture_floor_mesh
+from scene_builder.utils.blender import SceneSwitcher
 from scene_builder.utils.conversions import pydantic_to_dict
 from scene_builder.utils.file import get_filename
-from scene_builder.database.material import MaterialWorkflow
 
+
+HDRI_FILE_PATH = Path(
+    f"{TEST_ASSET_DIR}/hdri/autumn_field_puresky_4k.exr"
+).expanduser()  # TEMP HACK
+
+BACKGROUND_COLOR = (0.02, 0.02, 0.02, 1.0)
 
 
 @dataclass
 class BlenderObjectState:
     """Tracks state of objects created in Blender."""
+
     blender_name: str
     object_id: str
     source_id: str
@@ -43,6 +51,8 @@ class BlenderSceneTracker:
     def __init__(self):
         # Key: object_id, Value: BlenderObjectState
         self._objects: Dict[str, BlenderObjectState] = {}
+        # Cache: Key: source_id, Value: blender_name of the Empty parent
+        self._source_cache: Dict[str, str] = {}
 
     def object_exists_unchanged(self, object_id: str, pos: dict, rot: dict) -> bool:
         """Check if object exists with exact same position/rotation."""
@@ -53,8 +63,7 @@ class BlenderSceneTracker:
         pos_tuple = (pos["x"], pos["y"], pos["z"])
         rot_tuple = (rot["x"], rot["y"], rot["z"])
 
-        return (existing.position == pos_tuple and
-                existing.rotation == rot_tuple)
+        return existing.position == pos_tuple and existing.rotation == rot_tuple
 
     def object_exists_but_moved(self, object_id: str, pos: dict, rot: dict) -> bool:
         """Check if object exists but has moved to different position/rotation."""
@@ -78,12 +87,13 @@ class BlenderSceneTracker:
             source_id=source_id,
             position=(pos["x"], pos["y"], pos["z"]),
             rotation=(rot["x"], rot["y"], rot["z"]),
-            scale=(scale["x"], scale["y"], scale["z"])
+            scale=(scale["x"], scale["y"], scale["z"]),
         )
 
     def clear_all(self):
         """Clear all tracked objects."""
         self._objects.clear()
+        self._source_cache.clear()
         logger.debug("Cleared all object tracking")
 
     def get_object_count(self) -> int:
@@ -94,18 +104,41 @@ class BlenderSceneTracker:
         """Get current state for a specific object."""
         return self._objects.get(object_id)
 
+    def get_cached_empty(self, source_id: str) -> Optional[Any]:
+        """Get cached Empty parent object for a source_id if it exists.
+
+        Args:
+            source_id: The source_id to look up in cache
+
+        Returns:
+            Blender Empty object if found in cache and still exists, None otherwise
+        """
+        if source_id not in self._source_cache:
+            return None
+
+        blender_name = self._source_cache[source_id]
+
+        # Verify the object still exists in Blender
+        if blender_name in bpy.data.objects:
+            return bpy.data.objects[blender_name]
+        else:
+            # Object was deleted, clean up cache
+            del self._source_cache[source_id]
+            return None
+
+    def register_source_cache(self, source_id: str, blender_name: str):
+        """Register a source_id -> Empty parent mapping in cache.
+
+        Args:
+            source_id: The source identifier (e.g., Objaverse ID)
+            blender_name: The name of the Empty parent object in Blender
+        """
+        self._source_cache[source_id] = blender_name
+        logger.debug(f"Cached source_id '{source_id}' -> Empty '{blender_name}'")
+
 
 # Global scene tracker instance
 _scene_tracker = BlenderSceneTracker()
-from scene_builder.database.material import MaterialWorkflow
-
-
-
-HDRI_FILE_PATH = Path(
-    f"{TEST_ASSET_DIR}/hdri/autumn_field_puresky_4k.exr"
-).expanduser()  # TEMP HACK
-
-BACKGROUND_COLOR = (0.02, 0.02, 0.02, 1.0)
 
 
 @contextmanager
@@ -171,7 +204,7 @@ def parse_scene_definition(scene_data: dict[str, Any]):
             _create_room(room_data)
 
 
-def parse_room_definition(room_data: dict[str, Any], clear=False):
+def parse_room_definition(room_data: dict[str, Any], clear=True):
     """
     Parses the room definition dictionary and creates the scene in Blender.
 
@@ -180,18 +213,20 @@ def parse_room_definition(room_data: dict[str, Any], clear=False):
         clear: Whether to clear the Blender scene before building room.
 
     # NOTE: not sure if it's good for `clear` to default to True; (it was for testing)
+    # NOTE: I think there's a bug where if `clear=True`, not all assets are recreated at next iteration's `parse_room_definition()` call. this happens after critique's rejection. look into it!
     """
-    logger.debug("Parsing room definition and creating scene")
-
     if isinstance(room_data, Room):
         room_data = pydantic_to_dict(room_data)
 
-    with suppress_blender_logs():
-        # Clear the existing scene
-        if clear:
-            _clear_scene()
+    logger.debug(f"Parsing room definition for {room_data['id']} and creating scene")
 
-        _create_room(room_data)
+    with suppress_blender_logs():
+        with SceneSwitcher(room_data["id"]) as active_scene:
+            # Clear the existing scene
+            if clear:
+                _clear_scene()
+
+            _create_room(room_data)
 
 
 def _clear_scene():
@@ -215,15 +250,19 @@ def _create_room(room_data: dict[str, Any]):
     room_id = room_data.get("id", "unknown_room")
     logger.debug(f"Creating room: {room_id}")
 
-    # Create floor mesh if boundary data exists
-    boundary = room_data.get("boundary")
-    if boundary:
-        logger.debug(f"Creating floor mesh for room: {room_id}")
-        try:
-            floor_result = _create_floor_mesh(boundary, room_id)
-            logger.debug(f"Floor mesh created: {floor_result.get('status', 'unknown')}")
-        except Exception as e:
-            logger.error(f"Failed to create floor mesh for room {room_id}: {e}")
+    # Create floor mesh
+    floor_result = _create_floor_mesh(room_data["boundary"], room_id)
+    logger.debug(f"Created floor: {floor_result['status']}")
+
+    # Apply floor material
+    if room_data["floor"]:
+        material_id = room_data["floor"]["material_id"]
+        apply_floor_material(
+            material_id=material_id,
+            floor_object_name=floor_result["object_name"],
+            boundary=room_data["boundary"],
+        )
+        logger.debug(f"Applied material {material_id} to floor")
 
     # Create walls from boundary if ceiling height is available
     # if boundary and room_data.get("floor_dimensions"):
@@ -239,9 +278,13 @@ def _create_room(room_data: dict[str, Any]):
     #     except Exception as e:
     #         logger.error(f"Failed to create walls for room {room_id}: {e}")
 
-    # # Create objects in the room
-    # for obj_data in room_data.get("objects", []):
-    #     _create_object(obj_data)
+    # Create objects in the room
+    for obj_data in room_data.get("objects", []):
+        try:
+            _create_object(obj_data)
+        except Exception as e:
+            logger.warning(e)
+
 
 def _check_object_duplicate_status(obj_data: dict[str, Any]) -> str:
     """
@@ -262,7 +305,9 @@ def _check_object_duplicate_status(obj_data: dict[str, Any]) -> str:
         return "proceed_new"
 
     if _scene_tracker.object_exists_unchanged(object_id, pos, rot):
-        logger.debug(f"Skipping duplicate object: {object_name} (id: {object_id}) - unchanged at {pos}")
+        logger.debug(
+            f"Skipping duplicate object: {object_name} (id: {object_id}) - unchanged at {pos}"
+        )
         return "skip_unchanged"
 
     if _scene_tracker.object_exists_but_moved(object_id, pos, rot):
@@ -271,6 +316,7 @@ def _check_object_duplicate_status(obj_data: dict[str, Any]) -> str:
 
     return "proceed_new"
 
+
 def _check_object_duplicate_status(obj_data: dict[str, Any]) -> str:
     """
     Check if object already exists and determine what action to take.
@@ -290,7 +336,9 @@ def _check_object_duplicate_status(obj_data: dict[str, Any]) -> str:
         return "proceed_new"
 
     if _scene_tracker.object_exists_unchanged(object_id, pos, rot):
-        logger.debug(f"Skipping duplicate object: {object_name} (id: {object_id}) - unchanged at {pos}")
+        logger.debug(
+            f"Skipping duplicate object: {object_name} (id: {object_id}) - unchanged at {pos}"
+        )
         return "skip_unchanged"
 
     if _scene_tracker.object_exists_but_moved(object_id, pos, rot):
@@ -332,13 +380,50 @@ def _create_object(obj_data: dict[str, Any], parent_location: str = "origin"):
     logger.debug(f"Creating object: {object_name} (id: {object_id})")
 
     blender_obj = None
+    source_id = obj_data.get("source_id")
+
+    # Check if we've already imported this source_id
+    if source_id:
+        cached_empty = _scene_tracker.get_cached_empty(source_id)
+        if cached_empty:
+            logger.debug(f"Reusing cached model for source_id: {source_id}")
+
+            # Create new Empty parent with linked duplicate children
+            with suppress_blender_logs():
+                bpy.ops.object.empty_add(type="PLAIN_AXES", location=(0, 0, 0))
+            blender_obj = bpy.context.active_object
+            blender_obj.name = object_name
+
+            # Create linked duplicates of all children
+            for child in cached_empty.children:
+                new_child = child.copy()
+                new_child.data = child.data  # Share mesh data (linked duplicate)
+                bpy.context.collection.objects.link(new_child)
+                new_child.parent = blender_obj
+
+            # Skip to transformation section
+            # (Set position, rotation, and scale)
+            blender_obj.location = (pos["x"], pos["y"], pos["z"])
+            blender_obj.scale = (scl["x"], scl["y"], scl["z"])
+
+            # Combine the original rotation with the rotation from the scene definition.
+            original_rotation = Rotation.from_euler("xyz", blender_obj.rotation_euler)
+            new_rotation = Rotation.from_euler("xyz", [rot["x"], rot["y"], rot["z"]], degrees=True)
+            combined_rotation = new_rotation * original_rotation
+
+            # Apply the combined rotation.
+            blender_obj.rotation_euler = combined_rotation.as_euler("xyz")
+
+            # Register the created object in tracker
+            if object_id and blender_obj:
+                _scene_tracker.register_object(obj_data, blender_obj.name)
+                logger.debug(f"Registered object in tracker: {object_name} (id: {object_id})")
+
+            return
 
     if obj_data.get("source").lower() == "objaverse":
-        source_id = obj_data.get("source_id")
         if not source_id:
-            raise ValueError(
-                f"Object '{object_name}' has source 'objaverse' but no 'source_id'."
-            )
+            raise ValueError(f"Object '{object_name}' has source 'objaverse' but no 'source_id'.")
 
         # Import the object from Objaverse
         object_path = objaverse_importer.import_object(source_id)
@@ -356,9 +441,9 @@ def _create_object(obj_data: dict[str, Any], parent_location: str = "origin"):
         source = obj_data.get("source", "unknown")
         logger.warning(f"Unknown object source: {source}. For now, overwriting with objaverse.")
         source = "objaverse"  # TEMP HACK
-        raise NotImplementedError(
-            f"Object source '{source}' is not yet supported for '{object_name}'."
-        )
+        # raise NotImplementedError(
+        #     f"Object source '{source}' is not yet supported for '{object_name}'."
+        # )
 
     # Import the .glb file
     if object_path and object_path.endswith(".glb"):
@@ -371,9 +456,7 @@ def _create_object(obj_data: dict[str, Any], parent_location: str = "origin"):
                 bpy.ops.import_scene.gltf(filepath=object_path)
 
             # Get only top-level imported objects (no parents) to preserve hierarchy
-            imported_objects = [
-                obj for obj in bpy.context.selected_objects if obj.parent is None
-            ]
+            imported_objects = [obj for obj in bpy.context.selected_objects if obj.parent is None]
 
             if not imported_objects:
                 raise IOError(f"No objects were imported from '{object_path}'")
@@ -417,6 +500,10 @@ def _create_object(obj_data: dict[str, Any], parent_location: str = "origin"):
             # Parent all imported objects to the Empty
             for obj in imported_objects:
                 obj.parent = blender_obj
+
+            # Register this Empty in the source cache for future reuse
+            if source_id:
+                _scene_tracker.register_source_cache(source_id, blender_obj.name)
 
         except Exception as e:
             raise IOError(
@@ -467,16 +554,26 @@ def _create_floor_mesh(
         return {
             "status": "error",
             "message": f"Room {room_id}: At least 3 boundary points required for floor mesh",
-            "timestamp": int(time.time()),
         }
 
-    # Generate timestamp for deterministic naming
-    timestamp = int(time.time())
-    floor_name = f"Floor_{room_id}_{timestamp}"
-    mesh_name = f"FloorMesh_{room_id}_{timestamp}"
+    floor_name = f"Floor_{room_id}"
+    mesh_name = f"FloorMesh_{room_id}"
 
-    # Ensure NavGo_Floors collection exists
-    collection = _ensure_collection("NavGo_Floors")
+    # Check if floor already exists
+    if floor_name in bpy.data.objects:
+        logger.debug(f"Floor '{floor_name}' already exists, skipping creation")
+        existing_floor = bpy.data.objects[floor_name]
+        return {
+            "status": "skipped",
+            "object_name": floor_name,
+            "mesh_name": existing_floor.data.name if existing_floor.data else mesh_name,
+            "collection": "Floor",
+            "room_id": room_id,
+            "message": f"Floor '{floor_name}' already exists",
+        }
+
+    # Ensure floor collection exists
+    collection = _ensure_collection("Floor")
 
     # Create new mesh and object
     mesh = bpy.data.meshes.new(mesh_name)
@@ -513,9 +610,7 @@ def _create_floor_mesh(
             top_face.normal_update()
         except ValueError as e:
             # If direct face creation fails, try triangulation
-            logger.debug(
-                f"Direct face creation failed: {e}. Attempting triangulation..."
-            )
+            logger.debug(f"Direct face creation failed: {e}. Attempting triangulation...")
 
             # Convert to mathutils Vectors for tessellation
             vectors = [Vector(v) for v in verts_3d]
@@ -621,14 +716,13 @@ def _create_floor_mesh(
         "status": "success",
         "object_name": floor_name,
         "mesh_name": mesh_name,
-        "collection": "NavGo_Floors",
+        "collection": "Floor",
         "room_id": room_id,
         "vertex_count": len(vertices_2d),
         "face_count": len(mesh.polygons),
         "thickness_m": floor_thickness_m,
         "origin_mode": origin,
         "bounds": bounds,
-        "timestamp": timestamp,
     }
 
     return result
@@ -685,13 +779,30 @@ def _calculate_bounds(
 
 
 def _ensure_collection(collection_name: str):
-    """Ensures a collection exists and returns it."""
-    if collection_name in bpy.data.collections:
-        return bpy.data.collections[collection_name]
+    """Ensures a collection exists in the current scene and returns it.
 
-    # Create new collection
-    collection = bpy.data.collections.new(collection_name)
-    bpy.context.scene.collection.children.link(collection)
+    Creates scene-specific collections to avoid cross-scene contamination.
+    """
+    current_scene = bpy.context.scene
+
+    # Create scene-specific collection name to avoid conflicts
+    scene_specific_name = f"{collection_name}_{current_scene.name}"
+
+    # Check if scene-specific collection already exists in current scene
+    for collection in current_scene.collection.children:
+        if collection.name == scene_specific_name:
+            return collection
+
+    # Check if it exists globally but not linked to current scene
+    if scene_specific_name in bpy.data.collections:
+        existing_collection = bpy.data.collections[scene_specific_name]
+        current_scene.collection.children.link(existing_collection)
+        return existing_collection
+
+    # Create new scene-specific collection
+    collection = bpy.data.collections.new(scene_specific_name)
+    current_scene.collection.children.link(collection)
+    logger.debug(f"Created collection '{scene_specific_name}' in scene '{current_scene.name}'")
     return collection
 
 
@@ -710,12 +821,12 @@ def _create_unlit_material(name: str, color: tuple[float, float, float, float]):
     # Create the new Emission and Material Output nodes
     nodes = material.node_tree.nodes
     links = material.node_tree.links
-    emission_node = nodes.new(type='ShaderNodeEmission')
-    output_node = nodes.new(type='ShaderNodeOutputMaterial')
+    emission_node = nodes.new(type="ShaderNodeEmission")
+    output_node = nodes.new(type="ShaderNodeOutputMaterial")
 
     # Set the color and link the nodes
-    emission_node.inputs['Color'].default_value = color
-    links.new(emission_node.outputs['Emission'], output_node.inputs['Surface'])
+    emission_node.inputs["Color"].default_value = color
+    links.new(emission_node.outputs["Emission"], output_node.inputs["Surface"])
     return material
 
 
@@ -740,53 +851,55 @@ def _create_grid(
         axis_x_color: RGBA color for the X-axis (red)
         axis_y_color: RGBA color for the Y-axis (green)
     """
-    GRID_NAME = "Grid"
+    current_scene = bpy.context.scene
+    GRID_NAME = f"Grid_{current_scene.name}"
+    X_AXIS_NAME = f"X_Axis_{current_scene.name}"
+    Y_AXIS_NAME = f"Y_Axis_{current_scene.name}"
 
-    # Check if grid already exists
-    if GRID_NAME in bpy.data.objects:
-        logger.debug(f"Grid '{GRID_NAME}' already exists, skipping creation")
+    # Check if grid already exists in current scene
+    if GRID_NAME in bpy.data.objects and GRID_NAME in current_scene.objects:
+        logger.debug(
+            f"Grid '{GRID_NAME}' already exists in scene '{current_scene.name}', skipping creation"
+        )
         return
 
     with suppress_blender_logs():
         # Ensure we are in Object Mode
-        if bpy.context.object and bpy.context.object.mode != 'OBJECT':
-            bpy.ops.object.mode_set(mode='OBJECT')
+        if bpy.context.object and bpy.context.object.mode != "OBJECT":
+            bpy.ops.object.mode_set(mode="OBJECT")
 
         # Delete any existing grid objects to avoid duplicates
-        for name in [GRID_NAME, "X_Axis", "Y_Axis"]:
+        for name in [GRID_NAME, X_AXIS_NAME, Y_AXIS_NAME]:
             if name in bpy.data.objects:
                 obj = bpy.data.objects[name]
                 bpy.data.objects.remove(obj, do_unlink=True)
 
-        # 1. Create the Plane mesh for the grid
+        # Create the Plane mesh for the grid
         bpy.ops.mesh.primitive_plane_add(
-            size=grid_size_meters,
-            enter_editmode=False,
-            align='WORLD',
-            location=(0, 0, 0)
+            size=grid_size_meters, enter_editmode=False, align="WORLD", location=(0, 0, 0)
         )
         grid_object = bpy.context.active_object
         grid_object.name = GRID_NAME
 
-        # 2. Subdivide the plane to create 1x1 meter squares
+        # Subdivide the plane to create 1x1 meter squares
         subdivision_cuts = grid_size_meters - 1
-        bpy.ops.object.mode_set(mode='EDIT')
+        bpy.ops.object.mode_set(mode="EDIT")
         bpy.ops.mesh.subdivide(number_cuts=subdivision_cuts)
-        bpy.ops.object.mode_set(mode='OBJECT')
+        bpy.ops.object.mode_set(mode="OBJECT")
 
-        # 3. Apply the Wireframe modifier
-        wireframe_mod = grid_object.modifiers.new(name="GridWire", type='WIREFRAME')
+        # Apply the Wireframe modifier
+        wireframe_mod = grid_object.modifiers.new(name="GridWire", type="WIREFRAME")
         wireframe_mod.thickness = wireframe_thickness
         wireframe_mod.use_replace = True
 
-        # 4. Create and apply the grid material
+        # Create and apply the grid material
         grid_material = _create_unlit_material("GridMaterial_Unlit", grid_color)
         if grid_object.data.materials:
             grid_object.data.materials[0] = grid_material
         else:
             grid_object.data.materials.append(grid_material)
 
-        # 5. Create Axis Visualization
+        # Create Axis Visualization
         total_axis_length = grid_size_meters + (axis_extension * 2)
 
         # X-Axis (Red Line)
@@ -794,27 +907,25 @@ def _create_grid(
             location=(0, 0, 0.001)  # Place slightly above grid to prevent z-fighting
         )
         x_axis_obj = bpy.context.active_object
-        x_axis_obj.name = "X_Axis"
+        x_axis_obj.name = X_AXIS_NAME
         x_axis_obj.scale = (total_axis_length / 2, axis_thickness / 2, 0.001)
         x_axis_mat = _create_unlit_material("Axis_X_Material", axis_x_color)
         x_axis_obj.data.materials.append(x_axis_mat)
 
         # Y-Axis (Green Line)
-        bpy.ops.mesh.primitive_cube_add(
-            location=(0, 0, 0.001)
-        )
+        bpy.ops.mesh.primitive_cube_add(location=(0, 0, 0.001))
         y_axis_obj = bpy.context.active_object
-        y_axis_obj.name = "Y_Axis"
+        y_axis_obj.name = Y_AXIS_NAME
         y_axis_obj.scale = (axis_thickness / 2, total_axis_length / 2, 0.001)
         y_axis_mat = _create_unlit_material("Axis_Y_Material", axis_y_color)
         y_axis_obj.data.materials.append(y_axis_mat)
 
-        # 6. Parent axes to the grid so they move together
+        # Parent axes to the grid so they move together
         x_axis_obj.parent = grid_object
         y_axis_obj.parent = grid_object
 
-        # 7. Clean up selection state
-        bpy.ops.object.select_all(action='DESELECT')
+        # Clean up selection state
+        bpy.ops.object.select_all(action="DESELECT")
         grid_object.select_set(True)
         bpy.context.view_layer.objects.active = grid_object
 
@@ -840,10 +951,30 @@ def load_template(path: str, clear_scene: bool):
     logger.debug(f"Loaded template from {path}")
 
 
-def save_scene(filepath: str):
-    """Saves the current Blender scene to a .blend file."""
+def save_scene(filepath: str, exclude_grid: bool = True):
+    """
+    Saves the current Blender scene to a .blend file.
+
+    Args:
+        filepath: Path to save the .blend file.
+        exclude_grid: If True, temporarily removes grid objects before saving.
+    """
     if not filepath.endswith(".blend"):
         filepath += ".blend"
+
+    # Temporarily remove grid if requested
+    grid_objects = []
+    if exclude_grid:
+        current_scene = bpy.context.scene
+        GRID_NAME = f"Grid_{current_scene.name}"
+        X_AXIS_NAME = f"X_Axis_{current_scene.name}"
+        Y_AXIS_NAME = f"Y_Axis_{current_scene.name}"
+
+        for name in [GRID_NAME, X_AXIS_NAME, Y_AXIS_NAME]:
+            if name in bpy.data.objects and name in current_scene.objects:
+                obj = bpy.data.objects[name]
+                grid_objects.append((name, obj))
+                current_scene.collection.objects.unlink(obj)
 
     # Pack all external images into the .blend file
     try:
@@ -864,6 +995,60 @@ def save_scene(filepath: str):
     with suppress_blender_logs():
         bpy.ops.wm.save_as_mainfile(filepath=filepath)
     logger.debug(f"Scene saved to {filepath}")
+
+    # Re-link grid objects if they were temporarily removed
+    if exclude_grid and grid_objects:
+        for name, obj in grid_objects:
+            current_scene.collection.objects.link(obj)
+
+
+def export_to_gltf(filepath: str, exclude_grid: bool = True) -> Path:
+    """
+    Exports the current Blender scene to a GLTF file.
+
+    Args:
+        filepath: Path to save the GLTF file.
+        exclude_grid: If True, temporarily removes grid objects before exporting.
+
+    Returns:
+        Path to the exported GLTF file.
+    """
+    if not filepath.endswith(".gltf") and not filepath.endswith(".glb"):
+        filepath += ".gltf"
+
+    filepath = Path(filepath)
+    filepath.parent.mkdir(parents=True, exist_ok=True)
+
+    # Temporarily remove grid if requested
+    grid_objects = []
+    if exclude_grid:
+        current_scene = bpy.context.scene
+        GRID_NAME = f"Grid_{current_scene.name}"
+        X_AXIS_NAME = f"X_Axis_{current_scene.name}"
+        Y_AXIS_NAME = f"Y_Axis_{current_scene.name}"
+
+        for name in [GRID_NAME, X_AXIS_NAME, Y_AXIS_NAME]:
+            if name in bpy.data.objects and name in current_scene.objects:
+                obj = bpy.data.objects[name]
+                grid_objects.append((name, obj))
+                current_scene.collection.objects.unlink(obj)
+
+    # Export to GLTF
+    with suppress_blender_logs():
+        bpy.ops.export_scene.gltf(
+            filepath=str(filepath),
+            export_format='GLTF_EMBEDDED' if filepath.suffix == '.gltf' else 'GLB',
+            use_selection=False,
+        )
+
+    logger.debug(f"Scene exported to GLTF: {filepath}")
+
+    # Re-link grid objects if they were temporarily removed
+    if exclude_grid and grid_objects:
+        for name, obj in grid_objects:
+            current_scene.collection.objects.link(obj)
+
+    return filepath
 
 
 def render_top_down(output_dir: str = None) -> Path:
@@ -888,10 +1073,7 @@ def render_top_down(output_dir: str = None) -> Path:
     if output_dir is None:
         output_dir = tempfile.gettempdir()
 
-    output_path = (
-        Path(output_dir)
-        / f"room_topdown_{abs(hash(str(bpy.context.scene.objects)))}.png"
-    )
+    output_path = Path(output_dir) / f"room_topdown_{abs(hash(str(bpy.context.scene.objects)))}.png"
 
     return render_to_file(output_path)
 
@@ -938,9 +1120,7 @@ def _configure_output_image(format: str, resolution: int):
     bpy.context.scene.render.resolution_percentage = 100
 
 
-def _configure_render_settings(
-    engine: str = None, samples: int = 256, enable_gpu: bool = False
-):
+def _configure_render_settings(engine: str = None, samples: int = 256, enable_gpu: bool = False):
     """Selects a compatible render engine and configures render settings."""
     try:
         engine_prop = bpy.context.scene.render.bl_rna.properties["engine"]
@@ -994,12 +1174,73 @@ def _configure_render_settings(
                 pass
 
 
-def _setup_top_down_camera():
-    """Sets up a top-down orthographic camera."""
+def _calculate_scene_bounds():
+    """Calculate the bounding box of all visible objects in the scene.
+
+    Returns:
+        tuple: (min_x, max_x, min_y, max_y, min_z, max_z) or None if no objects
+    """
+    objects = [
+        obj for obj in bpy.context.scene.objects
+        if obj.type == "MESH"
+        and obj.visible_get()
+        and not obj.name.startswith("Grid_")
+        and not obj.name.startswith("X_Axis_")
+        and not obj.name.startswith("Y_Axis_")
+    ]
+
+    if not objects:
+        return None
+
+    # Initialize with first object's bounds
+    first_obj = objects[0]
+    bbox_corners = [first_obj.matrix_world @ Vector(corner) for corner in first_obj.bound_box]
+
+    min_x = min(v.x for v in bbox_corners)
+    max_x = max(v.x for v in bbox_corners)
+    min_y = min(v.y for v in bbox_corners)
+    max_y = max(v.y for v in bbox_corners)
+    min_z = min(v.z for v in bbox_corners)
+    max_z = max(v.z for v in bbox_corners)
+
+    # Extend bounds with remaining objects
+    for obj in objects[1:]:
+        bbox_corners = [obj.matrix_world @ Vector(corner) for corner in obj.bound_box]
+        min_x = min(min_x, min(v.x for v in bbox_corners))
+        max_x = max(max_x, max(v.x for v in bbox_corners))
+        min_y = min(min_y, min(v.y for v in bbox_corners))
+        max_y = max(max_y, max(v.y for v in bbox_corners))
+        min_z = min(min_z, min(v.z for v in bbox_corners))
+        max_z = max(max_z, max(v.z for v in bbox_corners))
+
+    return (min_x, max_x, min_y, max_y, min_z, max_z)
+
+
+def _setup_top_down_camera(auto_zoom: bool = True, margin: float = 2.0):
+    """Sets up a top-down orthographic camera.
+
+    Args:
+        auto_zoom: Automatically fit camera to scene bounds
+        margin: Multiplicative margin for auto-zoom (e.g., 1.5 = 50% padding)
+    """
     # Clear existing cameras
     for obj in bpy.context.scene.objects:
         if obj.type == "CAMERA":
             bpy.data.objects.remove(obj, do_unlink=True)
+
+    # Calculate ortho_scale
+    if auto_zoom:
+        bounds = _calculate_scene_bounds()
+        if bounds:
+            min_x, max_x, min_y, max_y, _, _ = bounds
+            width = max_x - min_x
+            height = max_y - min_y
+            # Use the larger dimension and apply margin
+            ortho_scale = max(width, height) * margin
+        else:
+            ortho_scale = 20.0  # Fallback
+    else:
+        ortho_scale = 20.0
 
     # Add top-down orthographic camera
     with suppress_blender_logs():
@@ -1009,7 +1250,7 @@ def _setup_top_down_camera():
 
     # Set to orthographic projection
     camera.data.type = "ORTHO"
-    camera.data.ortho_scale = 20.0  # Adjust based on room size
+    camera.data.ortho_scale = ortho_scale
 
     # Point camera straight down (top-down view)
     camera.rotation_euler = (0, 0, 0)  # Looking straight down Z-axis
@@ -1018,20 +1259,47 @@ def _setup_top_down_camera():
     bpy.context.scene.camera = camera
 
 
-def _setup_isometric_camera():
-    """Sets up an isometric orthographic camera."""
+def _setup_isometric_camera(auto_zoom: bool = True, margin: float = 2.0):
+    """Sets up an isometric orthographic camera.
+
+    Args:
+        auto_zoom: Automatically fit camera to scene bounds
+        margin: Multiplicative margin for auto-zoom (e.g., 1.5 = 50% padding)
+    """
     # Clear existing cameras
     for obj in bpy.context.scene.objects:
         if obj.type == "CAMERA":
             bpy.data.objects.remove(obj, do_unlink=True)
 
+    # Calculate ortho_scale
+    if auto_zoom:
+        bounds = _calculate_scene_bounds()
+        if bounds:
+            min_x, max_x, min_y, max_y, min_z, max_z = bounds
+            width = max_x - min_x
+            height = max_y - min_y
+            depth = max_z - min_z
+            # For isometric view, consider all three dimensions
+            # Use diagonal distance for better framing
+            # diagonal = math.sqrt(width**2 + height**2 + depth**2)  # ORIG
+            # diagonal = max(width, height)
+            diagonal = max(width, height) * math.sqrt(2)  # might be something in the right direction. scale power should not be linear.
+            ortho_scale = diagonal * margin * 0.7  # Scale factor for isometric projection # ORIG
+            # ortho_scale = diagonal * margin * 0.7**4 # HACK
+            # ortho_scale = diagonal * margin * 0.7**3 # HACK
+        else:
+            ortho_scale = 20.0  # Fallback
+    else:
+        ortho_scale = 20.0
+
     # Add isometric orthographic camera
     with suppress_blender_logs():
         bpy.ops.object.camera_add(location=(10, -10, 10))
+        # bpy.ops.object.camera_add(location=(5.77, -5.77, 5.77))
     camera = bpy.context.object
     camera.name = "IsometricCamera"
     camera.data.type = "ORTHO"
-    camera.data.ortho_scale = 20.0  # Adjust based on room size
+    camera.data.ortho_scale = ortho_scale
 
     # Point camera towards the origin with isometric rotation
     camera.rotation_euler = (math.radians(54.736), 0, math.radians(45))
@@ -1040,14 +1308,14 @@ def _setup_isometric_camera():
     bpy.context.scene.camera = camera
 
 
-def _setup_lighting(energy: float = 1.0):
+def _setup_lighting(energy: float = 0.2):
     """Sets up basic lighting for the scene."""
     if not any(obj.type == "LIGHT" for obj in bpy.context.scene.objects):
         with suppress_blender_logs():
             bpy.ops.object.light_add(type="SUN", location=(0, 0, 15))
         light = bpy.context.object
         light.data.energy = energy
-        light.rotation_euler = (0, 0, 0)  # Light pointing down
+        light.rotation_euler = (math.radians(15), math.radians(30), 0)  # tilt, rotation, ?
         logger.debug("Added top-down lighting")
 
 
@@ -1113,6 +1381,7 @@ def render_to_numpy() -> np.ndarray:
 def create_scene_visualization(
     resolution=1024,
     format="jpg",
+    filename: str = None,
     output_dir: str = None,
     view: str = "top_down",
     background_color: tuple[float, float, float, float] = BACKGROUND_COLOR,
@@ -1134,13 +1403,16 @@ def create_scene_visualization(
     """
     logger.debug(f"Setting up {view} orthographic render...")
 
+    if not filename:
+        filename = "render"
+
     # Prepare output filepath
     if output_dir is None:
         output_dir = tempfile.gettempdir()
 
     output_path = get_filename(
         output_dir=output_dir,
-        base_name=f"sb_scene_viz_{view}",
+        base_name=f"{filename}_{view}",
         extension=format.lower(),
         strategy="increment",
     )
@@ -1154,9 +1426,7 @@ def create_scene_visualization(
         elif view == "isometric":
             _setup_isometric_camera()
         else:
-            raise ValueError(
-                f"Unsupported view type: {view}. Must be 'top_down' or 'isometric'."
-            )
+            raise ValueError(f"Unsupported view type: {view}. Must be 'top_down' or 'isometric'.")
         _setup_lighting(energy=0.5)
 
         # Create grid if requested
@@ -1168,6 +1438,15 @@ def create_scene_visualization(
         setup_post_processing(scene)
 
     return render_to_file(output_path)
+
+
+def visualize(scene=None, **kwargs):
+    """
+    A thin wrapper for `create_scene_visualization()` with active scene specifiability.
+    """
+
+    with SceneSwitcher(scene) as active_scene:
+        return create_scene_visualization(**kwargs)
 
 
 def load_scene_from_yaml(filepath: str) -> dict[str, Any]:
@@ -1300,30 +1579,31 @@ def setup_post_processing(scene: bpy.types.Scene):
 
     glare_node.glare_type = "FOG_GLOW"
     glare_node.threshold = 1.5
-    glare_node.size = 8
+    glare_node.size = 4
 
     nt.links.new(render_layers.outputs["Image"], glare_node.inputs["Image"])
     nt.links.new(glare_node.outputs["Image"], composite_output.inputs["Image"])
 
 
 def apply_floor_material(
-    query: str,
+    material_id: str,
+    floor_object_name: str,
     uv_scale: Optional[float] = None,
-    boundary: Optional[list] = None
-) -> dict[str, Any]:
+    boundary: Optional[list] = None,
+) -> bool:
     """
-    Function to search and apply a material to all floor objects.
-    If boundary is provided, calculates appropriate UV scale automatically.
+    Apply a material to a floor object in Blender.
+    Material should already be selected by LLM workflow.
 
     Args:
-        query: Material search query (e.g., "wood floor parquet")
+        material_id: Material UID from Graphics-DB (already selected by workflow)
+        floor_object_name: Name of the floor object in Blender
         uv_scale: UV scaling for texture tiling (optional if boundary provided)
         boundary: List of Vector2 points for UV scale calculation
 
     Returns:
-        Results dictionary with status information
+        True if successful, False otherwise
     """
-    from scene_builder.database.material import MaterialWorkflow
 
     # Calculate UV scale from boundary if provided
     if boundary is not None and uv_scale is None:
@@ -1342,27 +1622,27 @@ def apply_floor_material(
         calculated_uv_scale = reference_uv_scale * (current_size / reference_size)
         uv_scale = calculated_uv_scale
     elif uv_scale is None:
-        # Default UV scale if neither boundary nor uv_scale provided
+        # Default UV scale
         uv_scale = 2.0
 
-    workflow = MaterialWorkflow()
-    return workflow.texture_floors_with_query(query, uv_scale=uv_scale)
+    # Download texture using MaterialDatabase
+    material_db = MaterialDatabase()
+    texture_path = material_db.download_texture(material_id)
 
+    if not texture_path:
+        logger.debug(f"Failed to download texture for material: {material_id}")
+        return False
 
-def texture_floor_with_material(
-    floor_name: str, query: str, uv_scale: float = 2.0
-) -> bool:
-    """
-    Function to texture a specific floor with a material.
+    # Apply texture using material_applicator
+    success = texture_floor_mesh(
+        floor_object_name=floor_object_name,
+        texture_path=texture_path,
+        uv_scale=uv_scale,
+    )
 
-    Args:
-        floor_name: Name of the floor object
-        query: Material search query
-        uv_scale: UV scaling factor
+    if success:
+        logger.debug(f"Applied material {material_id} to floor {floor_object_name}")
+    else:
+        logger.debug(f"Failed to apply material to floor {floor_object_name}")
 
-    Returns:
-        True if successful, False otherwise
-    """
-
-    workflow = MaterialWorkflow()
-    return workflow.texture_specific_floor(floor_name, query, uv_scale)
+    return success

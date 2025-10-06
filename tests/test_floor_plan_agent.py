@@ -14,7 +14,7 @@ async def test_floor_plan_agent_rectangular_classroom():
     state = MainState(
         user_input="Create a rectangular classroom",
         scene_definition=Scene(
-            category="educational", tags=["classroom"], floorType="single", rooms=[]
+            category="educational", tags=["classroom"], height_class="single_story", rooms=[]
         ),
         plan="Create a rectangular classroom with space for students and teacher.",
     )
@@ -64,9 +64,7 @@ async def test_floor_plan_agent_rectangular_classroom():
                     print(f"✓ Blender scene saved as: {room.id}_with_walls.blend")
 
                 except Exception as e:
-                    print(
-                        f"⚠ Blender rendering failed (normal if bpy not available): {e}"
-                    )
+                    print(f"⚠ Blender rendering failed (normal if bpy not available): {e}")
 
         return True
 

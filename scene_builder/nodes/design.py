@@ -1,4 +1,5 @@
 from __future__ import annotations
+from typing import Literal
 
 from pydantic import BaseModel, Field
 from pydantic_graph import BaseNode, End, Graph, GraphRunContext
@@ -8,7 +9,8 @@ from scene_builder.config import DEBUG
 from scene_builder.database.object import ObjectDatabase
 from scene_builder.decoder import blender
 # from scene_builder.definition.scene import Object, Room, Vector3
-from scene_builder.definition.scene import Object, ObjectBlueprint, Room, Scene, Vector3
+from scene_builder.definition.scene import Floor, Object, ObjectBlueprint, Room, Scene, Vector3
+from scene_builder.logging import logger
 # from scene_builder.nodes.feedback import VisualFeedback
 # from scene_builder.nodes.placement import PlacementNode, VisualFeedback
 from scene_builder.utils.pai import transform_paths_to_binary
@@ -26,7 +28,7 @@ from scene_builder.workflow.agents import (
 # from scene_builder.workflow.graphs import placement_graph # hopefully no circular import... -> BRUH.
 # from scene_builder.workflow.states import PlacementState, RoomDesignState
 from scene_builder.workflow.states import CritiqueAction, PlacementState, RoomDesignState, MainState
-from scene_builder.workflow.toolsets import shopping_toolset
+from scene_builder.workflow.toolsets import material_toolset, shopping_toolset
 
 console = Console()
 obj_db = ObjectDatabase()
@@ -48,6 +50,20 @@ class DesignLoopRouter(BaseNode[MainState]):
         # TODO:
 
 
+# TODO: move these to the other file with placement action and stuff like that(?)
+class RDAInitialResponse(BaseModel):
+    plan: str
+    complete: bool = False
+
+
+class MaterialAction(BaseModel):
+    action: Literal["change", "keep"]
+
+class MaterialSelection(BaseModel):
+    material_id: str
+    rationale: str
+
+
 class RoomDesignNode(BaseNode[RoomDesignState]):
     async def run(
         self, ctx: GraphRunContext[RoomDesignState]
@@ -56,9 +72,10 @@ class RoomDesignNode(BaseNode[RoomDesignState]):
         console.print("[bold cyan]Executing Node:[/] RoomDesignNode")
         room = ctx.state.room
         blender.parse_room_definition(room)
-        top_down_render = blender.create_scene_visualization(output_dir="test_output", show_grid=True)
-        isometric_render = blender.create_scene_visualization(
-            output_dir="test_output", view="isometric", show_grid=True
+        output_dir = f"test_output/{ctx.state.extra_info['building_name']}/{ctx.state.room.id}"
+        top_down_render = blender.visualize(scene=room.id, output_dir=output_dir, show_grid=True)
+        isometric_render = blender.visualize(
+            scene=room.id, output_dir=output_dir, view="isometric", show_grid=True
         )
         renders = transform_paths_to_binary([top_down_render, isometric_render])
         room_plan = transform_paths_to_binary(ctx.state.room_plan)
@@ -74,20 +91,57 @@ class RoomDesignNode(BaseNode[RoomDesignState]):
             # "Please write a detailed design plan." if ctx.state.run_count == 0 else\  # ALT
             "Do you want to continue designing the room, or are you complete with the design?",
         )
-        response = await room_design_agent.run(
+        rda_initial_response = await room_design_agent.run(
             rda_user_prompt,
             # deps=ctx.state,  # I don't think this means anything anymore (it's just for tool calling)
-            # output_type=str
+            # output_type=RDAInitialResponse  # WRONG
+            output_type=str if ctx.state.run_count == 0 else RDAInitialResponse
         )
+        # TODO: make sure the plan is added to message_history even if the output type is not plain `str`.
+        # tried to look into variables but they are complex. i guess a possible approach is doing a "blindfolding" experiment!
+        # NOTE!: Tool call results are NOT added to message_history — it failed the blindfolding repeat experiment.
+        
         # NOTE: design termination is not handled. 
         #       one idea is to conditionally specify output type based on run count. 
+        # NOTE: lowkey, design plan is useful even beyond the first step - i want to find a way for it to keep generating (and adding into context) the refined design plans even in later iterations. 
+        #       or maybe we just separate the planning and continuation/completion into two calls. because why not. 
+        # NOTE: oh shoot ig it was not generating the design plan outside of the first step anyway. i thought it was. whoops.
 
         if DEBUG:
         #     print(f"[RoomDesignNode]: {response.output.decision}")
         #     print(f"[RoomDesignNode]: {response.output.reasoning}")
-            print(f"[RoomDesignNode]: {response.output}")
+            print(f"[RoomDesignNode]: {rda_initial_response.output}")
+            
+            # TEMP: context blindfolding experiment
+            # experiment_response = await room_design_agent.run(
+            #     "Could you recite the room plan verbatim?",
+            #     message_history=rda_initial_response.all_messages(),
+            #     output_type=str,
+            # )
+            # print(f"[RoomDesignNode]: {experiment_response.output}")
+
         # if response.output.decision == "finalize":
         #     return End(ctx.state.room)
+
+        material_change_user_prompt = (
+            "Do you want to change the floor material (texture), or keep the existing one?",
+            f"Current floor state: {dict(room).get('floor', None)}"
+        )
+        material_change_response = await room_design_agent.run(material_change_user_prompt, output_type=MaterialAction)
+        # if material_change_response.output:  # is True
+        if material_change_response.output.action == "change":  # is True
+            material_user_prompt = (
+                "Could you search for a material (texture) to be applied to the floor?",
+                "The `query` tool provides search results from a material database.",
+                "The `get_metadata` tool provides various metadata about the material.",
+                "Please return the `material_id` of the material of your choice."
+            )
+            material_response = await room_design_agent.run(material_user_prompt, toolsets=[material_toolset], output_type=MaterialSelection)
+            logger.debug(f"Selected floor material for room {room.id}: {material_response.output.material_id}")
+            # logger.debug(f"Selected floor material for room {room.id}: {material_response.output}")
+            # ctx.state.room.floor = material_response.output
+            # ctx.state.room.floor = Floor(material_id=material_response.output)
+            ctx.state.room.floor = Floor(material_id=material_response.output.material_id)
 
         shopping_user_prompt = (
             "Please explore the object database to choose the objects that you would like to use for designing the room.",
@@ -100,7 +154,7 @@ class RoomDesignNode(BaseNode[RoomDesignState]):
         shopping_response = await room_design_agent.run(
             shopping_user_prompt,
             # deps=ctx.state,
-            message_history=response.all_messages(),
+            message_history=rda_initial_response.all_messages(),
             output_type=list[ObjectBlueprint],
             toolsets=[shopping_toolset],
         )
@@ -138,9 +192,9 @@ class RoomDesignNode(BaseNode[RoomDesignState]):
             
             # post-placement render
             blender.parse_room_definition(room)
-            top_down_render = blender.create_scene_visualization(output_dir="test_output", show_grid=True)
-            isometric_render = blender.create_scene_visualization(
-                output_dir="test_output", view="isometric", show_grid=True
+            top_down_render = blender.visualize(scene=room.id, output_dir=output_dir, show_grid=True)
+            isometric_render = blender.visualize(
+                scene=room.id, output_dir=output_dir, view="isometric", show_grid=True
             )
             renders = transform_paths_to_binary([top_down_render, isometric_render])
 
@@ -298,7 +352,13 @@ class RoomDesignNode(BaseNode[RoomDesignState]):
         # TODO: if DEBUG, make it dump (latest) state & .blend to a file at every turn. or maybe all turns. for web viz.
         ctx.state.run_count += 1  # (TEMP?)
         ctx.state.message_history = critique_response.all_messages()  # TODO: confirm this is correct
-        return RoomDesignNode()  # maybe this is the issue? self-returning function?
+        # if ctx.state.run_count >= 2:  # TEMP: test that it ends successfully
+        #     return End(ctx.state.room)
+        if ctx.state.run_count > 1 and rda_initial_response.output.complete:
+            return End(ctx.state.room)
+        else:
+            return RoomDesignNode()  # maybe this is the issue? self-returning function?
+    
     
         # NOTE: don't return `UpdateScene` directly; return a room to caller (DesignLoopRouter)
         #       and let it take care of coalescing it with the entire Scene.

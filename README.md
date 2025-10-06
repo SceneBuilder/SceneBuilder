@@ -21,21 +21,67 @@ To install the necessary dependencies, run:
 
 ```bash
 pip install .
+# For development dependencies:
+pip install .[dev]
 ```
 
-### Running the Workflow
+### CLI Usage
 
-To run the agentic workflow, execute the `main.py` script:
+SceneBuilder provides a Typer-based CLI with two main functionalities:
+
+#### 1. Generate Scenes (TODO)
+
+Generate a 3D scene from a natural language prompt:
 
 ```bash
-python3 scene_builder/workflows/main.py
+python3 -m scene_builder.main generate "Create a modern living room" --output scenes/my_scene.yaml
 ```
 
-This will run the workflow with mock data and print the execution steps to the console.
+Options:
+- `--debug`: Enable debug mode with mock data (no API calls)
+- `-o, --output`: Path to save the generated scene YAML (default: `scenes/generated_scene.yaml`)
+
+#### 2. Decode YAML to Blender
+
+Convert scene or room definition YAML files to Blender `.blend` files:
+
+**Decode a room:**
+```bash
+python3 -m scene_builder.main decode room <yaml_path> <output.blend>
+```
+
+**Decode a full scene:**
+```bash
+python3 -m scene_builder.main decode scene <yaml_path> <output.blend>
+```
+
+Options:
+- `--exclude-grid` / `--include-grid`: Control whether grid objects are included in exported .blend file (default: excluded)
+
+**Examples:**
+```bash
+# Decode a room with grid excluded (default)
+python3 -m scene_builder.main decode room scenes/room_definition.yaml output/room.blend
+
+# Decode a scene with grid included
+python3 -m scene_builder.main decode scene scenes/generated_scene.yaml output/scene.blend --include-grid
+```
 
 ### Importing to Blender
 
-The generated scene definition can be imported into Blender by running the `blender_importer.py` script from within Blender's Python environment.
+The generated `.blend` files can be opened directly in Blender. Alternatively, you can import YAML definitions programmatically from within Blender's Python console:
+
+```python
+import sys
+sys.path.append('/path/to/SceneBuilder')
+from scene_builder.decoder.blender import parse_scene_definition, parse_room_definition
+
+# For a full scene
+parse_scene_definition(scene_data_dict)
+
+# For a single room
+parse_room_definition(room_data_dict)
+```
 
 ## Next Steps
 

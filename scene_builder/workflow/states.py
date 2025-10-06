@@ -57,6 +57,12 @@ class PlacementResponse(BaseModel):
     reasoning: str
 
 
+class RoomDesignStateBlueprint(BaseModel):
+    room: Room
+    # room_plan: RoomPlan
+    room_plan: str
+
+
 class RoomDesignState(BaseModel):
     room: Room
     room_plan: RoomPlan
@@ -66,6 +72,8 @@ class RoomDesignState(BaseModel):
     # viz: list[Path] = []
     # NOTE: It's possible to put room_history here as well...
     # TODO (yunho-c): make a decision on ^.
+
+    extra_info: Any | None = None
 
 
 # class RoomDesignAction(BaseModel):

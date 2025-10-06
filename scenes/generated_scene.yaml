@@ -2,7 +2,7 @@ category: residential
 tags:
   - modern
   - minimalist
-floorType: single
+height_class: single_story
 rooms:
   - id: living_room_1
     category: living_room

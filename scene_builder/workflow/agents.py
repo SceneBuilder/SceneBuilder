@@ -10,7 +10,6 @@ from scene_builder.definition.scene import (
     Room,
     Object,
     ObjectBlueprint,
-    FloorDimensions,
 )
 from scene_builder.tools.read_file import read_media_file
 from scene_builder.database.object import ObjectDatabase

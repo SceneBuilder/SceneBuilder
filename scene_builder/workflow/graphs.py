@@ -1,12 +1,12 @@
 from pydantic_graph import Graph
 
 from scene_builder.definition.scene import Room
-from scene_builder.nodes.design import RoomDesignNode, RoomDesignVisualFeedback
+from scene_builder.nodes.design import RoomDesignNode
 # from scene_builder.nodes.feedback import VisualFeedback
 from scene_builder.nodes.design import DesignLoopRouter  # TEMP
-from scene_builder.nodes.general import MetadataNode, UpdateScene
+# from scene_builder.nodes.general import MetadataNode, UpdateScene
 from scene_builder.nodes.placement import PlacementNode, PlacementVisualFeedback
-from scene_builder.nodes.planning import BuildingPlanNode, FloorPlanNode
+# from scene_builder.nodes.planning import BuildingPlanNode, FloorPlanNode
 # from scene_builder.nodes.routing import DesignLoopRouter
 from scene_builder.workflow.states import MainState, PlacementState
 
@@ -15,13 +15,13 @@ from scene_builder.workflow.states import MainState, PlacementState
 
 main_graph = Graph(
     nodes=[
-        MetadataNode,
-        BuildingPlanNode,
-        FloorPlanNode,
+        # MetadataNode,
+        # BuildingPlanNode,
+        # FloorPlanNode,
         DesignLoopRouter,
         RoomDesignNode,
-        RoomDesignVisualFeedback,  # TEMP?
-        UpdateScene,
+        # RoomDesignVisualFeedback,  # TEMP?
+        # UpdateScene,
         PlacementVisualFeedback,  # TEMP
         PlacementNode,  # TEMP
     ],

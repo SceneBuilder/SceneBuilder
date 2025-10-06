@@ -1,7 +1,7 @@
 category: education
 tags:
 # -
-floorType: single
+height_class: single_story
 rooms:
   - id: classroom_1
     category: classroom

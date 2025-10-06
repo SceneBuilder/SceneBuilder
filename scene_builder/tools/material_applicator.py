@@ -278,8 +278,8 @@ def find_floor_objects() -> list[str]:
     """
     floor_objects = []
 
-    # Look for objects in NavGo_Floors collection
-    floors_collection = bpy.data.collections.get("NavGo_Floors")
+    # Look for objects in Floor collection
+    floors_collection = bpy.data.collections.get("Floor")
     if floors_collection:
         for obj in floors_collection.objects:
             if obj.type == "MESH":
