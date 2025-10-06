@@ -951,10 +951,30 @@ def load_template(path: str, clear_scene: bool):
     logger.debug(f"Loaded template from {path}")
 
 
-def save_scene(filepath: str):
-    """Saves the current Blender scene to a .blend file."""
+def save_scene(filepath: str, exclude_grid: bool = True):
+    """
+    Saves the current Blender scene to a .blend file.
+
+    Args:
+        filepath: Path to save the .blend file.
+        exclude_grid: If True, temporarily removes grid objects before saving.
+    """
     if not filepath.endswith(".blend"):
         filepath += ".blend"
+
+    # Temporarily remove grid if requested
+    grid_objects = []
+    if exclude_grid:
+        current_scene = bpy.context.scene
+        GRID_NAME = f"Grid_{current_scene.name}"
+        X_AXIS_NAME = f"X_Axis_{current_scene.name}"
+        Y_AXIS_NAME = f"Y_Axis_{current_scene.name}"
+
+        for name in [GRID_NAME, X_AXIS_NAME, Y_AXIS_NAME]:
+            if name in bpy.data.objects and name in current_scene.objects:
+                obj = bpy.data.objects[name]
+                grid_objects.append((name, obj))
+                current_scene.collection.objects.unlink(obj)
 
     # Pack all external images into the .blend file
     try:
@@ -975,6 +995,60 @@ def save_scene(filepath: str):
     with suppress_blender_logs():
         bpy.ops.wm.save_as_mainfile(filepath=filepath)
     logger.debug(f"Scene saved to {filepath}")
+
+    # Re-link grid objects if they were temporarily removed
+    if exclude_grid and grid_objects:
+        for name, obj in grid_objects:
+            current_scene.collection.objects.link(obj)
+
+
+def export_to_gltf(filepath: str, exclude_grid: bool = True) -> Path:
+    """
+    Exports the current Blender scene to a GLTF file.
+
+    Args:
+        filepath: Path to save the GLTF file.
+        exclude_grid: If True, temporarily removes grid objects before exporting.
+
+    Returns:
+        Path to the exported GLTF file.
+    """
+    if not filepath.endswith(".gltf") and not filepath.endswith(".glb"):
+        filepath += ".gltf"
+
+    filepath = Path(filepath)
+    filepath.parent.mkdir(parents=True, exist_ok=True)
+
+    # Temporarily remove grid if requested
+    grid_objects = []
+    if exclude_grid:
+        current_scene = bpy.context.scene
+        GRID_NAME = f"Grid_{current_scene.name}"
+        X_AXIS_NAME = f"X_Axis_{current_scene.name}"
+        Y_AXIS_NAME = f"Y_Axis_{current_scene.name}"
+
+        for name in [GRID_NAME, X_AXIS_NAME, Y_AXIS_NAME]:
+            if name in bpy.data.objects and name in current_scene.objects:
+                obj = bpy.data.objects[name]
+                grid_objects.append((name, obj))
+                current_scene.collection.objects.unlink(obj)
+
+    # Export to GLTF
+    with suppress_blender_logs():
+        bpy.ops.export_scene.gltf(
+            filepath=str(filepath),
+            export_format='GLTF_EMBEDDED' if filepath.suffix == '.gltf' else 'GLB',
+            use_selection=False,
+        )
+
+    logger.debug(f"Scene exported to GLTF: {filepath}")
+
+    # Re-link grid objects if they were temporarily removed
+    if exclude_grid and grid_objects:
+        for name, obj in grid_objects:
+            current_scene.collection.objects.link(obj)
+
+    return filepath
 
 
 def render_top_down(output_dir: str = None) -> Path:
@@ -1241,7 +1315,7 @@ def _setup_lighting(energy: float = 0.2):
             bpy.ops.object.light_add(type="SUN", location=(0, 0, 15))
         light = bpy.context.object
         light.data.energy = energy
-        light.rotation_euler = (0, 0, 0)  # Light pointing down
+        light.rotation_euler = (math.radians(15), math.radians(30), 0)  # tilt, rotation, ?
         logger.debug("Added top-down lighting")
 
 
