@@ -51,14 +51,8 @@ def get_apartment_outline(rooms):
     return outline
 
 
-def create_outline_blend(
-    apartment_outlines, output_path, wall_height=2.7, wall_thickness=0.001
-):
-    """Create a .blend file with extruded walls for all apartments on the floor."""
-    bpy.ops.object.select_all(action="SELECT")
-    bpy.ops.object.delete()
-
-    # Create separate wall object for each apartment
+def add_walls_to_scene(apartment_outlines, wall_height=2.7, wall_thickness=0.001):
+    """Add extruded walls to the current Blender scene."""
     for apt_idx, (apt_id, outline_points) in enumerate(apartment_outlines):
         if not outline_points:
             continue
@@ -100,14 +94,11 @@ def create_outline_blend(
         # solidify modifier for wall thickness
         solidify = obj.modifiers.new(name="Solidify", type="SOLIDIFY")
         solidify.thickness = wall_thickness
-        solidify.offset = 0  # Center thickness
+        solidify.offset = 0
 
         # apply modifier
         bpy.context.view_layer.objects.active = obj
         bpy.ops.object.modifier_apply(modifier="Solidify")
-
-    bpy.ops.wm.save_as_mainfile(filepath=str(output_path))
-    print(f"   ✓ Saved walls: {output_path.name}")
 
 
 def test_msd_to_blender():
@@ -179,13 +170,6 @@ def test_msd_to_blender():
 
         blender.parse_scene_definition(scene_data)
 
-        output_file = output_dir / f"msd_building_{building_id}_floor_{floor_id}.blend"
-        blender.save_scene(str(output_file))
-        print(f"   ✓ Saved: {output_file.name}")
-
-        render_path = blender.render_top_down(str(output_dir))
-        print(f"   ✓ Rendered: {Path(render_path).name}")
-
         apartment_outlines = []
         for apt_id, rooms in apartment_rooms:
             outline = get_apartment_outline(rooms)
@@ -193,10 +177,20 @@ def test_msd_to_blender():
                 apartment_outlines.append((apt_id, outline))
 
         if apartment_outlines:
-            walls_file = (
-                output_dir / f"msd_building_{building_id}_floor_{floor_id}_walls.blend"
-            )
-            create_outline_blend(apartment_outlines, walls_file)
+            add_walls_to_scene(apartment_outlines)
+            print(f"   ✓ Added walls for {len(apartment_outlines)} apartments")
+
+        output_file = output_dir / f"msd_building_{building_id}_floor_{floor_id}.blend"
+        blender.save_scene(str(output_file))
+        print(f"   ✓ Saved: {output_file.name}")
+
+        render_file = output_dir / f"msd_building_{building_id}_floor_{floor_id}_topdown.png"
+        blender._configure_render_settings()
+        blender._configure_output_image("PNG", 1024)
+        blender._setup_top_down_camera()
+        blender._setup_lighting(energy=0.5)
+        render_path = blender.render_to_file(str(render_file))
+        print(f"   ✓ Rendered: {render_path.name}")
 
         print()
 
