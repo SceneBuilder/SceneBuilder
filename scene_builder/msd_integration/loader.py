@@ -57,7 +57,8 @@ def parse_polygon(geom_string: str) -> list[Vector2]:
     try:
         for pair in match.group(1).split(","):
             x_str, y_str = pair.strip().split()
-            coords.append(Vector2(x=round(float(x_str), 3), y=round(float(y_str), 3)))
+            # coords.append(Vector2(x=round(float(x_str), 3), y=round(float(y_str), 3)))
+            coords.append(Vector2(x=round(float(x_str), 2), y=round(float(y_str), 2)))
     except Exception as e:
         print(f"ERROR: Failed to parse coordinates from: '{match.group(1)}' - {str(e)}")
         return []
@@ -215,6 +216,66 @@ def calculate_floor_plan_centroid(boundaries: list[list[Vector2]]) -> tuple[floa
     return (sum(all_x) / len(all_x), sum(all_y) / len(all_y))
 
 
+def scale_boundary(boundary: list[Vector2], scale_factor: float, origin: tuple[float, float] = (0.0, 0.0)) -> list[Vector2]:
+    """
+    Scale a room boundary by a given factor around an origin point.
+
+    Args:
+        boundary: List of Vector2 points defining the room boundary
+        scale_factor: Scaling factor (e.g., 2.0 for 2x, 0.5 for half)
+        origin: (x, y) tuple of scaling origin (default: (0, 0))
+
+    Returns:
+        Scaled boundary as list[Vector2]
+    """
+    if not boundary:
+        return boundary
+
+    ox, oy = origin
+
+    scaled = []
+    for v in boundary:
+        # Translate to origin
+        x = v.x - ox
+        y = v.y - oy
+
+        # Scale
+        x_new = x * scale_factor
+        y_new = y * scale_factor
+
+        # Translate back
+        scaled.append(Vector2(x=x_new + ox, y=y_new + oy))
+
+    return scaled
+
+
+def scale_floor_plan(rooms: list[Room], scale_factor: float, origin: Optional[tuple[float, float]] = None) -> list[Room]:
+    """
+    Scale a floor plan by a given factor.
+
+    Args:
+        rooms: List of Room objects with boundaries to scale
+        scale_factor: Scaling factor (e.g., 2.0 for 2x, 0.5 for half)
+        origin: (x, y) tuple of scaling origin. If None, uses floor plan centroid (default: None)
+
+    Returns:
+        List of Room objects with scaled boundaries
+    """
+    if not rooms or scale_factor == 1.0:
+        return rooms
+
+    # Calculate centroid if origin not provided
+    if origin is None:
+        room_boundaries = [room.boundary for room in rooms]
+        origin = calculate_floor_plan_centroid(room_boundaries)
+
+    # Scale each room's boundary
+    for room in rooms:
+        room.boundary = scale_boundary(room.boundary, scale_factor, origin=origin)
+
+    return rooms
+
+
 def normalize_floor_plan_orientation(
     rooms: list[Room],
     strategy: str = 'length_weighted',
@@ -308,7 +369,8 @@ class MSDLoader:
             geometry_data = attrs["geometry"]
             if isinstance(geometry_data, list):
                 # Already parsed coordinates
-                coords = [Vector2(x=round(float(p[0]), 3), y=round(float(p[1]), 3)) for p in geometry_data]
+                # coords = [Vector2(x=round(float(p[0]), 3), y=round(float(p[1]), 3)) for p in geometry_data]
+                coords = [Vector2(x=round(float(p[0]), 2), y=round(float(p[1]), 2)) for p in geometry_data]
             else:
                 coords = []
 

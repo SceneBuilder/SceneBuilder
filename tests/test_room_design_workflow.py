@@ -25,7 +25,7 @@ from scene_builder.nodes.placement import (
 )
 
 from scene_builder.nodes.routing import MultiRoomDesignOrchestrator
-from scene_builder.msd_integration.loader import MSDLoader, normalize_floor_plan_orientation
+from scene_builder.msd_integration.loader import MSDLoader, normalize_floor_plan_orientation, scale_floor_plan
 from scene_builder.utils.conversions import pydantic_from_yaml
 from scene_builder.utils.image import create_gif_from_images
 from scene_builder.utils.pai import transform_paths_to_binary
@@ -503,6 +503,7 @@ def test_single_room_design_workflow(case: str):
             boundary=boundary,
         ),
         room_plan=RoomPlan(room_description=description),
+        extra_info={"building_name": case}
     )
     blender._clear_scene()
 
@@ -547,6 +548,7 @@ def test_parallel_room_design_workflow(cases: list[str]):
                 boundary=boundary,
             ),
             room_plan=RoomPlan(room_description=description),
+            extra_info={"building_name": case}
         )
         initial_states.append((case, room_state))
 
@@ -601,13 +603,23 @@ def test_multi_room_design_workflow(case: str):
     # Normalize floor plan orientation
     scene_data['rooms'], correction_angle = normalize_floor_plan_orientation(scene_data['rooms'])
     logger.debug(f"Floor plan normalized with correction angle: {correction_angle:.2f}°")
+
+    # Scale floor plan
+    # floor_plan_scale_factor = 1.5
+    floor_plan_scale_factor = 2.0
+    scene_data['rooms'] = scale_floor_plan(scene_data['rooms'], scale_factor=floor_plan_scale_factor)
+    logger.debug(f"Floor plan scaled by factor: {floor_plan_scale_factor}")
     
     floor_plan_img_path = msd_loader.render_floor_plan(graph, output_path=f"test_output/{case}_floor_plan.jpg", node_size=225, edge_size=0, show_label=True)
     images = transform_paths_to_binary([floor_plan_img_path])
     room_plan_user_prompt = (
         "You are a design orchestration agent who is part of a building interior design system. ",
         "Given the description of the desired place by the user and an image of the floor plan, ",
-        "please write a more detailed design plan for each room, selecting which room (in the floor plan) best fits which role (from the description).",
+        # "please write a more detailed design plan for each room, selecting which room (in the floor plan) best fits which role (from the description).",
+        "please write a concise design plan for each room, matching which room (in the floor plan) best fits which role (from the description) based on size and layout.",
+        "By the way, it's fine to leave spaces empty (e.g., using a narrow alley as a hallway).",
+        # "Example design plan: \n",  # HACK?
+        # "Bar Room: A cocktail bar with bar counter, stools, liquor shelves, draft beer taps, and lounge seating area.",  # HACK?
         "",
         f"Place Description: {test_data['description']}",
         "",
@@ -694,7 +706,7 @@ if __name__ == "__main__":
     # test_single_room_design_workflow("warehouse")
     # test_single_room_design_workflow("conference_room")
     # test_single_room_design_workflow("art_gallery")
-    # test_single_room_design_workflow("bar")
+    test_single_room_design_workflow("bar")
     # test_single_room_design_workflow("theater_backstage")
     # test_single_room_design_workflow("factory_floor")
     # test_single_room_design_workflow("diffuscene")
@@ -707,7 +719,7 @@ if __name__ == "__main__":
     # test_parallel_room_design_workflow(["bedroom"])
 
     # Test multi room design workflow
-    test_multi_room_design_workflow("apartment")
+    # test_multi_room_design_workflow("apartment")
     # test_multi_room_design_workflow("community_hospital")
     # test_multi_room_design_workflow("startup_office")
     # test_multi_room_design_workflow("city_hall")
