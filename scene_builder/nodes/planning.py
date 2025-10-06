@@ -9,7 +9,7 @@ from rich.console import Console
 
 from scene_builder.decoder import blender
 from scene_builder.database.object import ObjectDatabase
-from scene_builder.definition.scene import Scene, Room, Object, Vector3, GlobalConfig
+from scene_builder.definition.scene import Scene, Room, Object, Vector3
 from scene_builder.utils.conversions import pydantic_to_dict
 from scene_builder.workflow.agents import (
     floor_plan_agent,
@@ -30,7 +30,7 @@ class MainState(BaseModel):
     plan: str | None = None
     messages: list[ModelMessage] = Field(default_factory=list)
     current_room_index: int = 0
-    global_config: GlobalConfig | None = None
+    # global_config: GlobalConfig | None = None
 
 
 # --- Main Graph Nodes ---
