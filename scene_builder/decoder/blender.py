@@ -204,7 +204,7 @@ def parse_scene_definition(scene_data: dict[str, Any]):
             _create_room(room_data)
 
 
-def parse_room_definition(room_data: dict[str, Any], clear=False):
+def parse_room_definition(room_data: dict[str, Any], clear=True):
     """
     Parses the room definition dictionary and creates the scene in Blender.
 

@@ -129,6 +129,6 @@ SHOPPING_AGENT_PROMPT = (
     # "and generate appropriate names and descriptions based on the asset tags and metadata.",
     "Please use the top_k parameter to explore different assets and choose your favorite ones to return."
     ""
-    "NOTE: Please make sure the `object_id` attribute is the 16-digit hashed UUID."
+    "NOTE: Please make sure the `object_id` attribute is the 32-digit hashed UUID."
     "NOTE: Currently, `objaverse` is the only supported source."
 )
