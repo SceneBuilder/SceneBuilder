@@ -94,7 +94,7 @@ class BlenderSceneTracker:
         """Clear all tracked objects."""
         self._objects.clear()
         self._source_cache.clear()
-        logger.debug("Cleared all object tracking")
+        # logger.debug("Cleared all object tracking")
 
     def get_object_count(self) -> int:
         """Get total count of tracked objects."""
