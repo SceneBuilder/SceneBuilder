@@ -1002,12 +1002,13 @@ def save_scene(filepath: str, exclude_grid: bool = True):
             current_scene.collection.objects.link(obj)
 
 
-def export_to_gltf(filepath: str, exclude_grid: bool = True) -> Path:
+def export_to_gltf(filepath: str, scene: str = None, exclude_grid: bool = True) -> Path:
     """
-    Exports the current Blender scene to a GLTF file.
+    Exports a Blender scene to a GLTF file.
 
     Args:
         filepath: Path to save the GLTF file.
+        scene: Name of the scene to export. If None, uses current scene.
         exclude_grid: If True, temporarily removes grid objects before exporting.
 
     Returns:
@@ -1019,93 +1020,37 @@ def export_to_gltf(filepath: str, exclude_grid: bool = True) -> Path:
     filepath = Path(filepath)
     filepath.parent.mkdir(parents=True, exist_ok=True)
 
-    # Temporarily remove grid if requested
-    grid_objects = []
-    if exclude_grid:
-        current_scene = bpy.context.scene
-        GRID_NAME = f"Grid_{current_scene.name}"
-        X_AXIS_NAME = f"X_Axis_{current_scene.name}"
-        Y_AXIS_NAME = f"Y_Axis_{current_scene.name}"
+    with SceneSwitcher(scene) as active_scene:
+        # Temporarily remove grid if requested
+        grid_objects = []
+        if exclude_grid:
+            current_scene = bpy.context.scene
+            GRID_NAME = f"Grid_{current_scene.name}"
+            X_AXIS_NAME = f"X_Axis_{current_scene.name}"
+            Y_AXIS_NAME = f"Y_Axis_{current_scene.name}"
 
-        for name in [GRID_NAME, X_AXIS_NAME, Y_AXIS_NAME]:
-            if name in bpy.data.objects and name in current_scene.objects:
-                obj = bpy.data.objects[name]
-                grid_objects.append((name, obj))
-                current_scene.collection.objects.unlink(obj)
+            for name in [GRID_NAME, X_AXIS_NAME, Y_AXIS_NAME]:
+                if name in bpy.data.objects and name in current_scene.objects:
+                    obj = bpy.data.objects[name]
+                    grid_objects.append((name, obj))
+                    current_scene.collection.objects.unlink(obj)
 
-    # Export to GLTF
-    with suppress_blender_logs():
-        bpy.ops.export_scene.gltf(
-            filepath=str(filepath),
-            export_format='GLTF_EMBEDDED' if filepath.suffix == '.gltf' else 'GLB',
-            use_selection=False,
-        )
+        # Export to GLTF
+        with suppress_blender_logs():
+            bpy.ops.export_scene.gltf(
+                filepath=str(filepath),
+                export_format='GLTF_EMBEDDED' if filepath.suffix == '.gltf' else 'GLB',
+                use_selection=False,
+            )
 
-    logger.debug(f"Scene exported to GLTF: {filepath}")
+        logger.debug(f"Scene exported to GLTF: {filepath}")
 
-    # Re-link grid objects if they were temporarily removed
-    if exclude_grid and grid_objects:
-        for name, obj in grid_objects:
-            current_scene.collection.objects.link(obj)
+        # Re-link grid objects if they were temporarily removed
+        if exclude_grid and grid_objects:
+            for name, obj in grid_objects:
+                current_scene.collection.objects.link(obj)
 
     return filepath
-
-
-def render_top_down(output_dir: str = None) -> Path:
-    """
-    Brief Pipeline:
-    1. Build the scene in Blender (bpy)
-    2. Set the camera to top-down + orthographic, then render
-    3. Save the rendered image as a file (PNG)
-
-    Returns:
-        Path to the rendered top-down PNG file.
-    """
-    logger.debug("Setting up top-down orthographic render...")
-
-    # Use existing modular functions instead of duplicating code
-    _configure_render_settings()
-    _configure_output_image("PNG", 1024)
-    _setup_top_down_camera()
-    _setup_lighting(energy=0.5)
-
-    # Prepare output filepath
-    if output_dir is None:
-        output_dir = tempfile.gettempdir()
-
-    output_path = Path(output_dir) / f"room_topdown_{abs(hash(str(bpy.context.scene.objects)))}.png"
-
-    return render_to_file(output_path)
-
-
-def render() -> np.ndarray:
-    """
-    Main render function for the workflow - renders scene to NumPy array.
-    Sets up top-down orthographic view and renders directly to memory.
-
-    Returns:
-        NumPy array of rendered top-down image data (RGBA format).
-    """
-    logger.debug("Setting up top-down orthographic render...")
-
-    _configure_render_settings()
-    _configure_output_image("PNG", 1024)
-    _setup_top_down_camera()
-    _setup_lighting(energy=5.0)
-
-    logger.debug("Rendering top-down view to memory...")
-    bpy.ops.render.render()
-
-    render_result = bpy.context.scene.render
-    width = render_result.resolution_x
-    height = render_result.resolution_y
-
-    pixels = bpy.data.images["Render Result"].pixels[:]
-
-    image_array = np.array(pixels).reshape((height, width, 4))
-
-    logger.debug(f"Render completed: {width}x{height} RGBA array")
-    return image_array
 
 
 def _configure_output_image(format: str, resolution: int):
@@ -1155,6 +1100,10 @@ def _configure_render_settings(engine: str = None, samples: int = 256, enable_gp
         bpy.context.scene.cycles.samples = samples
         # elif bpy.context.scene.render.engine in ["BLENDER_EEVEE_NEXT", "EEVEE"]:
         bpy.context.scene.eevee.taa_render_samples = samples
+
+    # Enable shadows for EEVEE engines
+    if bpy.context.scene.render.engine in ["BLENDER_EEVEE_NEXT", "EEVEE"]:
+        bpy.context.scene.eevee.use_shadows = True
 
     # Enable GPU rendering for Cycles if requested
     if enable_gpu and bpy.context.scene.render.engine == "CYCLES":
@@ -1401,7 +1350,7 @@ def create_scene_visualization(
     Returns:
         Path to the rendered scene visualization file.
     """
-    logger.debug(f"Setting up {view} orthographic render...")
+    # logger.debug(f"Setting up {view} orthographic render...")
 
     if not filename:
         filename = "render"
