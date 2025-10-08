@@ -594,7 +594,7 @@ def test_multi_room_design_workflow(case: str):
         raise ValueError(f"Unknown test case: {case}. Available cases: {list(TEST_CASES.keys())}")
 
     test_data = TEST_CASES[case]
-    
+
     # Import a unit-level floor plan from MSD
     floor_plan_id = test_data["floor_plan_id"]
     graph = msd_loader.create_graph(floor_plan_id)
@@ -610,7 +610,7 @@ def test_multi_room_design_workflow(case: str):
     scene_data['rooms'] = scale_floor_plan(scene_data['rooms'], scale_factor=floor_plan_scale_factor)
     logger.debug(f"Floor plan scaled by factor: {floor_plan_scale_factor}")
     
-    floor_plan_img_path = msd_loader.render_floor_plan(graph, output_path=f"test_output/{case}_floor_plan.jpg", node_size=225, edge_size=0, show_label=True)
+    floor_plan_img_path = msd_loader.render_floor_plan(graph, output_path=f"test_output/{case}/floor_plan.jpg", node_size=225, edge_size=0, show_label=True)
     images = transform_paths_to_binary([floor_plan_img_path])
     room_plan_user_prompt = (
         "You are a design orchestration agent who is part of a building interior design system. ",
@@ -646,13 +646,13 @@ def test_multi_room_design_workflow(case: str):
         # Extract and convert to RoomDesignState objects
         initial_room_design_states = []
         for room_design_state_blueprint in initial_room_design_state_result.output:
-            initial_room_design_states.append(
-                RoomDesignState(
-                    room=room_design_state_blueprint.room,
-                    room_plan=RoomPlan(room_description=room_design_state_blueprint.room_plan),
-                    extra_info={"building_name": case}
-                )
+            room_design_state = RoomDesignState(
+                room=room_design_state_blueprint.room,
+                room_plan=RoomPlan(room_description=room_design_state_blueprint.room_plan),
+                extra_info={"building_name": case}
             )
+            initial_room_design_states.append(room_design_state)
+            save_yaml(room_design_state, f"test_output/{case}/{room_design_state.room.id}/room_design_state_0.yaml")  # log
 
         # Then run the multi-room design orchestrator
         return await multi_room_graph.run(
