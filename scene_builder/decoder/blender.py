@@ -229,6 +229,26 @@ def parse_room_definition(room_data: dict[str, Any], clear=True):
             _create_room(room_data)
 
 
+def cleanup_orphan_data(num_passes: int = 3):
+    """Removes unused data blocks (meshes, materials, images, etc.) from Blender.
+
+    Uses Blender's built-in orphan purge operator with multiple passes to handle
+    cascading orphans (data blocks that become orphaned after others are removed).
+
+    Args:
+        num_passes: Number of purge passes to run (default: 3)
+
+    Returns:
+        Number of passes executed
+    """
+    with suppress_blender_logs():
+        for i in range(num_passes):
+            bpy.ops.outliner.orphans_purge(do_local_ids=True, do_linked_ids=True, do_recursive=True)
+
+    logger.debug(f"Cleaned up orphan data blocks ({num_passes} passes)")
+    return num_passes
+
+
 def _clear_scene():
     """Clears all objects from the current Blender scene."""
     with suppress_blender_logs():
@@ -951,55 +971,60 @@ def load_template(path: str, clear_scene: bool):
     logger.debug(f"Loaded template from {path}")
 
 
-def save_scene(filepath: str, exclude_grid: bool = True):
+def save_scene(filepath: str, scene: str = None, exclude_grid: bool = True):
     """
-    Saves the current Blender scene to a .blend file.
+    Saves a Blender scene to a .blend file.
 
     Args:
         filepath: Path to save the .blend file.
+        scene: Name of the scene to save. If None, uses current scene.
         exclude_grid: If True, temporarily removes grid objects before saving.
     """
     if not filepath.endswith(".blend"):
         filepath += ".blend"
 
-    # Temporarily remove grid if requested
-    grid_objects = []
-    if exclude_grid:
-        current_scene = bpy.context.scene
-        GRID_NAME = f"Grid_{current_scene.name}"
-        X_AXIS_NAME = f"X_Axis_{current_scene.name}"
-        Y_AXIS_NAME = f"Y_Axis_{current_scene.name}"
+    with SceneSwitcher(scene) as active_scene:
+        # Temporarily remove grid if requested
+        grid_objects = []
+        if exclude_grid:
+            current_scene = bpy.context.scene
+            GRID_NAME = f"Grid_{current_scene.name}"
+            X_AXIS_NAME = f"X_Axis_{current_scene.name}"
+            Y_AXIS_NAME = f"Y_Axis_{current_scene.name}"
 
-        for name in [GRID_NAME, X_AXIS_NAME, Y_AXIS_NAME]:
-            if name in bpy.data.objects and name in current_scene.objects:
-                obj = bpy.data.objects[name]
-                grid_objects.append((name, obj))
-                current_scene.collection.objects.unlink(obj)
+            for name in [GRID_NAME, X_AXIS_NAME, Y_AXIS_NAME]:
+                if name in bpy.data.objects and name in current_scene.objects:
+                    obj = bpy.data.objects[name]
+                    grid_objects.append((name, obj))
+                    current_scene.collection.objects.unlink(obj)
 
-    # Pack all external images into the .blend file
-    try:
+        # Clean up unused data blocks before saving
+        cleanup_orphan_data()
+
+        # Pack all external images into the .blend file
+        try:
+            with suppress_blender_logs():
+                bpy.ops.file.pack_all()
+            logger.debug("✅ Packed all external images into .blend file")
+        except Exception as e:
+            logger.debug(f"⚠️  Warning: Could not pack images: {e}")
+
+        # Ensure viewport is set to Material Preview before saving
+        for area in bpy.context.screen.areas:
+            if area.type == "VIEW_3D":
+                for space in area.spaces:
+                    if space.type == "VIEW_3D":
+                        space.shading.type = "MATERIAL"
+                        break
+
         with suppress_blender_logs():
-            bpy.ops.file.pack_all()
-        logger.debug("✅ Packed all external images into .blend file")
-    except Exception as e:
-        logger.debug(f"⚠️  Warning: Could not pack images: {e}")
+            bpy.ops.wm.save_as_mainfile(filepath=filepath)
+        logger.debug(f"Scene saved to {filepath}")
 
-    # Ensure viewport is set to Material Preview before saving
-    for area in bpy.context.screen.areas:
-        if area.type == "VIEW_3D":
-            for space in area.spaces:
-                if space.type == "VIEW_3D":
-                    space.shading.type = "MATERIAL"
-                    break
-
-    with suppress_blender_logs():
-        bpy.ops.wm.save_as_mainfile(filepath=filepath)
-    logger.debug(f"Scene saved to {filepath}")
-
-    # Re-link grid objects if they were temporarily removed
-    if exclude_grid and grid_objects:
-        for name, obj in grid_objects:
-            current_scene.collection.objects.link(obj)
+        # Re-link grid objects if they were temporarily removed
+        if exclude_grid and grid_objects:
+            for name, obj in grid_objects:
+                current_scene.collection.objects.link(obj)
 
 
 def export_to_gltf(filepath: str, scene: str = None, exclude_grid: bool = True) -> Path:

@@ -78,7 +78,7 @@ def generate(
 @decode_app.command("room")
 def decode_room(
     yaml_path: Path = typer.Argument(..., help="Path to room definition YAML file"),
-    output: Path = typer.Argument(..., help="Path to save the output file (.blend, .gltf, or .glb)"),
+    output: Path = typer.Option(None, "-o", "--output", help="Path to save the output file (.blend, .gltf, or .glb). Defaults to input filename with .blend extension"),
     exclude_grid: bool = typer.Option(
         True, "--exclude-grid/--include-grid", help="Exclude grid from exported file"
     ),
@@ -90,6 +90,10 @@ def decode_room(
     if not yaml_path.exists():
         console.print(f"[bold red]Error:[/] File not found: {yaml_path}")
         raise typer.Exit(1)
+
+    # Default output to input filename with .blend extension if not specified
+    if output is None:
+        output = yaml_path.with_suffix('.blend')
 
     console.print(f"[bold]Loading room definition from:[/] {yaml_path}")
 
@@ -130,7 +134,7 @@ def decode_room(
 @decode_app.command("scene")
 def decode_scene(
     yaml_path: Path = typer.Argument(..., help="Path to scene definition YAML file"),
-    output: Path = typer.Argument(..., help="Path to save the output file (.blend, .gltf, or .glb)"),
+    output: Path = typer.Option(None, "-o", "--output", help="Path to save the output file (.blend, .gltf, or .glb). Defaults to input filename with .blend extension"),
     exclude_grid: bool = typer.Option(
         True, "--exclude-grid/--include-grid", help="Exclude grid from exported file"
     ),
@@ -143,6 +147,10 @@ def decode_scene(
         console.print(f"[bold red]Error:[/] File not found: {yaml_path}")
         raise typer.Exit(1)
 
+    # Default output to input filename with .blend extension if not specified
+    if output is None:
+        output = yaml_path.with_suffix('.blend')
+
     console.print(f"[bold]Loading scene definition from:[/] {yaml_path}")
 
     # Load YAML file
@@ -151,6 +159,9 @@ def decode_scene(
 
     # Parse and create Blender scene
     blender.parse_scene_definition(scene_data)
+    blender.setup_lighting_foundation(bpy.context.scene)
+    blender.setup_post_processing(bpy.context.scene)
+    blender._configure_render_settings()  # HACK
 
     # Export based on file extension
     output_suffix = output.suffix.lower()
