@@ -27,6 +27,7 @@ from scene_builder.nodes.placement import (
 from scene_builder.nodes.routing import MultiRoomDesignOrchestrator
 from scene_builder.msd_integration.loader import MSDLoader, normalize_floor_plan_orientation, scale_floor_plan
 from scene_builder.utils.conversions import pydantic_from_yaml
+from scene_builder.utils.geometry import round_vector2_list
 from scene_builder.utils.image import create_gif_from_images
 from scene_builder.utils.pai import transform_paths_to_binary
 from scene_builder.utils.pydantic import save_yaml
@@ -704,6 +705,11 @@ def test_multi_room_design_workflow(case: str):
     scene_data['rooms'] = scale_floor_plan(scene_data['rooms'], scale_factor=floor_plan_scale_factor)
     logger.debug(f"Floor plan scaled by factor: {floor_plan_scale_factor}")
     
+    # Round boundaries after normalization
+    for room in scene_data['rooms']:
+        room.boundary = round_vector2_list(room.boundary, ndigits=2)
+
+    Path(f"test_output/{case}").mkdir(parents=True, exist_ok=True)
     floor_plan_img_path = msd_loader.render_floor_plan(graph, output_path=f"test_output/{case}/floor_plan.jpg", node_size=225, edge_size=0, show_label=True)
     images = transform_paths_to_binary([floor_plan_img_path])
     room_plan_user_prompt = (

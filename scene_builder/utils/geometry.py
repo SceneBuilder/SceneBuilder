@@ -46,7 +46,33 @@ def polygon_centroid(vertices: list[Vector2]) -> Vector2:
         y_avg = sum(v.y for v in vertices) / n
         return Vector2(x=x_avg, y=y_avg)
 
-    cx /= (6 * area)
-    cy /= (6 * area)
+    cx /= 6 * area
+    cy /= 6 * area
 
     return Vector2(x=cx, y=cy)
+
+
+def round_vector2(v: Vector2, ndigits: int = 2) -> Vector2:
+    """Round Vector2 coordinates to specified decimal places.
+
+    Args:
+        v: Vector2 to round.
+        ndigits: Number of decimal places (default: 2).
+
+    Returns:
+        New Vector2 with rounded coordinates.
+    """
+    return Vector2(x=round(v.x, ndigits), y=round(v.y, ndigits))
+
+
+def round_vector2_list(vertices: list[Vector2], ndigits: int = 2) -> list[Vector2]:
+    """Round all Vector2 coordinates in a list.
+
+    Args:
+        vertices: List of Vector2 objects to round.
+        ndigits: Number of decimal places (default: 2).
+
+    Returns:
+        New list with rounded Vector2 objects.
+    """
+    return [round_vector2(v, ndigits) for v in vertices]
