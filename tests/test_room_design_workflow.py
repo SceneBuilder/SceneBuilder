@@ -231,11 +231,93 @@ The constant sounds are the happy chatter of families, the ring of the phone for
 """
 
 LOCAL_MUSEUM_UNIT_DESCRIPTION = """\
-Housed in a historic, red-brick former Carnegie Library, the Coweta County Historical Museum is a quiet repository of the area's past. 
-Upon entering through the grand, arched doorway, the air feels cool and still, carrying the faint, dry scent of old paper, aged wood, and bookbinding glue. 
-The main gallery's original hardwood floors creak softly underfoot, a sound that echoes in the high-ceilinged room. 
-Sunlight streams through tall, Palladian windows, illuminating glass display cases filled with Civil War artifacts, antique farming tools, faded family portraits, and local pottery. 
+Housed in a historic, red-brick former Carnegie Library, the Coweta County Historical Museum is a quiet repository of the area's past.
+Upon entering through the grand, arched doorway, the air feels cool and still, carrying the faint, dry scent of old paper, aged wood, and bookbinding glue.
+The main gallery's original hardwood floors creak softly underfoot, a sound that echoes in the high-ceilinged room.
+Sunlight streams through tall, Palladian windows, illuminating glass display cases filled with Civil War artifacts, antique farming tools, faded family portraits, and local pottery.
 The only other sounds are the gentle hum of a dehumidifier preserving the delicate exhibits and the hushed, respectful tones of visitors reading the neatly typed description cards.
+"""
+
+LUXURY_SPA_UNIT_DESCRIPTION = """\
+The Serenity Wellness Spa occupies a modern, single-story building with floor-to-ceiling windows overlooking a zen garden.
+The entrance opens into a minimalist reception area with polished concrete floors, ambient lighting, and the subtle scent of eucalyptus and lavender.
+Soft instrumental music plays throughout the facility, creating a calming atmosphere.
+
+- Reception and Waiting Lounge:
+    A bright, open space with comfortable seating, herbal tea station, and retail display of wellness products.
+    Natural light filters through sheer curtains, and a small water feature provides gentle ambient sound.
+
+- Treatment Rooms:
+    Four private treatment rooms line the main corridor, each soundproofed and equipped with massage tables, aromatherapy diffusers,
+    warm towel cabinets, and adjustable mood lighting. Each room has its own sink and storage for oils and lotions.
+
+- Hydrotherapy Suite:
+    Features a hot tub, cold plunge pool, sauna, and steam room arranged around a central relaxation area with heated loungers.
+    The floor is tiled with slip-resistant natural stone, and the air is warm and humid.
+
+- Relaxation Room:
+    A quiet sanctuary with reclining chairs, soft blankets, low lighting, and a fireplace.
+    Guests decompress here between treatments with infused water and light refreshments.
+
+- Staff Areas:
+    Includes a small break room, storage for linens and supplies, and laundry facilities for towels and robes.
+"""
+
+BOUTIQUE_HOTEL_LOBBY_DESCRIPTION = """\
+The grand lobby of the Harrington Boutique Hotel combines historic architecture with modern luxury across a soaring two-story space.
+Original 1920s architectural details—ornate crown molding, marble columns, and terrazzo floors—blend seamlessly with contemporary furnishings.
+
+- Main Reception Area:
+    A stunning marble-topped reception desk sits beneath an elaborate crystal chandelier.
+    Behind the desk, backlit shelving displays curated local art and artifacts.
+    The concierge station is positioned nearby with access to hotel services and local recommendations.
+
+- Lobby Lounge:
+    Clusters of velvet sofas and leather armchairs create intimate conversation areas.
+    A vintage grand piano sits in one corner, occasionally played during evening hours.
+    Floor-to-ceiling windows overlook the historic downtown district.
+
+- Library Bar:
+    A sophisticated bar area with floor-to-ceiling bookshelves, a marble bar top, and brass fixtures.
+    High-backed leather barstools line the counter, while small cocktail tables offer additional seating.
+    The back bar displays premium spirits and wine.
+
+- Business Center:
+    A discreet alcove with workstations, a printer, and comfortable desk chairs for guests needing workspace.
+
+- Amenities:
+    The lobby includes a boutique retail area featuring local artisan goods, a coffee station with premium beans,
+    and restrooms finished in marble with luxury fixtures.
+"""
+
+RECORDING_STUDIO_DESCRIPTION = """\
+Soundwave Studios is a professional recording facility built into a converted warehouse, featuring exceptional acoustics and top-tier equipment.
+The industrial exterior gives way to a carefully designed interior where every surface is optimized for sound.
+
+- Control Room A (Main):
+    The flagship control room features a large format mixing console, dual monitor setups, and acoustically treated walls covered in custom diffusers.
+    A massive window overlooks the main tracking room. The space includes a producer's desk, comfortable seating for clients, and racks of outboard gear.
+
+- Tracking Room (Live Room):
+    A large, open space with variable acoustics achieved through movable baffles and acoustic panels.
+    High ceilings with exposed beams provide natural reverb. The hardwood floor can be covered with rugs for different sonic characteristics.
+    Includes isolation booths for drums and vocals.
+
+- Control Room B (Mixing Suite):
+    A smaller, more intimate mixing room designed for overdubs and mixing sessions.
+    Features a digital console, nearfield monitors, and a comfortable mixing chair.
+    Perfect for focused, detailed work.
+
+- Vocal Booth:
+    A dedicated isolation booth with premium acoustic treatment, adjustable lighting, music stand, and high-end vocal chain.
+    Large enough for solo performers or small groups.
+
+- Lounge and Kitchen:
+    A comfortable break area with sectional sofa, coffee bar, refrigerator, and snack area.
+    Musicians and engineers decompress here during long sessions. Vintage music posters and gold records line the walls.
+
+- Equipment Storage:
+    Climate-controlled rooms for instrument storage, microphone lockers, and cable management.
 """
 
 
@@ -266,6 +348,9 @@ COMMERCIAL_BOUNDARY = [
     Vector2(x=-8.0, y=-6.0),
     Vector2(x=8.0, y=-6.0),
 ]
+
+obj_db = ObjectDatabase()
+msd_loader = MSDLoader()
 
 # Test cases dictionary mapping case names to room descriptions and boundaries
 TEST_CASES = {
@@ -399,10 +484,19 @@ TEST_CASES = {
         "description": LOCAL_MUSEUM_UNIT_DESCRIPTION,
         "floor_plan_id": "abeec822befbfe3d5580d932bc0947c7",
     },
+    "luxury_spa": {
+        "description": LUXURY_SPA_UNIT_DESCRIPTION,
+        "floor_plan_id": msd_loader.get_random_apartment(),
+    },
+    "boutique_hotel_lobby": {
+        "description": BOUTIQUE_HOTEL_LOBBY_DESCRIPTION,
+        "floor_plan_id": msd_loader.get_random_apartment(),
+    },
+    "recording_studio": {
+        "description": RECORDING_STUDIO_DESCRIPTION,
+        "floor_plan_id": msd_loader.get_random_apartment(),
+    },
 }
-
-obj_db = ObjectDatabase()
-msd_loader = MSDLoader()
 
 
 def test_single_object_placement(hardcoded_object=True):
@@ -706,7 +800,7 @@ if __name__ == "__main__":
     # test_single_room_design_workflow("warehouse")
     # test_single_room_design_workflow("conference_room")
     # test_single_room_design_workflow("art_gallery")
-    test_single_room_design_workflow("bar")
+    # test_single_room_design_workflow("bar")
     # test_single_room_design_workflow("theater_backstage")
     # test_single_room_design_workflow("factory_floor")
     # test_single_room_design_workflow("diffuscene")
@@ -725,3 +819,6 @@ if __name__ == "__main__":
     # test_multi_room_design_workflow("city_hall")
     # test_multi_room_design_workflow("pizzeria")
     # test_multi_room_design_workflow("local_museum")
+    # test_multi_room_design_workflow("luxury_spa")
+    # test_multi_room_design_workflow("boutique_hotel_lobby")
+    test_multi_room_design_workflow("recording_studio")
