@@ -398,7 +398,7 @@ class MSDLoader:
         return {
             "category": "residential",
             "tags": ["msd", "apartment"],
-            "height_class": "multi",
+            "height_class": "single_story",
             "rooms": rooms,
             "metadata": {
                 "apartment_id": graph.graph.get("apartment_id", "unknown"),

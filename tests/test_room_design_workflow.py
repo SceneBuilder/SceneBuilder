@@ -4,7 +4,7 @@ from pathlib import Path
 
 from pydantic_graph import Graph, GraphRunResult
 
-from scene_builder.config import TEST_ASSET_DIR
+from scene_builder.config import TEST_ASSET_DIR, generation_config
 from scene_builder.database.object import ObjectDatabase
 from scene_builder.decoder import blender
 from scene_builder.definition.plan import RoomPlan
@@ -27,7 +27,7 @@ from scene_builder.nodes.placement import (
 from scene_builder.nodes.routing import MultiRoomDesignOrchestrator
 from scene_builder.msd_integration.loader import MSDLoader, normalize_floor_plan_orientation, scale_floor_plan
 from scene_builder.utils.conversions import pydantic_from_yaml
-from scene_builder.utils.geometry import round_vector2_list
+from scene_builder.utils.geometry import round_vector2_list, simplify_polygon, save_polygon_image
 from scene_builder.utils.image import create_gif_from_images
 from scene_builder.utils.pai import transform_paths_to_binary
 from scene_builder.utils.pydantic import save_yaml
@@ -704,10 +704,30 @@ def test_multi_room_design_workflow(case: str):
     floor_plan_scale_factor = 2.0
     scene_data['rooms'] = scale_floor_plan(scene_data['rooms'], scale_factor=floor_plan_scale_factor)
     logger.debug(f"Floor plan scaled by factor: {floor_plan_scale_factor}")
-    
-    # Round boundaries after normalization
-    for room in scene_data['rooms']:
+
+    # Simplify boundary geometry
+    for i, room in enumerate(scene_data['rooms']):
+        Path(f"test_output/{case}/{room.id}").mkdir(parents=True, exist_ok=True)
+        # Save (before)
+        save_polygon_image(
+            room.boundary,
+            f"test_output/{case}/{room.id}/floor_plan_{i}_before.png",
+            show_labels=True,
+            figsize=(10, 10)
+        )
+
+        # Apply simplification and rounding
+        room.boundary = simplify_polygon(room.boundary, strategy="collinear", verbose=True)
+        room.boundary = simplify_polygon(room.boundary, strategy="rdp", epsilon=0.05, verbose=True)
         room.boundary = round_vector2_list(room.boundary, ndigits=2)
+
+        # Save (after)
+        save_polygon_image(
+            room.boundary,
+            f"test_output/{case}/{room.id}/floor_plan_{i}_after.png",
+            show_labels=True,
+            figsize=(10, 10)
+        )
 
     Path(f"test_output/{case}").mkdir(parents=True, exist_ok=True)
     floor_plan_img_path = msd_loader.render_floor_plan(graph, output_path=f"test_output/{case}/floor_plan.jpg", node_size=225, edge_size=0, show_label=True)
@@ -759,6 +779,9 @@ def test_multi_room_design_workflow(case: str):
             MultiRoomDesignOrchestrator(),
             state=initial_room_design_states
         )
+
+    # Terminate early for fast scene def file saving
+    generation_config.terminate_early = True # DEBUG
 
     # Execute the multi-room design workflow (single asyncio.run call)
     result = asyncio.run(run_multi_room_design())

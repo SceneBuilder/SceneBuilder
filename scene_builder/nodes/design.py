@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 from pydantic_graph import BaseNode, End, Graph, GraphRunContext
 from rich.console import Console
 
-from scene_builder.config import DEBUG
+from scene_builder.config import DEBUG, generation_config
 from scene_builder.database.object import ObjectDatabase
 from scene_builder.decoder import blender
 # from scene_builder.definition.scene import Object, Room, Vector3
@@ -220,6 +220,9 @@ class RoomDesignNode(BaseNode[RoomDesignState]):
                 feedback = critique.explanation
             elif critique.result == "approved":
                 break
+            if generation_config.terminate_early:
+                logger.debug(f"Breaking placement loop for {room.id} to terminate early")
+                break
             placement_run_count += 1
         
 
@@ -363,7 +366,10 @@ class RoomDesignNode(BaseNode[RoomDesignState]):
         ctx.state.message_history = critique_response.all_messages()  # TODO: confirm this is correct
         # if ctx.state.run_count >= 2:  # TEMP: test that it ends successfully
         #     return End(ctx.state.room)
-        if ctx.state.run_count > 1 and rda_initial_response.output.complete:
+        # if ctx.state.run_count > 5 and generation_config.terminate_early:  # DEBUG
+        if ctx.state.run_count > 2 and generation_config.terminate_early:  # DEBUG
+            return End(ctx.state.room)
+        elif ctx.state.run_count > 1 and rda_initial_response.output.complete:
             return End(ctx.state.room)
         else:
             return RoomDesignNode()  # maybe this is the issue? self-returning function?

@@ -36,7 +36,10 @@ class GenerationConfig(BaseModel):
     """Configuration for the generation process."""
 
     enable_visual_feedback: bool = True
+    terminate_early: bool = False
 
 
 # note: MSD data path in jkim3191 local
 MSD_CSV_PATH = Path(__file__).parent / "msd_integration" / "data" / "mds_V2_5.372k.csv" 
+
+generation_config = GenerationConfig()
