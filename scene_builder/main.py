@@ -1,6 +1,7 @@
 import asyncio
 from pathlib import Path
 
+import bpy
 import typer
 import yaml
 from rich.console import Console
@@ -8,9 +9,11 @@ from rich.panel import Panel
 from rich.syntax import Syntax
 
 from scene_builder.decoder import blender
-from scene_builder.utils.conversions import pydantic_to_dict
+from scene_builder.definition.scene import Room
 from scene_builder.workflow.graphs import main_graph
 from scene_builder.workflow.states import MainState
+from scene_builder.utils.blender import SceneSwitcher
+from scene_builder.utils.conversions import pydantic_to_dict
 
 console = Console()
 app = typer.Typer(help="SceneBuilder: Generate 3D scenes using AI")
@@ -75,7 +78,7 @@ def generate(
 @decode_app.command("room")
 def decode_room(
     yaml_path: Path = typer.Argument(..., help="Path to room definition YAML file"),
-    output: Path = typer.Argument(..., help="Path to save the output file (.blend, .gltf, or .glb)"),
+    output: Path = typer.Option(None, "-o", "--output", help="Path to save the output file (.blend, .gltf, or .glb). Defaults to input filename with .blend extension"),
     exclude_grid: bool = typer.Option(
         True, "--exclude-grid/--include-grid", help="Exclude grid from exported file"
     ),
@@ -88,19 +91,27 @@ def decode_room(
         console.print(f"[bold red]Error:[/] File not found: {yaml_path}")
         raise typer.Exit(1)
 
+    # Default output to input filename with .blend extension if not specified
+    if output is None:
+        output = yaml_path.with_suffix('.blend')
+
     console.print(f"[bold]Loading room definition from:[/] {yaml_path}")
 
     # Load YAML file
     with open(yaml_path) as f:
-        room_data = yaml.safe_load(f)
+        room_data: dict = yaml.safe_load(f)
 
     # Parse and create Blender scene
-    blender.parse_room_definition(room_data)
+    blender.parse_room_definition(room_data, clear=True)
+    with SceneSwitcher(room_data["id"]) as active_scene:
+        blender.setup_lighting_foundation(bpy.context.scene)
+        blender.setup_post_processing(bpy.context.scene)
+        blender._configure_render_settings()  # HACK
 
     # Export based on file extension
     output_suffix = output.suffix.lower()
     if output_suffix in ['.gltf', '.glb']:
-        blender.export_to_gltf(str(output), exclude_grid=exclude_grid)
+        blender.export_to_gltf(str(output), scene=room_data["id"], exclude_grid=exclude_grid)
         console.print(
             Panel(
                 f"Room scene exported to GLTF: [bold cyan]{output}[/bold cyan]",
@@ -109,6 +120,7 @@ def decode_room(
             )
         )
     else:
+        # blender._configure_render_settings()  # HACK
         blender.save_scene(str(output), exclude_grid=exclude_grid)
         console.print(
             Panel(
@@ -122,7 +134,7 @@ def decode_room(
 @decode_app.command("scene")
 def decode_scene(
     yaml_path: Path = typer.Argument(..., help="Path to scene definition YAML file"),
-    output: Path = typer.Argument(..., help="Path to save the output file (.blend, .gltf, or .glb)"),
+    output: Path = typer.Option(None, "-o", "--output", help="Path to save the output file (.blend, .gltf, or .glb). Defaults to input filename with .blend extension"),
     exclude_grid: bool = typer.Option(
         True, "--exclude-grid/--include-grid", help="Exclude grid from exported file"
     ),
@@ -135,6 +147,10 @@ def decode_scene(
         console.print(f"[bold red]Error:[/] File not found: {yaml_path}")
         raise typer.Exit(1)
 
+    # Default output to input filename with .blend extension if not specified
+    if output is None:
+        output = yaml_path.with_suffix('.blend')
+
     console.print(f"[bold]Loading scene definition from:[/] {yaml_path}")
 
     # Load YAML file
@@ -143,6 +159,9 @@ def decode_scene(
 
     # Parse and create Blender scene
     blender.parse_scene_definition(scene_data)
+    blender.setup_lighting_foundation(bpy.context.scene)
+    blender.setup_post_processing(bpy.context.scene)
+    blender._configure_render_settings()  # HACK
 
     # Export based on file extension
     output_suffix = output.suffix.lower()

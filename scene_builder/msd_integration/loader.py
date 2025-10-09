@@ -22,6 +22,7 @@ from shapely.geometry import Polygon
 
 from scene_builder.config import MSD_CSV_PATH
 from scene_builder.definition.scene import Room, Vector2
+from scene_builder.utils.geometry import round_vector2
 
 # Entity subtype mapping (MSD entity_subtype → SceneBuilder category)
 # Comment or uncomment to add or remove entities
@@ -68,8 +69,7 @@ def parse_polygon(geom_string: str) -> list[Vector2]:
     try:
         for pair in match.group(1).split(","):
             x_str, y_str = pair.strip().split()
-            # coords.append(Vector2(x=round(float(x_str), 3), y=round(float(y_str), 3)))
-            coords.append(Vector2(x=round(float(x_str), 2), y=round(float(y_str), 2)))
+            coords.append(round_vector2(Vector2(x=float(x_str), y=float(y_str)), ndigits=2))
     except Exception as e:
         print(f"ERROR: Failed to parse coordinates from: '{match.group(1)}' - {str(e)}")
         return []
@@ -395,7 +395,8 @@ class MSDLoader:
             # Parse geometry
             geometry_data = attrs["geometry"]
             if isinstance(geometry_data, list) and len(geometry_data) > 0:
-                coords = [Vector2(x=float(p[0]), y=float(p[1])) for p in geometry_data]
+                # Already parsed coordinates
+                coords = [round_vector2(Vector2(x=float(p[0]), y=float(p[1])), ndigits=2) for p in geometry_data]
             else:
                 coords = []
 
@@ -427,7 +428,7 @@ class MSDLoader:
         return {
             "category": "residential",
             "tags": ["msd", "apartment"],
-            "height_class": "multi",
+            "height_class": "single_story",
             "rooms": rooms,
             "metadata": {
                 "apartment_id": graph.graph.get("apartment_id", "unknown"),

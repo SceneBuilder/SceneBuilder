@@ -26,11 +26,11 @@ class SceneSwitcher:
             # Store the original scene and switch to the new one
             self.original_scene = bpy.context.window.scene
             bpy.context.window.scene = self.scene
-            logger.debug(f"--> Switched scene to '{self.scene.name}'")
+            # logger.debug(f"--> Switched scene to '{self.scene.name}'")
         return self.scene
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         if self.scene_name:
             # Switch back to the original scene
-            logger.debug(f"<-- Switched back to '{self.original_scene.name}'")
+            # logger.debug(f"<-- Switched back to '{self.original_scene.name}'")
             bpy.context.window.scene = self.original_scene
