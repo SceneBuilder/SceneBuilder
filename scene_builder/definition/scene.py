@@ -83,19 +83,37 @@ class Section(BaseModel):
     children: list[Object] = Field(default_factory=list)
 
 
+class Floor(BaseModel):
+    """Represents a single floor in a room."""
+
+    material_id: str | None = None
+
+
 class Room(BaseModel):
     """Represents a single room in the scene."""
 
     id: str
     category: str | None = None
     tags: list[str] | None = None
-    plan: GenericPlan | None = None
+    # plan: GenericPlan | None = None
     boundary: list[Vector2] | None = None
-    viz: list[Path] = []
+    # floor_dimensions: FloorDimensions | None = None
+    # viz: list[Path] = []
     objects: list[Object] = []
+    floor: Floor | None = None
     # objects: list[Object] = Field(default_factory=list)
     # objects: list[Object | Section] = Field(default_factory=list)
+    
+    # NOTE: for origin normalization state tracking, for now
+    extra_info: Any | None = None
 
+
+# NOTE: Let's not have anything extraneous to the scene definition in the `Room` (or other scene-def-related) stuff.
+#       For example: text, images, etc. 
+#       One way to think about it is: it's a pure-data struct;
+#       The fundamental, most-reduced set of information need to recreate a scene in Blender (or other decoders).
+#       The rationale is that we don't want to have the LLM output those long texts at every design iteration — it lowers SNR.
+#       Maybe there is another way to achieve it, though — like private attribute? Not sure how private attrs work in pydantic_ai. 
 
 #     NOTE: don't delete!
 #     type: str | None = None
@@ -106,6 +124,6 @@ class Scene(BaseModel):
     """Represents the entire 3D scene."""
 
     category: str | None
-    tags: list[str] | None
-    floorType: Literal["single", "multi"]
+    height_class: Literal["single_story", "two-story", "multi_story", "high-rise", "skyscraper"]
     rooms: list[Room] = Field(default_factory=list)
+    tags: list[str] | None

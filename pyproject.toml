@@ -23,6 +23,7 @@ dependencies = [
   "natsort",
   "pillow",
   "scipy",
+  "typer",
 ]
 
 [project.optional-dependencies]
@@ -35,3 +36,10 @@ dev = ["pytest"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["scene_builder"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.black]
+line-length = 100
+

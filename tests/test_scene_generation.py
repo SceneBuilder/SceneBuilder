@@ -4,37 +4,37 @@ from pathlib import Path
 from rich.console import Console
 from rich.panel import Panel
 
-from scene_builder.nodes.general import MetadataNode
+# from scene_builder.nodes.general import MetadataNode
 from scene_builder.workflow.graphs import main_graph
 from scene_builder.workflow.states import MainState
 
 
-def test_scene_generation():
-    console = Console()
-    console.print(Panel("[bold green]Running SceneBuilder Workflow[/]", expand=False))
-    initial_state = MainState(
-        user_input="Create a modern, minimalist living room.",
-    )
+# def test_scene_generation():
+#     console = Console()
+#     console.print(Panel("[bold green]Running SceneBuilder Workflow[/]", expand=False))
+#     initial_state = MainState(
+#         user_input="Create a modern, minimalist living room.",
+#     )
 
-    async def run_graph():
-        return await main_graph.run(MetadataNode(), state=initial_state)
+#     async def run_graph():
+#         return await main_graph.run(MetadataNode(), state=initial_state)
 
-    result = asyncio.run(run_graph())
+#     result = asyncio.run(run_graph())
 
-    if result:
-        final_scene = result.output
-        console.print(Panel("[bold green]Exporting Scene[/]", expand=False))
-        scene_dict = final_scene  # TODO: convert from BaseModel into dict
+#     if result:
+#         final_scene = result.output
+#         console.print(Panel("[bold green]Exporting Scene[/]", expand=False))
+#         scene_dict = final_scene  # TODO: convert from BaseModel into dict
 
-        # Save the scene as a YAML file
-        output_dir = Path("scenes")
-        output_dir.mkdir(exist_ok=True)
-        output_path = output_dir / "generated_scene.yaml"
-        with open(output_path, "w") as f:
-            yaml.dump(scene_dict, f, default_flow_style=False, sort_keys=False)
+#         # Save the scene as a YAML file
+#         output_dir = Path("scenes")
+#         output_dir.mkdir(exist_ok=True)
+#         output_path = output_dir / "generated_scene.yaml"
+#         with open(output_path, "w") as f:
+#             yaml.dump(scene_dict, f, default_flow_style=False, sort_keys=False)
 
-        console.print(f"[bold green]Scene saved to {output_path}[/bold green]")
+#         console.print(f"[bold green]Scene saved to {output_path}[/bold green]")
 
 
-if __name__ == "__main__":
-    test_scene_generation()
+# if __name__ == "__main__":
+#     test_scene_generation()

@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Tests: MSD Building → SceneBuilder → Blender (.blend file)
 """
@@ -12,7 +11,6 @@ import bmesh
 sys.path.append(str(Path(__file__).parent.parent))
 
 from scene_builder.msd_integration.loader import MSDLoader
-from scene_builder.msd_integration.converter import GraphToSceneConverter
 from scene_builder.decoder import blender
 
 
@@ -103,7 +101,6 @@ def add_walls_to_scene(apartment_outlines, wall_height=2.7, wall_thickness=0.001
 
 def test_msd_to_blender():
     loader = MSDLoader()
-    converter = GraphToSceneConverter()
 
     # building_id = loader.get_random_building()
 
@@ -140,7 +137,7 @@ def test_msd_to_blender():
         all_rooms = []
         apartment_rooms = []
         for apt_id, graph in apt_graphs:
-            rooms = converter.convert_graph_to_rooms(graph)
+            rooms = loader.convert_graph_to_rooms_by_subtype(graph)
             all_rooms.extend(rooms)
             apartment_rooms.append((apt_id, rooms))
             print(f"    {apt_id}: {len(rooms)} entities")
@@ -163,6 +160,8 @@ def test_msd_to_blender():
                     "tags": room.tags,
                     "boundary": [{"x": p.x, "y": p.y} for p in room.boundary],
                     "objects": room.objects,
+                    "floor": None,  # No floor material specified
+
                 }
                 for room in all_rooms
             ],

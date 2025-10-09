@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from graphics_db_server.schemas.asset import Asset
 from pydantic import BaseModel, Field, ConfigDict
@@ -15,6 +15,11 @@ from scene_builder.definition.scene import (
     Scene,
 )
 from scene_builder.definition.plan import RoomPlan
+
+
+class CritiqueAction(BaseModel):
+    result: Literal["approved", "rejected"]
+    explanation: str
 
 
 class MainState(BaseModel):
@@ -52,13 +57,23 @@ class PlacementResponse(BaseModel):
     reasoning: str
 
 
+class RoomDesignStateBlueprint(BaseModel):
+    room: Room
+    # room_plan: RoomPlan
+    room_plan: str
+
+
 class RoomDesignState(BaseModel):
     room: Room
     room_plan: RoomPlan
     shopping_cart: list[ObjectBlueprint] = []
-    viz: list[Path] = []
+    message_history: Any = None
+    run_count: int = 0  # track iterations (TEMP?)
+    # viz: list[Path] = []
     # NOTE: It's possible to put room_history here as well...
     # TODO (yunho-c): make a decision on ^.
+
+    extra_info: Any | None = None
 
 
 # class RoomDesignAction(BaseModel):

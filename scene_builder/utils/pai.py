@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, TypeVar
 
 from pydantic import BaseModel
+from pydantic_ai import Agent
 from pydantic_ai.messages import BinaryContent
 
 
@@ -142,3 +143,108 @@ def transform_markdown_to_messages(markdown: str) -> list[str | BinaryContent]:
                 )
 
     return lines
+
+
+def extract_media_from_value(value: Any, identifier_prefix: str = "") -> list[BinaryContent]:
+    """
+    Recursively extract media files from a value and convert them to BinaryContent.
+
+    Reuses the logic from transform_paths_to_binary but collects BinaryContent objects
+    instead of transforming in place. This is useful for putting media in user prompts
+    rather than system prompts.
+
+    Args:
+        value: The value to extract media from (typically a Pydantic model)
+        identifier_prefix: Prefix for BinaryContent identifiers
+
+    Returns:
+        List of BinaryContent objects for all media files found
+    """
+    media_content = []
+
+    def _recursive_extract(val: Any, prefix: str = "") -> None:
+        # Base Case: The value is a string or Path, check if it's a media file path
+        if isinstance(val, (str, Path)):
+            try:
+                # Check if the file extension is in our list of media types
+                _, extension = os.path.splitext(str(val).lower())
+                if extension in MEDIA_EXTENSIONS and os.path.exists(val):
+                    # Read the file in binary mode
+                    with open(val, "rb") as f:
+                        content = f.read()
+
+                    # Guess the MIME type from the filename
+                    mime_type, _ = mimetypes.guess_type(str(val))
+
+                    # Create identifier from path
+                    identifier = f"{prefix}_{Path(val).name}" if prefix else Path(val).name
+
+                    media_content.append(BinaryContent(
+                        data=content,
+                        media_type=mime_type or "application/octet-stream",
+                        identifier=identifier
+                    ))
+            except (IOError, OSError) as e:
+                print(f"Warning: Could not read file '{val}': {e}")
+
+        # Recursive Step 1: The value is a Pydantic model
+        elif isinstance(val, BaseModel):
+            for field_name, field_value in val.__iter__():
+                new_prefix = f"{prefix}_{field_name}" if prefix else field_name
+                _recursive_extract(field_value, new_prefix)
+
+        # Recursive Step 2: The value is a list
+        elif isinstance(val, list):
+            for i, item in enumerate(val):
+                new_prefix = f"{prefix}_{i}" if prefix else str(i)
+                _recursive_extract(item, new_prefix)
+
+        # Recursive Step 3: The value is a dictionary
+        elif isinstance(val, dict):
+            for k, v in val.items():
+                new_prefix = f"{prefix}_{k}" if prefix else str(k)
+                _recursive_extract(v, new_prefix)
+
+    _recursive_extract(value, identifier_prefix)
+    return media_content
+
+
+async def run_agent_multimodal(
+    agent: Agent,
+    prompt: str | list,
+    *,
+    deps: T | None = None,
+    **kwargs
+) -> Any:
+    """
+    Run an agent with automatic extraction of media files into user prompts.
+
+    This function extracts media files (like viz images) from dependencies and
+    includes them in the user prompt, which is the correct way to handle binary
+    content according to Pydantic AI documentation.
+
+    Args:
+        agent: The Pydantic AI agent to run
+        prompt: The prompt to send to the agent
+        deps: Optional dependencies (Pydantic model) that may contain media paths
+        **kwargs: Additional arguments to pass to agent.run()
+
+    Returns:
+        The agent's response
+    """
+    if deps is None:
+        return await agent.run(prompt, **kwargs)
+
+    # Extract all media from deps using the same logic as transform_paths_to_binary
+    media_content = extract_media_from_value(deps, "deps")
+
+    if media_content:
+        # Combine text prompt with media - ensure prompt is a list
+        if isinstance(prompt, str):
+            user_prompt_parts = [prompt] + media_content
+        else:
+            user_prompt_parts = list(prompt) + media_content
+        # Pass original deps since media is now in prompt
+        return await agent.run(user_prompt_parts, deps=deps, **kwargs)
+    else:
+        return await agent.run(prompt, deps=deps, **kwargs)

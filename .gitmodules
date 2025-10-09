@@ -1,3 +1,6 @@
 [submodule "References/graphics-db"]
 	path = References/graphics-db
 	url = https://github.com/SceneBuilder/graphics-db
+[submodule "external/msd"]
+	path = external/msd
+	url = https://github.com/yunho-c/msd
