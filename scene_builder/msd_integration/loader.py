@@ -10,14 +10,12 @@ import io
 import random
 import re
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
+import matplotlib.pyplot as plt
 import networkx as nx
 import numpy as np
-import matplotlib.pyplot as plt
 import pandas as pd
-from msd.graphs import get_geometries_from_id, extract_access_graph
-from msd.constants import ROOM_NAMES
 from msd.plot import plot_floor, set_figure
 from PIL import Image
 from shapely.geometry import Polygon
@@ -26,19 +24,32 @@ from scene_builder.config import MSD_CSV_PATH
 from scene_builder.definition.scene import Room, Vector2
 from scene_builder.utils.geometry import round_vector2
 
-
-# Room type mapping (MSD index → SceneBuilder category)
-# Based on ROOM_NAMES order from msd.constants
-ROOM_TYPE_MAP = {
-    0: "bedroom",
-    1: "living_room",
-    2: "kitchen",
-    3: "dining",
-    4: "corridor",
-    5: "stairs",
-    6: "storeroom",
-    7: "bathroom",
-    8: "balcony",
+# Entity subtype mapping (MSD entity_subtype → SceneBuilder category)
+# Comment or uncomment to add or remove entities
+ENTITY_SUBTYPE_MAP = {
+    "BEDROOM": "bedroom",
+    "ROOM": "room",
+    "LIVING_ROOM": "living_room",
+    "LIVING_DINING": "living_dining",
+    "KITCHEN": "kitchen",
+    "KITCHEN_DINING": "kitchen_dining",
+    "DINING": "dining",
+    "BATHROOM": "bathroom",
+    "CORRIDOR": "corridor",
+    "CORRIDORS_AND_HALLS": "corridors_and_halls",
+    # "STAIRCASE": "staircase",
+    "STOREROOM": "storeroom",
+    # "BALCONY": "balcony",
+    # "TERRACE": "terrace",
+    # "ELEVATOR": "elevator",
+    # "SHAFT": "shaft",
+    # "VOID": "void",
+    # "WALL": "wall",
+    # "COLUMN": "column",
+    "RAILING": "railing",
+    "ENTRANCE_DOOR": "entrance_door",
+    "DOOR": "door",
+    # "WINDOW": "window",
 }
 
 
@@ -66,41 +77,9 @@ def parse_polygon(geom_string: str) -> list[Vector2]:
     return coords
 
 
-def calculate_polygon_metrics(coords: list[Vector2]) -> dict:
-    """Calculate actual polygon metrics using shoelace formula and geometric analysis"""
-    if len(coords) < 3:
-        return {
-            "area": 0.0,
-            "perimeter": 0.0,
-            "vertices": len(coords),
-            "complexity": "invalid",
-        }
-
-    # Calculate area using shoelace formula
-    area = 0.0
-    for i in range(len(coords)):
-        j = (i + 1) % len(coords)
-        area += coords[i].x * coords[j].y
-        area -= coords[j].x * coords[i].y
-    area = abs(area) / 2.0
-
-    # Calculate bounding box for reference
-    min_x = min(c.x for c in coords)
-    max_x = max(c.x for c in coords)
-    min_y = min(c.y for c in coords)
-    max_y = max(c.y for c in coords)
-    bbox_width = abs(max_x - min_x)
-    bbox_height = abs(max_y - min_y)
-
-    return {
-        "area": area,
-        "vertices": len(coords),
-        "bbox_width": bbox_width,
-        "bbox_height": bbox_height,
-    }
-
-
-def get_dominant_angle(polygons: list[Polygon] | list[list[Vector2]], strategy: str = 'length_weighted') -> float:
+def get_dominant_angle(
+    polygons: list[Polygon] | list[list[Vector2]], strategy: str = "length_weighted"
+) -> float:
     """
     Calculate the dominant angle of a set of polygons for orientation normalization.
 
@@ -118,7 +97,7 @@ def get_dominant_angle(polygons: list[Polygon] | list[list[Vector2]], strategy: 
         # Convert to numpy array based on input type
         if isinstance(poly, Polygon):
             coords = np.array(poly.exterior.coords)
-        elif isinstance(poly, list) and isinstance(poly[0], Vector2) :
+        elif isinstance(poly, list) and isinstance(poly[0], Vector2):
             coords = np.array([(v.x, v.y) for v in poly])
         else:
             raise TypeError()
@@ -135,8 +114,10 @@ def get_dominant_angle(polygons: list[Polygon] | list[list[Vector2]], strategy: 
     normalized_angles = [angle % 90 for angle in angles]
 
     # Compute histogram with optional weighting
-    if strategy == 'length_weighted':
-        hist, bin_edges = np.histogram(normalized_angles, bins=90, range=(0, 90), weights=edge_lengths)
+    if strategy == "length_weighted":
+        hist, bin_edges = np.histogram(
+            normalized_angles, bins=90, range=(0, 90), weights=edge_lengths
+        )
     else:
         hist, bin_edges = np.histogram(normalized_angles, bins=90, range=(0, 90))
 
@@ -153,7 +134,9 @@ def get_dominant_angle(polygons: list[Polygon] | list[list[Vector2]], strategy: 
     return correction_angle
 
 
-def rotate_boundary(boundary: list[Vector2], angle_degrees: float, origin: tuple[float, float] = (0.0, 0.0)) -> list[Vector2]:
+def rotate_boundary(
+    boundary: list[Vector2], angle_degrees: float, origin: tuple[float, float] = (0.0, 0.0)
+) -> list[Vector2]:
     """
     Rotate a room boundary by a given angle around an origin point.
 
@@ -216,7 +199,9 @@ def calculate_floor_plan_centroid(boundaries: list[list[Vector2]]) -> tuple[floa
     return (sum(all_x) / len(all_x), sum(all_y) / len(all_y))
 
 
-def scale_boundary(boundary: list[Vector2], scale_factor: float, origin: tuple[float, float] = (0.0, 0.0)) -> list[Vector2]:
+def scale_boundary(
+    boundary: list[Vector2], scale_factor: float, origin: tuple[float, float] = (0.0, 0.0)
+) -> list[Vector2]:
     """
     Scale a room boundary by a given factor around an origin point.
 
@@ -249,7 +234,9 @@ def scale_boundary(boundary: list[Vector2], scale_factor: float, origin: tuple[f
     return scaled
 
 
-def scale_floor_plan(rooms: list[Room], scale_factor: float, origin: Optional[tuple[float, float]] = None) -> list[Room]:
+def scale_floor_plan(
+    rooms: list[Room], scale_factor: float, origin: Optional[tuple[float, float]] = None
+) -> list[Room]:
     """
     Scale a floor plan by a given factor.
 
@@ -277,9 +264,7 @@ def scale_floor_plan(rooms: list[Room], scale_factor: float, origin: Optional[tu
 
 
 def normalize_floor_plan_orientation(
-    rooms: list[Room],
-    strategy: str = 'length_weighted',
-    angle_threshold: float = 0.1
+    rooms: list[Room], strategy: str = "length_weighted", angle_threshold: float = 0.1
 ) -> tuple[list[Room], float]:
     """
     Normalize the orientation of a floor plan by rotating all rooms to be axis-aligned.
@@ -324,50 +309,92 @@ class MSDLoader:
             self._df = pd.read_csv(self.csv_path)
         return self._df
 
-    def get_apartment_list(self, min_rooms: int = 5, max_rooms: int = 30) -> list[str]:
-        """Get list of apartment IDs"""
-        # Count actual rooms per apartment
-        room_counts = self.df[self.df["entity_type"] == "area"].groupby("apartment_id").size()
+    def get_building_list(self) -> List[int]:
+        """Get list of building IDs"""
+        buildings = self.df["building_id"].dropna().unique().tolist()
+        return sorted([int(b) for b in buildings])
 
-        # Filter by room count
-        suitable = room_counts[
-            (room_counts >= min_rooms) & (room_counts <= max_rooms)
-        ].index.tolist()
+    def get_apartments_in_building(
+        self, building_id: int, floor_id: Optional[str] = None
+    ) -> List[str]:
+        """Get list of apartment IDs in a building, optionally filtered by floor_id"""
+        building_data = self.df[self.df["building_id"] == building_id]
 
-        return suitable
+        if floor_id is not None:
+            building_data = building_data[building_data["floor_id"] == floor_id]
+
+        # Filter out NaN
+        apartments = building_data["apartment_id"].dropna().unique().tolist()
+        return apartments
 
     def create_graph(self, apartment_id: str) -> Optional[nx.Graph]:
-        """Create NetworkX graph for one apartment"""
+        """Create NetworkX graph for one apartment - includes all entity types"""
         apt_data = self.df[self.df["apartment_id"] == apartment_id]
 
         if len(apt_data) == 0:
             print(f"No data found for apartment {apartment_id}")
             return None
 
-        # Use first floor first
         floor_id = apt_data["floor_id"].iloc[0]
 
-        geoms, geom_types = get_geometries_from_id(apt_data, floor_id, column="roomtype")
-        graph = extract_access_graph(geoms, geom_types, ROOM_NAMES, floor_id)
+        # Get all entities for this apartment on this floor
+        floor_data = apt_data[apt_data["floor_id"] == floor_id].reset_index(drop=True)
 
-        # Add metadata
+        graph = nx.Graph()
+        graph.graph["ID"] = floor_id
+        graph.graph["floor_id"] = floor_id
         graph.graph["apartment_id"] = apartment_id
         graph.graph["source"] = "MSD"
 
+        for idx, row in floor_data.iterrows():
+            geom_str = row.get("geom")
+            coords = []
+            centroid = (0, 0)
+
+            if pd.notna(geom_str):
+                try:
+                    from shapely import wkt
+
+                    geom = wkt.loads(geom_str)
+                    if hasattr(geom, "exterior"):
+                        coords = list(geom.exterior.coords)
+                    if hasattr(geom, "centroid"):
+                        centroid = (geom.centroid.x, geom.centroid.y)
+                except Exception:
+                    pass
+
+            graph.add_node(
+                idx,
+                entity_subtype=row.get("entity_subtype"),
+                geometry=coords,
+                centroid=centroid,
+            )
+
         return graph
 
+    def get_random_building(self) -> Optional[int]:
+        """Get random building ID"""
+        buildings = self.get_building_list()
+        return random.choice(buildings) if buildings else None
+
     def convert_graph_to_rooms(self, graph: nx.Graph) -> list[Room]:
-        """Convert NetworkX graph nodes to SceneBuilder Room objects"""
+        """Convert NetworkX graph nodes to SceneBuilder Room objects using entity_subtype.
+
+        This method uses ENTITY_SUBTYPE_MAP which filters entities based on their
+        entity_subtype attribute (e.g., "BEDROOM", "LIVING_ROOM"). More selective
+        """
         rooms = []
 
+        apartment_id = graph.graph.get("apartment_id", "unknown")
+        apt_prefix = apartment_id[:8] if len(apartment_id) >= 8 else apartment_id
+
         for node_id, attrs in graph.nodes(data=True):
-            # Skip nodes without geometry
             if "geometry" not in attrs:
                 continue
 
             # Parse geometry
             geometry_data = attrs["geometry"]
-            if isinstance(geometry_data, list):
+            if isinstance(geometry_data, list) and len(geometry_data) > 0:
                 # Already parsed coordinates
                 coords = [round_vector2(Vector2(x=float(p[0]), y=float(p[1])), ndigits=2) for p in geometry_data]
             else:
@@ -376,11 +403,14 @@ class MSDLoader:
             if not coords:
                 continue
 
-            room_type_idx = attrs.get("room_type", 0)
-            category = ROOM_TYPE_MAP.get(room_type_idx, "room")
+            entity_subtype = attrs.get("entity_subtype")
+            category = ENTITY_SUBTYPE_MAP.get(entity_subtype)
+
+            if category is None:
+                continue
 
             room = Room(
-                id=f"msd_room_{node_id}",
+                id=f"msd_{apt_prefix}_{node_id}",
                 category=category,
                 tags=["msd"],
                 boundary=coords,
@@ -414,11 +444,6 @@ class MSDLoader:
             return None
         return self.graph_to_scene_data(graph)
 
-    def get_random_apartment(self) -> Optional[str]:
-        """Get random suitable apartment ID"""
-        apartments = self.get_apartment_list()
-        return random.choice(apartments) if apartments else None
-
     def render_floor_plan(
         self,
         graph: nx.Graph,
@@ -426,7 +451,7 @@ class MSDLoader:
         node_size: int = 50,
         edge_size: int = 3,
         show: bool = False,
-        show_label=False
+        show_label=False,
     ) -> np.ndarray | str | None:
         """
         Render a floor plan graph to an image file or numpy array.

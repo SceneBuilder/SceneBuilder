@@ -196,12 +196,12 @@ def parse_scene_definition(scene_data: dict[str, Any]):
     if isinstance(scene_data, Scene):
         scene_data = pydantic_to_dict(scene_data)
 
+    # Clear the existing scene
     with suppress_blender_logs():
-        # Clear the existing scene
         _clear_scene()
 
-        for room_data in scene_data.get("rooms", []):
-            _create_room(room_data)
+    for room_data in scene_data.get("rooms", []):
+        _create_room(room_data)
 
 
 def parse_room_definition(room_data: dict[str, Any], clear=True):
@@ -275,7 +275,7 @@ def _create_room(room_data: dict[str, Any]):
     logger.debug(f"Created floor: {floor_result['status']}")
 
     # Apply floor material
-    if room_data["floor"]:
+    if room_data.get("floor"):
         material_id = room_data["floor"]["material_id"]
         apply_floor_material(
             material_id=material_id,
@@ -283,21 +283,6 @@ def _create_room(room_data: dict[str, Any]):
             boundary=room_data["boundary"],
         )
         logger.debug(f"Applied material {material_id} to floor")
-
-    # Create walls from boundary if ceiling height is available
-    # if boundary and room_data.get("floor_dimensions"):
-    #     floor_dims = room_data["floor_dimensions"]
-    #     ceiling_height = floor_dims.get(
-    #         "ceiling_height", 2.7
-    #     )  # Default to 2.7m if not specified
-
-    #     logger.debug(f"Creating walls for room: {room_id} (height: {ceiling_height}m)")
-    #     try:
-    #         wall_result = _create_walls_from_boundary(boundary, room_id, ceiling_height)
-    #         logger.debug(f"Walls created: {wall_result.get('status', 'unknown')}")
-    #     except Exception as e:
-    #         logger.error(f"Failed to create walls for room {room_id}: {e}")
-
     # Create objects in the room
     for obj_data in room_data.get("objects", []):
         try:
@@ -748,6 +733,110 @@ def _create_floor_mesh(
     return result
 
 
+def get_apartment_outline(rooms: list) -> list:
+    """Extract outline for a single apartment from its rooms.
+
+    Merges all room boundaries into a unified apartment outline using shapely operations.
+
+    Args:
+        rooms: List of Room objects with boundary data
+
+    Returns:
+        List of (x, y) tuples representing the apartment outline, or empty list if failed
+    """
+    from shapely.geometry import Polygon
+    from shapely.ops import unary_union
+
+    if not rooms:
+        return []
+
+    polygons = []
+    for room in rooms:
+        if len(room.boundary) >= 3:
+            coords = [(p.x, p.y) for p in room.boundary]
+            try:
+                poly = Polygon(coords)
+                if poly.is_valid:
+                    polygons.append(poly)
+            except Exception:
+                continue
+
+    if not polygons:
+        return []
+
+    unified = unary_union(polygons)
+
+    if hasattr(unified, "exterior"):
+        outline = list(unified.exterior.coords[:-1])
+    elif hasattr(unified, "geoms"):
+        largest = max(unified.geoms, key=lambda p: p.area)
+        outline = list(largest.exterior.coords[:-1])
+    else:
+        return []
+
+    return outline
+
+
+def create_apartment_walls(
+    apartment_outlines: list, wall_height: float = 2.7, wall_thickness: float = 0.001
+):
+    """Create extruded walls for apartment outlines.
+
+    Args:
+        apartment_outlines: List of (apt_id, outline_points) tuples
+        wall_height: Height of walls in meters (default: 2.7m)
+        wall_thickness: Thickness of walls in meters (default: 0.001m)
+    """
+    for apt_idx, (apt_id, outline_points) in enumerate(apartment_outlines):
+        if not outline_points:
+            continue
+
+        mesh = bpy.data.meshes.new(f"Walls_Apt_{apt_id}")
+        obj = bpy.data.objects.new(f"Walls_Apt_{apt_id}", mesh)
+        bpy.context.collection.objects.link(obj)
+
+        bm = bmesh.new()
+
+        # bottom vertices
+        bottom_verts = []
+        for x, y in outline_points:
+            v = bm.verts.new((x, y, 0))
+            bottom_verts.append(v)
+
+        # top vertices
+        top_verts = []
+        for x, y in outline_points:
+            v = bm.verts.new((x, y, wall_height))
+            top_verts.append(v)
+
+        # wall faces
+        num_verts = len(bottom_verts)
+        for i in range(num_verts):
+            next_i = (i + 1) % num_verts
+
+            # outer face
+            face = bm.faces.new(
+                [bottom_verts[i], bottom_verts[next_i], top_verts[next_i], top_verts[i]]
+            )
+            face.normal_update()
+
+        # thickness
+        bm.to_mesh(mesh)
+        bm.free()
+        mesh.update()
+
+        # solidify modifier for wall thickness
+        solidify = obj.modifiers.new(name="Solidify", type="SOLIDIFY")
+        solidify.thickness = wall_thickness
+        solidify.offset = 0
+
+        # apply modifier
+        bpy.context.view_layer.objects.active = obj
+        bpy.ops.object.modifier_apply(modifier="Solidify")
+
+        logger.debug(f"Created walls for apartment {apt_id}")
+
+
 def _calculate_bounds(
     vertices_2d: list[tuple[float, float]],
 ) -> dict[str, float | bool | int]:
@@ -1155,7 +1244,8 @@ def _calculate_scene_bounds():
         tuple: (min_x, max_x, min_y, max_y, min_z, max_z) or None if no objects
     """
     objects = [
-        obj for obj in bpy.context.scene.objects
+        obj
+        for obj in bpy.context.scene.objects
         if obj.type == "MESH"
         and obj.visible_get()
         and not obj.name.startswith("Grid_")
@@ -1257,7 +1347,9 @@ def _setup_isometric_camera(auto_zoom: bool = True, margin: float = 2.0):
             # Use diagonal distance for better framing
             # diagonal = math.sqrt(width**2 + height**2 + depth**2)  # ORIG
             # diagonal = max(width, height)
-            diagonal = max(width, height) * math.sqrt(2)  # might be something in the right direction. scale power should not be linear.
+            diagonal = max(width, height) * math.sqrt(
+                2
+            )  # might be something in the right direction. scale power should not be linear.
             ortho_scale = diagonal * margin * 0.7  # Scale factor for isometric projection # ORIG
             # ortho_scale = diagonal * margin * 0.7**4 # HACK
             # ortho_scale = diagonal * margin * 0.7**3 # HACK
@@ -1579,14 +1671,12 @@ def apply_floor_material(
         True if successful, False otherwise
     """
 
-    # Calculate UV scale from boundary if provided
     if boundary is not None and uv_scale is None:
-        # Convert boundary points to tuples for _calculate_bounds
         boundary_tuples = []
         for point in boundary:
-            if hasattr(point, "x"):  # Vector2 object
+            if hasattr(point, "x"):
                 boundary_tuples.append((point.x, point.y))
-            else:  # Dictionary format
+            else:
                 boundary_tuples.append((point["x"], point["y"]))
 
         bounds = _calculate_bounds(boundary_tuples)
