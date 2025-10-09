@@ -255,7 +255,7 @@ def _create_room(room_data: dict[str, Any]):
     logger.debug(f"Created floor: {floor_result['status']}")
 
     # Apply floor material
-    if room_data["floor"]:
+    if room_data.get("floor"):
         material_id = room_data["floor"]["material_id"]
         apply_floor_material(
             material_id=material_id,
@@ -263,21 +263,6 @@ def _create_room(room_data: dict[str, Any]):
             boundary=room_data["boundary"],
         )
         logger.debug(f"Applied material {material_id} to floor")
-
-    # Create walls from boundary if ceiling height is available
-    # if boundary and room_data.get("floor_dimensions"):
-    #     floor_dims = room_data["floor_dimensions"]
-    #     ceiling_height = floor_dims.get(
-    #         "ceiling_height", 2.7
-    #     )  # Default to 2.7m if not specified
-
-    #     logger.debug(f"Creating walls for room: {room_id} (height: {ceiling_height}m)")
-    #     try:
-    #         wall_result = _create_walls_from_boundary(boundary, room_id, ceiling_height)
-    #         logger.debug(f"Walls created: {wall_result.get('status', 'unknown')}")
-    #     except Exception as e:
-    #         logger.error(f"Failed to create walls for room {room_id}: {e}")
-
     # Create objects in the room
     for obj_data in room_data.get("objects", []):
         try:
