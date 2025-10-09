@@ -3,100 +3,16 @@ Tests: MSD Building → SceneBuilder → Blender (.blend file)
 """
 
 import sys
-from pathlib import Path
 from collections import defaultdict
-import bpy
-import bmesh
+from pathlib import Path
 
-sys.path.append(str(Path(__file__).parent.parent))
+from loguru import logger
 
-from scene_builder.msd_integration.loader import MSDLoader
 from scene_builder.decoder import blender
+from scene_builder.msd_integration.loader import MSDLoader
 
-
-def get_apartment_outline(rooms):
-    """Extract outline for a single apartment from its rooms."""
-    from shapely.geometry import Polygon
-    from shapely.ops import unary_union
-
-    if not rooms:
-        return []
-
-    polygons = []
-    for room in rooms:
-        if len(room.boundary) >= 3:
-            coords = [(p.x, p.y) for p in room.boundary]
-            try:
-                poly = Polygon(coords)
-                if poly.is_valid:
-                    polygons.append(poly)
-            except Exception:
-                continue
-
-    if not polygons:
-        return []
-
-    unified = unary_union(polygons)
-
-    if hasattr(unified, "exterior"):
-        outline = list(unified.exterior.coords[:-1])
-    elif hasattr(unified, "geoms"):
-        largest = max(unified.geoms, key=lambda p: p.area)
-        outline = list(largest.exterior.coords[:-1])
-    else:
-        return []
-
-    return outline
-
-
-def add_walls_to_scene(apartment_outlines, wall_height=2.7, wall_thickness=0.001):
-    """Add extruded walls to the current Blender scene."""
-    for apt_idx, (apt_id, outline_points) in enumerate(apartment_outlines):
-        if not outline_points:
-            continue
-
-        mesh = bpy.data.meshes.new(f"Walls_Apt_{apt_id}")
-        obj = bpy.data.objects.new(f"Walls_Apt_{apt_id}", mesh)
-        bpy.context.collection.objects.link(obj)
-
-        bm = bmesh.new()
-
-        # bottom vertices
-        bottom_verts = []
-        for x, y in outline_points:
-            v = bm.verts.new((x, y, 0))
-            bottom_verts.append(v)
-
-        # top vertices
-        top_verts = []
-        for x, y in outline_points:
-            v = bm.verts.new((x, y, wall_height))
-            top_verts.append(v)
-
-        # wall faces
-        num_verts = len(bottom_verts)
-        for i in range(num_verts):
-            next_i = (i + 1) % num_verts
-
-            # outer face
-            face = bm.faces.new(
-                [bottom_verts[i], bottom_verts[next_i], top_verts[next_i], top_verts[i]]
-            )
-            face.normal_update()
-
-        # thickness
-        bm.to_mesh(mesh)
-        bm.free()
-        mesh.update()
-
-        # solidify modifier for wall thickness
-        solidify = obj.modifiers.new(name="Solidify", type="SOLIDIFY")
-        solidify.thickness = wall_thickness
-        solidify.offset = 0
-
-        # apply modifier
-        bpy.context.view_layer.objects.active = obj
-        bpy.ops.object.modifier_apply(modifier="Solidify")
+logger.remove()
+logger.add(sys.stderr, level="WARNING")
 
 
 def test_msd_to_blender():
@@ -132,12 +48,12 @@ def test_msd_to_blender():
 
     # Process each floor
     for floor_id, apt_graphs in floors.items():
-        print(f"🏢 Floor {floor_id}: {len(apt_graphs)} apartments")
+        print(f"Floor {floor_id}: {len(apt_graphs)} apartments")
 
         all_rooms = []
         apartment_rooms = []
         for apt_id, graph in apt_graphs:
-            rooms = loader.convert_graph_to_rooms_by_subtype(graph)
+            rooms = loader.convert_graph_to_rooms(graph)
             all_rooms.extend(rooms)
             apartment_rooms.append((apt_id, rooms))
             print(f"    {apt_id}: {len(rooms)} entities")
@@ -160,8 +76,6 @@ def test_msd_to_blender():
                     "tags": room.tags,
                     "boundary": [{"x": p.x, "y": p.y} for p in room.boundary],
                     "objects": room.objects,
-                    "floor": None,  # No floor material specified
-
                 }
                 for room in all_rooms
             ],
@@ -171,12 +85,12 @@ def test_msd_to_blender():
 
         apartment_outlines = []
         for apt_id, rooms in apartment_rooms:
-            outline = get_apartment_outline(rooms)
+            outline = blender.get_apartment_outline(rooms)
             if outline:
                 apartment_outlines.append((apt_id, outline))
 
         if apartment_outlines:
-            add_walls_to_scene(apartment_outlines)
+            blender.create_apartment_walls(apartment_outlines)
             print(f"   ✓ Added walls for {len(apartment_outlines)} apartments")
 
         output_file = output_dir / f"msd_building_{building_id}_floor_{floor_id}.blend"
