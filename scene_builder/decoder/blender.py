@@ -354,10 +354,11 @@ def _create_room(room_data: dict[str, Any]):
         return
 
     room_id = room_data.get("id", "unknown_room")
+    room_category = room_data.get("category", "unknown")
     logger.debug(f"Creating room: {room_id}")
 
     # Create floor mesh
-    floor_result = _create_floor_mesh(room_data["boundary"], room_id)
+    floor_result = _create_floor_mesh(room_data["boundary"], room_id, room_category=room_category)
     logger.debug(f"Created floor: {floor_result['status']}")
 
     # Apply floor material
@@ -629,6 +630,7 @@ def _create_floor_mesh(
     room_id: str,
     floor_thickness_m: float = 0.1,
     origin: str = "center",
+    room_category: str = "unknown",
 ) -> dict[str, Any]:
     """
     Args:
@@ -636,6 +638,7 @@ def _create_floor_mesh(
         room_id: Room identifier for naming
         floor_thickness_m: Thickness of the floor in meters (default: 0.1)
         origin: Origin placement - "center" or "min" (default: "center")
+        room_category: Room category from ENTITY_SUBTYPE_MAP (e.g., "bedroom", "bathroom")
 
     Returns:
         Dictionary with creation status and metadata
@@ -647,8 +650,8 @@ def _create_floor_mesh(
             "message": f"Room {room_id}: At least 3 boundary points required for floor mesh",
         }
 
-    floor_name = f"Floor_{room_id}"
-    mesh_name = f"FloorMesh_{room_id}"
+    floor_name = f"Floor_{room_category}_{room_id}"
+    mesh_name = f"FloorMesh_{room_category}_{room_id}"
 
     # Check if floor already exists
     if floor_name in bpy.data.objects:
@@ -942,7 +945,7 @@ def create_apartment_walls(
     apartment_outlines: list,
     window_data: list = None,
     wall_height: float = 2.7,
-    wall_thickness: float = 0.001,
+    wall_thickness: float = 0.15,
     window_height_bottom: float = 1.0,
     window_height_top: float = 2.0,
 ):
@@ -953,9 +956,9 @@ def create_apartment_walls(
         window_data: List of (apt_id, window_geometries) tuples where window_geometries
                      is a list of window boundary polygons (default: None)
         wall_height: Height of walls in meters (default: 2.7m)
-        wall_thickness: Thickness of walls in meters (default: 0.001m)
-        window_height_bottom: Bottom height of window cutouts in meters (default: 1.3m)
-        window_height_top: Top height of window cutouts in meters (default: 1.8m)
+        wall_thickness: Thickness of walls in meters (default: 0.15m)
+        window_height_bottom: Bottom height of window cutouts in meters (default: 1.0m)
+        window_height_top: Top height of window cutouts in meters (default: 2.0m)
     """
     # Create lookup dict for window data
     window_lookup = {apt_id: windows for apt_id, windows in window_data} if window_data else {}
@@ -1937,6 +1940,159 @@ def mark_interior_door(door_boundary: list, door_id: str, check_distance: float 
     
     logger.debug(f"Marked interior door {door_id} at ({centroid_x:.2f}, {centroid_y:.2f})")
     return True
+
+
+def is_interior_door(door_boundary: list, check_distance: float = 0.4) -> bool:
+    """
+    Check if door is interior (between two different rooms).
+    
+    Args:
+        door_boundary: List of (x, y) tuples or Vector2 points defining the door polygon
+        check_distance: Distance in meters to check away from door centroid (default: 0.4m)
+    
+    Returns:
+        True if interior door, False if exterior door
+    """
+    if not door_boundary:
+        return False
+    
+    # Convert boundary to coords
+    coords = []
+    for point in door_boundary:
+        if isinstance(point, tuple):
+            coords.append(point)
+        elif hasattr(point, "x"):
+            coords.append((point.x, point.y))
+        else:
+            coords.append((point["x"], point["y"]))
+    
+    centroid_x = sum(x for x, y in coords) / len(coords)
+    centroid_y = sum(y for x, y in coords) / len(coords)
+    
+    # Check four directions for different floor meshes
+    check_positions = {
+        'left': (centroid_x - check_distance, centroid_y),
+        'right': (centroid_x + check_distance, centroid_y),
+        'down': (centroid_x, centroid_y - check_distance),
+        'up': (centroid_x, centroid_y + check_distance),
+    }
+    
+    floors_by_direction = {}
+    for direction, (check_x, check_y) in check_positions.items():
+        for obj in bpy.context.scene.objects:
+            if obj.type != 'MESH' or not obj.name.startswith('Floor_'):
+                continue
+            
+            if obj.data.polygons:
+                bbox_x = [obj.matrix_world @ Vector(v.co) for v in obj.data.vertices]
+                x_coords = [v.x for v in bbox_x]
+                y_coords = [v.y for v in bbox_x]
+                
+                if x_coords and y_coords:
+                    min_x, max_x = min(x_coords), max(x_coords)
+                    min_y, max_y = min(y_coords), max(y_coords)
+                    
+                    if min_x <= check_x <= max_x and min_y <= check_y <= max_y:
+                        floors_by_direction[direction] = obj.name
+                        break
+    
+    # Check if DIFFERENT floors exist on opposite sides
+    has_different_lr = (
+        'left' in floors_by_direction and 
+        'right' in floors_by_direction and 
+        floors_by_direction['left'] != floors_by_direction['right']
+    )
+    has_different_ud = (
+        'up' in floors_by_direction and 
+        'down' in floors_by_direction and 
+        floors_by_direction['up'] != floors_by_direction['down']
+    )
+    
+    return has_different_lr or has_different_ud
+
+
+def create_room_walls(
+    rooms: list,
+    wall_height: float = 2.7,
+    wall_thickness: float = 0.15,
+):
+    """Create walls for each room individually (excluding windows and exterior doors).
+    
+    Args:
+        rooms: List of Room objects with boundary and category data
+        wall_height: Height of walls in meters (default: 2.7m)
+        wall_thickness: Thickness of walls in meters (default: 0.15m)
+    
+    Returns:
+        Number of walls created
+    """
+    walls_created = 0
+    
+    for room in rooms:
+        # Skip windows
+        if room.category == "window":
+            continue
+        
+        # Skip exterior doors
+        if room.category == "door":
+            door_boundary = [(p.x, p.y) for p in room.boundary]
+            if not is_interior_door(door_boundary):
+                continue
+        
+        # Skip invalid boundaries
+        if not room.boundary or len(room.boundary) < 3:
+            continue
+        
+        # Create wall for this room
+        boundary_points = [(p.x, p.y) for p in room.boundary]
+        
+        mesh = bpy.data.meshes.new(f"Wall_{room.id}")
+        obj = bpy.data.objects.new(f"Wall_{room.id}", mesh)
+        bpy.context.collection.objects.link(obj)
+        
+        bm = bmesh.new()
+        
+        # Create bottom vertices
+        bottom_verts = []
+        for x, y in boundary_points:
+            v = bm.verts.new((x, y, 0))
+            bottom_verts.append(v)
+        
+        # Create top vertices
+        top_verts = []
+        for x, y in boundary_points:
+            v = bm.verts.new((x, y, wall_height))
+            top_verts.append(v)
+        
+        # Create wall faces
+        num_verts = len(bottom_verts)
+        for i in range(num_verts):
+            next_i = (i + 1) % num_verts
+            
+            face = bm.faces.new(
+                [bottom_verts[i], bottom_verts[next_i], top_verts[next_i], top_verts[i]]
+            )
+            face.normal_update()
+        
+        # Apply mesh
+        bm.to_mesh(mesh)
+        bm.free()
+        mesh.update()
+        
+        # Add solidify modifier for wall thickness
+        solidify = obj.modifiers.new(name="Solidify", type="SOLIDIFY")
+        solidify.thickness = wall_thickness
+        solidify.offset = 0
+        
+        # Apply modifier
+        bpy.context.view_layer.objects.active = obj
+        with suppress_blender_logs():
+            bpy.ops.object.modifier_apply(modifier="Solidify")
+        
+        logger.debug(f"Created wall for room {room.id} ({room.category})")
+        walls_created += 1
+    
+    return walls_created
 
 
 def apply_floor_material(
