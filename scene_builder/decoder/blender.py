@@ -1862,6 +1862,109 @@ def setup_post_processing(scene: bpy.types.Scene):
     nt.links.new(glare_node.outputs["Image"], composite_output.inputs["Image"])
 
 
+# NOTE: temporarily, if interior door is not needed, let's delete this function later
+def mark_interior_door(door_boundary: list, door_id: str, check_distance: float = 0.4, height: float = 2.0) -> bool:
+    """
+    Check if door is interior (between two different rooms) and mark it with a yellow cube.
+    
+    Args:
+        door_boundary: List of (x, y) tuples or Vector2 points defining the door polygon
+        door_id: Identifier for the door (for naming)
+        check_distance: Distance in meters to check away from door centroid (default: 0.3m)
+        height: Height of the marker cube in meters (default: 2.0m)
+    
+    Returns:
+        True if interior door was marked, False otherwise
+    """
+    if not door_boundary:
+        return False
+    
+    # Convert boundary to coords
+    coords = []
+    for point in door_boundary:
+        if isinstance(point, tuple):
+            coords.append(point)
+        elif hasattr(point, "x"):
+            coords.append((point.x, point.y))
+        else:
+            coords.append((point["x"], point["y"]))
+    
+    centroid_x = sum(x for x, y in coords) / len(coords)
+    centroid_y = sum(y for x, y in coords) / len(coords)
+    
+    # Check four directions for different floor meshes
+    check_positions = {
+        'left': (centroid_x - check_distance, centroid_y),
+        'right': (centroid_x + check_distance, centroid_y),
+        'down': (centroid_x, centroid_y - check_distance),
+        'up': (centroid_x, centroid_y + check_distance),
+    }
+    
+    floors_by_direction = {}
+    for direction, (check_x, check_y) in check_positions.items():
+        for obj in bpy.context.scene.objects:
+            if obj.type != 'MESH' or not obj.name.startswith('Floor_'):
+                continue
+            
+            if obj.data.polygons:
+                bbox_x = [obj.matrix_world @ Vector(v.co) for v in obj.data.vertices]
+                x_coords = [v.x for v in bbox_x]
+                y_coords = [v.y for v in bbox_x]
+                
+                if x_coords and y_coords:
+                    min_x, max_x = min(x_coords), max(x_coords)
+                    min_y, max_y = min(y_coords), max(y_coords)
+                    
+                    if min_x <= check_x <= max_x and min_y <= check_y <= max_y:
+                        floors_by_direction[direction] = obj.name
+                        break
+    
+    # Check if DIFFERENT floors exist on opposite sides
+    has_different_lr = (
+        'left' in floors_by_direction and 
+        'right' in floors_by_direction and 
+        floors_by_direction['left'] != floors_by_direction['right']
+    )
+    has_different_ud = (
+        'up' in floors_by_direction and 
+        'down' in floors_by_direction and 
+        floors_by_direction['up'] != floors_by_direction['down']
+    )
+    
+    if not (has_different_lr or has_different_ud):
+        return False
+    
+    # Create marker for interior door
+    x_coords = [x for x, y in coords]
+    y_coords = [y for x, y in coords]
+    width = max(x_coords) - min(x_coords)
+    depth = max(y_coords) - min(y_coords)
+    marker_size = min(width, depth, 0.2)
+    
+    with suppress_blender_logs():
+        bpy.ops.mesh.primitive_cube_add(
+            size=marker_size,
+            location=(centroid_x, centroid_y, height / 2)
+        )
+    
+    marker = bpy.context.active_object
+    marker.name = f"DoorMarker_{door_id}"
+    marker.scale.z = height / marker_size
+    
+    yellow_mat = _create_unlit_material(
+        f"DoorMarker_Material_{door_id}",
+        (1.0, 0.9, 0.0, 1.0)
+    )
+    
+    if marker.data.materials:
+        marker.data.materials[0] = yellow_mat
+    else:
+        marker.data.materials.append(yellow_mat)
+    
+    logger.debug(f"Marked interior door {door_id} at ({centroid_x:.2f}, {centroid_y:.2f})")
+    return True
+
+
 def apply_floor_material(
     material_id: str,
     floor_object_name: str,

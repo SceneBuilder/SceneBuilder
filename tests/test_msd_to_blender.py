@@ -12,7 +12,7 @@ from scene_builder.decoder import blender
 from scene_builder.msd_integration.loader import MSDLoader
 
 logger.remove()
-logger.add(sys.stderr, level="DEBUG")
+logger.add(sys.stderr, level="WARNING")
 
 
 def test_msd_to_blender():
@@ -117,6 +117,17 @@ def test_msd_to_blender():
             if apartment_windows:
                 total_windows = sum(len(windows) for _, windows in apartment_windows)
                 print(f"   ✓ Added {total_windows} window cutouts")
+
+        # Detect and mark interior doors
+        interior_door_count = 0
+        for room in all_rooms:
+            if room.category == "door":
+                door_boundary = [(p.x, p.y) for p in room.boundary]
+                if blender.mark_interior_door(door_boundary, room.id):
+                    interior_door_count += 1
+        
+        if interior_door_count > 0:
+            print(f"   ✓ Marked {interior_door_count} interior doors with yellow cubes")
 
         output_file = output_dir / f"msd_building_{building_id}_floor_{floor_id}.blend"
         blender.save_scene(str(output_file))
