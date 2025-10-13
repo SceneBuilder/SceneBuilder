@@ -81,17 +81,53 @@ def test_msd_to_blender():
             ],
         }
 
+        # Align floor plan 
+        scene_data = blender.floorplan_to_origin(
+            scene_data, 
+            rooms_by_apartment=apartment_rooms,
+            align_rotation=True
+        )
+
         blender.parse_scene_definition(scene_data)
 
         apartment_outlines = []
+        apartment_windows = []
         for apt_id, rooms in apartment_rooms:
             outline = blender.get_apartment_outline(rooms)
             if outline:
                 apartment_outlines.append((apt_id, outline))
 
+            windows = []
+            for room in rooms:
+                if room.category == "window":
+                    window_boundary = [(p.x, p.y) for p in room.boundary]
+                    windows.append(window_boundary)
+                    # print(f"      Found window in {apt_id}: {len(window_boundary)} vertices")
+
+            if windows:
+                apartment_windows.append((apt_id, windows))
+                # print(f"    {apt_id}: {len(windows)} windows extracted")
+
         if apartment_outlines:
-            blender.create_apartment_walls(apartment_outlines)
+            blender.create_apartment_walls(
+                apartment_outlines, 
+                window_data=apartment_windows
+            )
             print(f"   ✓ Added walls for {len(apartment_outlines)} apartments")
+            if apartment_windows:
+                total_windows = sum(len(windows) for _, windows in apartment_windows)
+                print(f"   ✓ Added {total_windows} window cutouts")
+
+        # Detect and mark interior doors
+        interior_door_count = 0
+        for room in all_rooms:
+            if room.category == "door":
+                door_boundary = [(p.x, p.y) for p in room.boundary]
+                if blender.mark_interior_door(door_boundary, room.id):
+                    interior_door_count += 1
+        
+        if interior_door_count > 0:
+            print(f"   ✓ Marked {interior_door_count} interior doors with yellow cubes")
 
         output_file = output_dir / f"msd_building_{building_id}_floor_{floor_id}.blend"
         blender.save_scene(str(output_file))
