@@ -82,6 +82,9 @@ def decode_room(
     exclude_grid: bool = typer.Option(
         True, "--exclude-grid/--include-grid", help="Exclude grid from exported file"
     ),
+    with_walls: bool = typer.Option(
+        True, "--with-walls/--no-walls", help="Add walls around room boundary"
+    ),
 ):
     """
     Decode a room definition YAML file and save as a Blender scene.
@@ -104,6 +107,13 @@ def decode_room(
     # Parse and create Blender scene
     blender.parse_room_definition(room_data, clear=True)
     with SceneSwitcher(room_data["id"]) as active_scene:
+        # Add walls if requested
+        if with_walls:
+            outline = blender.get_apartment_outline([Room(**room_data)])
+            if outline:
+                blender.create_apartment_walls([(room_data["id"], outline)])
+                console.print("[bold green]✓[/] Added walls around room boundary")
+
         blender.setup_lighting_foundation(bpy.context.scene)
         blender.setup_post_processing(bpy.context.scene)
         blender._configure_render_settings()  # HACK
@@ -138,6 +148,9 @@ def decode_scene(
     exclude_grid: bool = typer.Option(
         True, "--exclude-grid/--include-grid", help="Exclude grid from exported file"
     ),
+    with_walls: bool = typer.Option(
+        True, "--with-walls/--no-walls", help="Add walls around each room boundary"
+    ),
 ):
     """
     Decode a full scene definition YAML file and save as a Blender scene.
@@ -159,6 +172,19 @@ def decode_scene(
 
     # Parse and create Blender scene
     blender.parse_scene_definition(scene_data)
+
+    # Add walls if requested
+    if with_walls:
+        apartment_outlines = []
+        for room_data in scene_data.get("rooms", []):
+            outline = blender.get_apartment_outline([Room(**room_data)])
+            if outline:
+                apartment_outlines.append((room_data["id"], outline))
+
+        if apartment_outlines:
+            blender.create_apartment_walls(apartment_outlines)
+            console.print(f"[bold green]✓[/] Added walls for {len(apartment_outlines)} room(s)")
+
     blender.setup_lighting_foundation(bpy.context.scene)
     blender.setup_post_processing(bpy.context.scene)
     blender._configure_render_settings()  # HACK
