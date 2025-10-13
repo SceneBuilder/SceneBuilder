@@ -35,9 +35,9 @@ ENTITY_SUBTYPE_MAP = {
     "DINING": "dining",
     "BATHROOM": "bathroom",
     "CORRIDOR": "corridor",
-    "CORRIDORS_AND_HALLS": "corridors_and_halls",
+    # "CORRIDORS_AND_HALLS": "corridors_and_halls",
     # "STAIRCASE": "staircase",
-    "STOREROOM": "storeroom",
+    # "STOREROOM": "storeroom",
     # "BALCONY": "balcony",
     # "TERRACE": "terrace",
     # "ELEVATOR": "elevator",
@@ -45,10 +45,10 @@ ENTITY_SUBTYPE_MAP = {
     # "VOID": "void",
     # "WALL": "wall",
     # "COLUMN": "column",
-    "RAILING": "railing",
-    "ENTRANCE_DOOR": "entrance_door",
+    # "RAILING": "railing",
+    # "ENTRANCE_DOOR": "entrance_door",
     "DOOR": "door",
-    # "WINDOW": "window",
+    "WINDOW": "window",
 }
 
 
