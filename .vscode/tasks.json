@@ -1,0 +1,31 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Decode Room",
+            "type": "shell",
+            "command": "${command:python.interpreterPath}",
+            "args": [
+                "-m",
+                "scene_builder.main",
+                "decode",
+                "room",
+                "${file}"
+            ],
+            "problemMatcher": []
+        },
+        {
+            "label": "Decode Scene",
+            "type": "shell",
+            "command": "python",
+            "args": [
+                "-m",
+                "scene_builder.main",
+                "decode",
+                "scene",
+                "${file}"
+            ],
+            "problemMatcher": []
+        },
+    ]
+}
