@@ -20,6 +20,7 @@ from shapely.ops import unary_union
 
 from scene_builder.config import BLENDER_LOG_FILE, TEST_ASSET_DIR
 from scene_builder.database.material import MaterialDatabase
+from scene_builder.decoder.blender_materials import create_translucent_material
 from scene_builder.definition.scene import Object, Room, Scene, Vector2
 from scene_builder.importer import objaverse_importer, test_asset_importer
 from scene_builder.logging import logger
@@ -1011,6 +1012,14 @@ def create_apartment_walls(
         # apply modifier
         bpy.context.view_layer.objects.active = obj
         bpy.ops.object.modifier_apply(modifier="Solidify")
+
+        # Apply translucent material to the wall
+        wall_material = create_translucent_material(
+            name=f"WallMaterial_{apt_id}",
+            color=(0.8, 0.8, 0.8, 1.0),
+            alpha=0.2,
+        )
+        obj.data.materials.append(wall_material)
 
         logger.debug(f"Created walls for apartment {apt_id}")
 
