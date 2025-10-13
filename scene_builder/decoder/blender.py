@@ -861,14 +861,19 @@ def get_apartment_outline(rooms: list) -> list:
 
 
 def _create_window_cutout(
-    wall_obj, apt_id: str, window_idx: int, window_boundary: list,
-    z_bottom: float, z_top: float, extension_m: float = 0.05
+    wall_obj,
+    apt_id: str,
+    window_idx: int,
+    window_boundary: list,
+    z_bottom: float,
+    z_top: float,
+    extension_m: float = 0.05,
 ):
     """Create and apply a window cutout to a wall object.
-    
+
     Expands the window boundary by extending the shorter dimension, then applies
     a boolean cutout operation to the wall.
-    
+
     Args:
         wall_obj: Blender wall object to cut
         apt_id: Apartment ID for naming
@@ -883,15 +888,15 @@ def _create_window_cutout(
         window_poly = Polygon(window_boundary)
         minx, miny, maxx, maxy = window_poly.bounds
         width, depth = maxx - minx, maxy - miny
-        
+
         # Extend shorter dimension by extension_m in both directions
         if width > depth:
             scale_x, scale_y = 1.0, (depth + 2 * extension_m) / depth if depth > 0 else 1.0
         else:
             scale_x, scale_y = (width + 2 * extension_m) / width if width > 0 else 1.0, 1.0
-        
-        buffered_poly = affinity.scale(window_poly, xfact=scale_x, yfact=scale_y, origin='centroid')
-        
+
+        buffered_poly = affinity.scale(window_poly, xfact=scale_x, yfact=scale_y, origin="centroid")
+
         if buffered_poly.is_valid and not buffered_poly.is_empty:
             expanded_boundary = list(buffered_poly.exterior.coords[:-1])
         else:
@@ -899,39 +904,39 @@ def _create_window_cutout(
     except Exception as e:
         logger.warning(f"Failed to expand window boundary: {e}")
         expanded_boundary = window_boundary
-    
+
     # Create cutter mesh and apply boolean operation
     cutter_mesh = bpy.data.meshes.new(f"WindowCutter_{apt_id}_{window_idx}")
     cutter_obj = bpy.data.objects.new(f"WindowCutter_{apt_id}_{window_idx}", cutter_mesh)
     bpy.context.collection.objects.link(cutter_obj)
-    
+
     bm = bmesh.new()
     try:
         # Create bottom and top vertices
         bottom_verts = [bm.verts.new((x, y, z_bottom)) for x, y in expanded_boundary]
         top_verts = [bm.verts.new((x, y, z_top)) for x, y in expanded_boundary]
         bm.verts.ensure_lookup_table()
-        
+
         # Create faces
         bm.faces.new(bottom_verts)
         bm.faces.new(list(reversed(top_verts)))
-        
+
         num_verts = len(bottom_verts)
         for i in range(num_verts):
             next_i = (i + 1) % num_verts
             bm.faces.new([bottom_verts[i], bottom_verts[next_i], top_verts[next_i], top_verts[i]])
-        
+
         bm.to_mesh(cutter_mesh)
         cutter_mesh.update()
-        
+
         # Apply boolean modifier
         bool_mod = wall_obj.modifiers.new(name=f"WindowCut_{window_idx}", type="BOOLEAN")
         bool_mod.operation = "DIFFERENCE"
         bool_mod.object = cutter_obj
-        
+
         bpy.context.view_layer.objects.active = wall_obj
         bpy.ops.object.modifier_apply(modifier=bool_mod.name)
-        
+
         # Clean up cutter object
         bpy.data.objects.remove(cutter_obj, do_unlink=True)
     finally:
@@ -1018,8 +1023,12 @@ def create_apartment_walls(
                     continue
                 try:
                     _create_window_cutout(
-                        obj, apt_id, window_idx, window_boundary,
-                        window_height_bottom, window_height_top
+                        obj,
+                        apt_id,
+                        window_idx,
+                        window_boundary,
+                        window_height_bottom,
+                        window_height_top,
                     )
                 except Exception as e:
                     logger.warning(f"Failed to create window cutter {window_idx}: {e}")
@@ -1341,7 +1350,7 @@ def export_to_gltf(filepath: str, scene: str = None, exclude_grid: bool = True) 
         with suppress_blender_logs():
             bpy.ops.export_scene.gltf(
                 filepath=str(filepath),
-                export_format='GLTF_EMBEDDED' if filepath.suffix == '.gltf' else 'GLB',
+                export_format="GLTF_EMBEDDED" if filepath.suffix == ".gltf" else "GLB",
                 use_selection=False,
             )
 
@@ -1837,22 +1846,24 @@ def setup_post_processing(scene: bpy.types.Scene):
 
 
 # NOTE: temporarily, if interior door is not needed, let's delete this function later
-def mark_interior_door(door_boundary: list, door_id: str, check_distance: float = 0.4, height: float = 2.0) -> bool:
+def mark_interior_door(
+    door_boundary: list, door_id: str, check_distance: float = 0.4, height: float = 2.0
+) -> bool:
     """
     Check if door is interior (between two different rooms) and mark it with a yellow cube.
-    
+
     Args:
         door_boundary: List of (x, y) tuples or Vector2 points defining the door polygon
         door_id: Identifier for the door (for naming)
         check_distance: Distance in meters to check away from door centroid (default: 0.3m)
         height: Height of the marker cube in meters (default: 2.0m)
-    
+
     Returns:
         True if interior door was marked, False otherwise
     """
     if not door_boundary:
         return False
-    
+
     # Convert boundary to coords
     coords = []
     for point in door_boundary:
@@ -1862,79 +1873,75 @@ def mark_interior_door(door_boundary: list, door_id: str, check_distance: float 
             coords.append((point.x, point.y))
         else:
             coords.append((point["x"], point["y"]))
-    
+
     centroid_x = sum(x for x, y in coords) / len(coords)
     centroid_y = sum(y for x, y in coords) / len(coords)
-    
+
     # Check four directions for different floor meshes
     check_positions = {
-        'left': (centroid_x - check_distance, centroid_y),
-        'right': (centroid_x + check_distance, centroid_y),
-        'down': (centroid_x, centroid_y - check_distance),
-        'up': (centroid_x, centroid_y + check_distance),
+        "left": (centroid_x - check_distance, centroid_y),
+        "right": (centroid_x + check_distance, centroid_y),
+        "down": (centroid_x, centroid_y - check_distance),
+        "up": (centroid_x, centroid_y + check_distance),
     }
-    
+
     floors_by_direction = {}
     for direction, (check_x, check_y) in check_positions.items():
         for obj in bpy.context.scene.objects:
-            if obj.type != 'MESH' or not obj.name.startswith('Floor_'):
+            if obj.type != "MESH" or not obj.name.startswith("Floor_"):
                 continue
-            
+
             if obj.data.polygons:
                 bbox_x = [obj.matrix_world @ Vector(v.co) for v in obj.data.vertices]
                 x_coords = [v.x for v in bbox_x]
                 y_coords = [v.y for v in bbox_x]
-                
+
                 if x_coords and y_coords:
                     min_x, max_x = min(x_coords), max(x_coords)
                     min_y, max_y = min(y_coords), max(y_coords)
-                    
+
                     if min_x <= check_x <= max_x and min_y <= check_y <= max_y:
                         floors_by_direction[direction] = obj.name
                         break
-    
+
     # Check if DIFFERENT floors exist on opposite sides
     has_different_lr = (
-        'left' in floors_by_direction and 
-        'right' in floors_by_direction and 
-        floors_by_direction['left'] != floors_by_direction['right']
+        "left" in floors_by_direction
+        and "right" in floors_by_direction
+        and floors_by_direction["left"] != floors_by_direction["right"]
     )
     has_different_ud = (
-        'up' in floors_by_direction and 
-        'down' in floors_by_direction and 
-        floors_by_direction['up'] != floors_by_direction['down']
+        "up" in floors_by_direction
+        and "down" in floors_by_direction
+        and floors_by_direction["up"] != floors_by_direction["down"]
     )
-    
+
     if not (has_different_lr or has_different_ud):
         return False
-    
+
     # Create marker for interior door
     x_coords = [x for x, y in coords]
     y_coords = [y for x, y in coords]
     width = max(x_coords) - min(x_coords)
     depth = max(y_coords) - min(y_coords)
     marker_size = min(width, depth, 0.2)
-    
+
     with suppress_blender_logs():
         bpy.ops.mesh.primitive_cube_add(
-            size=marker_size,
-            location=(centroid_x, centroid_y, height / 2)
+            size=marker_size, location=(centroid_x, centroid_y, height / 2)
         )
-    
+
     marker = bpy.context.active_object
     marker.name = f"DoorMarker_{door_id}"
     marker.scale.z = height / marker_size
-    
-    yellow_mat = _create_unlit_material(
-        f"DoorMarker_Material_{door_id}",
-        (1.0, 0.9, 0.0, 1.0)
-    )
-    
+
+    yellow_mat = _create_unlit_material(f"DoorMarker_Material_{door_id}", (1.0, 0.9, 0.0, 1.0))
+
     if marker.data.materials:
         marker.data.materials[0] = yellow_mat
     else:
         marker.data.materials.append(yellow_mat)
-    
+
     logger.debug(f"Marked interior door {door_id} at ({centroid_x:.2f}, {centroid_y:.2f})")
     return True
 
