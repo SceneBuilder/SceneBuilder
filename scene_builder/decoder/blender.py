@@ -940,92 +940,92 @@ def _create_window_cutout(
     finally:
         bm.free()
 
+# NOTE: NOT USED, may be neeeded for later exterior wall
+# def create_apartment_walls(
+#     apartment_outlines: list,
+#     window_data: list = None,
+#     wall_height: float = 2.7,
+#     wall_thickness: float = 0.15,
+#     window_height_bottom: float = 1.0,
+#     window_height_top: float = 2.0,
+# ):
+#     """Create extruded walls for apartment outlines with window cutouts.
 
-def create_apartment_walls(
-    apartment_outlines: list,
-    window_data: list = None,
-    wall_height: float = 2.7,
-    wall_thickness: float = 0.15,
-    window_height_bottom: float = 1.0,
-    window_height_top: float = 2.0,
-):
-    """Create extruded walls for apartment outlines with window cutouts.
+#     Args:
+#         apartment_outlines: List of (apt_id, outline_points) tuples
+#         window_data: List of (apt_id, window_geometries) tuples where window_geometries
+#                      is a list of window boundary polygons (default: None)
+#         wall_height: Height of walls in meters (default: 2.7m)
+#         wall_thickness: Thickness of walls in meters (default: 0.15m)
+#         window_height_bottom: Bottom height of window cutouts in meters (default: 1.0m)
+#         window_height_top: Top height of window cutouts in meters (default: 2.0m)
+#     """
+#     # Create lookup dict for window data
+#     window_lookup = {apt_id: windows for apt_id, windows in window_data} if window_data else {}
 
-    Args:
-        apartment_outlines: List of (apt_id, outline_points) tuples
-        window_data: List of (apt_id, window_geometries) tuples where window_geometries
-                     is a list of window boundary polygons (default: None)
-        wall_height: Height of walls in meters (default: 2.7m)
-        wall_thickness: Thickness of walls in meters (default: 0.15m)
-        window_height_bottom: Bottom height of window cutouts in meters (default: 1.0m)
-        window_height_top: Top height of window cutouts in meters (default: 2.0m)
-    """
-    # Create lookup dict for window data
-    window_lookup = {apt_id: windows for apt_id, windows in window_data} if window_data else {}
+#     for apt_idx, (apt_id, outline_points) in enumerate(apartment_outlines):
+#         if not outline_points:
+#             continue
 
-    for apt_idx, (apt_id, outline_points) in enumerate(apartment_outlines):
-        if not outline_points:
-            continue
+#         mesh = bpy.data.meshes.new(f"Walls_Apt_{apt_id}")
+#         obj = bpy.data.objects.new(f"Walls_Apt_{apt_id}", mesh)
+#         bpy.context.collection.objects.link(obj)
 
-        mesh = bpy.data.meshes.new(f"Walls_Apt_{apt_id}")
-        obj = bpy.data.objects.new(f"Walls_Apt_{apt_id}", mesh)
-        bpy.context.collection.objects.link(obj)
+#         bm = bmesh.new()
 
-        bm = bmesh.new()
+#         # bottom vertices
+#         bottom_verts = []
+#         for x, y in outline_points:
+#             v = bm.verts.new((x, y, 0))
+#             bottom_verts.append(v)
 
-        # bottom vertices
-        bottom_verts = []
-        for x, y in outline_points:
-            v = bm.verts.new((x, y, 0))
-            bottom_verts.append(v)
+#         # top vertices
+#         top_verts = []
+#         for x, y in outline_points:
+#             v = bm.verts.new((x, y, wall_height))
+#             top_verts.append(v)
 
-        # top vertices
-        top_verts = []
-        for x, y in outline_points:
-            v = bm.verts.new((x, y, wall_height))
-            top_verts.append(v)
+#         # wall faces
+#         num_verts = len(bottom_verts)
+#         for i in range(num_verts):
+#             next_i = (i + 1) % num_verts
 
-        # wall faces
-        num_verts = len(bottom_verts)
-        for i in range(num_verts):
-            next_i = (i + 1) % num_verts
+#             # outer face
+#             face = bm.faces.new(
+#                 [bottom_verts[i], bottom_verts[next_i], top_verts[next_i], top_verts[i]]
+#             )
+#             face.normal_update()
 
-            # outer face
-            face = bm.faces.new(
-                [bottom_verts[i], bottom_verts[next_i], top_verts[next_i], top_verts[i]]
-            )
-            face.normal_update()
+#         # thickness
+#         bm.to_mesh(mesh)
+#         bm.free()
+#         mesh.update()
 
-        # thickness
-        bm.to_mesh(mesh)
-        bm.free()
-        mesh.update()
+#         # solidify modifier for wall thickness
+#         solidify = obj.modifiers.new(name="Solidify", type="SOLIDIFY")
+#         solidify.thickness = wall_thickness
+#         solidify.offset = 0
 
-        # solidify modifier for wall thickness
-        solidify = obj.modifiers.new(name="Solidify", type="SOLIDIFY")
-        solidify.thickness = wall_thickness
-        solidify.offset = 0
+#         # apply modifier
+#         bpy.context.view_layer.objects.active = obj
+#         bpy.ops.object.modifier_apply(modifier="Solidify")
 
-        # apply modifier
-        bpy.context.view_layer.objects.active = obj
-        bpy.ops.object.modifier_apply(modifier="Solidify")
+#         logger.debug(f"Created walls for apartment {apt_id}")
 
-        logger.debug(f"Created walls for apartment {apt_id}")
-
-        # Apply window cutouts
-        windows = window_lookup.get(apt_id, [])
-        if windows:
-            logger.debug(f"Applying {len(windows)} window cutouts to apartment {apt_id}")
-            for window_idx, window_boundary in enumerate(windows):
-                if not window_boundary or len(window_boundary) < 3:
-                    continue
-                try:
-                    _create_window_cutout(
-                        obj, apt_id, window_idx, window_boundary,
-                        window_height_bottom, window_height_top
-                    )
-                except Exception as e:
-                    logger.warning(f"Failed to create window cutter {window_idx}: {e}")
+#         # Apply window cutouts
+#         windows = window_lookup.get(apt_id, [])
+#         if windows:
+#             logger.debug(f"Applying {len(windows)} window cutouts to apartment {apt_id}")
+#             for window_idx, window_boundary in enumerate(windows):
+#                 if not window_boundary or len(window_boundary) < 3:
+#                     continue
+#                 try:
+#                     _create_window_cutout(
+#                         obj, apt_id, window_idx, window_boundary,
+#                         window_height_bottom, window_height_top
+#                     )
+#                 except Exception as e:
+#                     logger.warning(f"Failed to create window cutter {window_idx}: {e}")
 
 
 def _calculate_bounds(
@@ -1840,7 +1840,7 @@ def setup_post_processing(scene: bpy.types.Scene):
 
 
 # NOTE: temporarily, if interior door is not needed, let's delete this function later
-def mark_interior_door(door_boundary: list, door_id: str, check_distance: float = 0.4, height: float = 2.0) -> bool:
+def mark_interior_door(door_boundary: list, door_id: str, check_distance: float = 0.4, height: float = 4.0) -> bool:
     """
     Check if door is interior (between two different rooms) and mark it with a yellow cube.
     
@@ -1848,7 +1848,7 @@ def mark_interior_door(door_boundary: list, door_id: str, check_distance: float 
         door_boundary: List of (x, y) tuples or Vector2 points defining the door polygon
         door_id: Identifier for the door (for naming)
         check_distance: Distance in meters to check away from door centroid (default: 0.3m)
-        height: Height of the marker cube in meters (default: 2.0m)
+        height: Height of the marker cube in meters (default: 4.0m)
     
     Returns:
         True if interior door was marked, False otherwise
@@ -2014,7 +2014,7 @@ def is_interior_door(door_boundary: list, check_distance: float = 0.4) -> bool:
 def create_room_walls(
     rooms: list,
     wall_height: float = 2.7,
-    wall_thickness: float = 0.15,
+    wall_thickness: float = 0.1,
 ):
     """Create walls for each room individually (excluding windows and exterior doors).
     
