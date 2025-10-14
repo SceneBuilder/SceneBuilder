@@ -868,12 +868,11 @@ def _create_window_cutout(
     window_boundary: list,
     z_bottom: float,
     z_top: float,
-    extension_m: float = 0.05,
+    scale_factor: float = 1.1,
 ):
     """Create and apply a window cutout to a wall object.
 
-    Expands the window boundary by extending the shorter dimension, then applies
-    a boolean cutout operation to the wall.
+    Scales up the boundary and applies a boolean cutout operation to the wall.
 
     Args:
         wall_obj: Blender wall object to cut
@@ -882,28 +881,19 @@ def _create_window_cutout(
         window_boundary: List of (x, y) tuples defining window polygon
         z_bottom: Bottom Z height of window cutout
         z_top: Top Z height of window cutout
-        extension_m: Meters to extend shorter dimension in each direction (default: 0.05m)
+        scale_factor: Factor to scale up the cutout (default: 1.2 = 20% larger)
     """
-    # Expand window boundary by extending shorter dimension
+    # Scale up window boundary
     try:
         window_poly = Polygon(window_boundary)
-        minx, miny, maxx, maxy = window_poly.bounds
-        width, depth = maxx - minx, maxy - miny
-
-        # Extend shorter dimension by extension_m in both directions
-        if width > depth:
-            scale_x, scale_y = 1.0, (depth + 2 * extension_m) / depth if depth > 0 else 1.0
-        else:
-            scale_x, scale_y = (width + 2 * extension_m) / width if width > 0 else 1.0, 1.0
-
-        buffered_poly = affinity.scale(window_poly, xfact=scale_x, yfact=scale_y, origin="centroid")
-
-        if buffered_poly.is_valid and not buffered_poly.is_empty:
-            expanded_boundary = list(buffered_poly.exterior.coords[:-1])
+        scaled_poly = affinity.scale(window_poly, xfact=scale_factor, yfact=scale_factor, origin="centroid")
+        
+        if scaled_poly.is_valid and not scaled_poly.is_empty:
+            expanded_boundary = list(scaled_poly.exterior.coords[:-1])
         else:
             expanded_boundary = window_boundary
     except Exception as e:
-        logger.warning(f"Failed to expand window boundary: {e}")
+        logger.warning(f"Failed to scale cutout boundary: {e}")
         expanded_boundary = window_boundary
 
     # Create cutter mesh and apply boolean operation
@@ -2016,7 +2006,7 @@ def is_interior_door(door_boundary: list, check_distance: float = 0.4) -> bool:
 def create_room_walls(
     rooms: list,
     wall_height: float = 2.7,
-    wall_thickness: float = 0.1,
+    wall_thickness: float = 0.05,
     window_cutouts: bool = True,
     window_height_bottom: float = 1.0,
     window_height_top: float = 2.2,
@@ -2033,21 +2023,26 @@ def create_room_walls(
     """
     walls_created = 0
 
-    # Gather window polygons once
-    window_polygons: list[tuple[str, list[tuple[float, float]]]] = []
+    # Gather window and exterior door polygons
+    cutout_polygons: list[tuple[str, list[tuple[float, float]]]] = []
     if window_cutouts:
         for r in rooms:
+            # Include windows
             if (
                 getattr(r, "category", None) == "window"
                 and getattr(r, "boundary", None)
                 and len(r.boundary) >= 3
             ):
-                window_polygons.append(
-                    (
-                        r.id,
-                        [(p.x, p.y) for p in r.boundary],
-                    )
-                )
+                cutout_polygons.append((r.id, [(p.x, p.y) for p in r.boundary]))
+            # Include exterior doors
+            elif (
+                getattr(r, "category", None) == "door"
+                and getattr(r, "boundary", None)
+                and len(r.boundary) >= 3
+            ):
+                door_boundary = [(p.x, p.y) for p in r.boundary]
+                if not is_interior_door(door_boundary):
+                    cutout_polygons.append((r.id, door_boundary))
 
     for room in rooms:
         # Skip windows
@@ -2103,23 +2098,23 @@ def create_room_walls(
         # Add solidify modifier for wall thickness
         solidify = obj.modifiers.new(name="Solidify", type="SOLIDIFY")
         solidify.thickness = wall_thickness
-        solidify.offset = 0
+        solidify.offset = -1
 
         # Apply modifier
         bpy.context.view_layer.objects.active = obj
         with suppress_blender_logs():
             bpy.ops.object.modifier_apply(modifier="Solidify")
 
-        # Apply window cutouts if requested
-        if window_cutouts and window_polygons:
-            for idx, (win_id, win_boundary) in enumerate(window_polygons):
-                if not win_boundary:
+        # Apply window and exterior door cutouts if requested
+        if window_cutouts and cutout_polygons:
+            for idx, (cutout_id, cutout_boundary) in enumerate(cutout_polygons):
+                if not cutout_boundary:
                     continue
                 _create_window_cutout(
                     wall_obj=obj,
-                    apt_id=str(win_id),
+                    apt_id=str(cutout_id),
                     window_idx=idx,
-                    window_boundary=win_boundary,
+                    window_boundary=cutout_boundary,
                     z_bottom=window_height_bottom,
                     z_top=window_height_top,
                 )
