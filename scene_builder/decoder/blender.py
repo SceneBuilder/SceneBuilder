@@ -942,42 +942,37 @@ def _create_interior_door_cutout(
     door_boundary: list,
     z_bottom: float = 0.0,
     z_top: float = 2.1,
-    extrude_distance: float = 0.5,
+    scale_factor: float = 1.05,
 ):
     """Create and apply an interior door cutout to a wall object.
 
-    Uses the original door boundary without scaling, extrudes along the shorter axis,
-    and applies a boolean cutout operation.
+    Scales the door boundary by scale_factor and applies a boolean cutout operation.
 
     Args:
         wall_obj: Blender wall object to cut
         apt_id: Apartment ID for naming
         door_idx: Door index for naming
-        door_boundary: List of (x, y) tuples defining door polygon (no scaling applied)
+        door_boundary: List of (x, y) tuples defining door polygon
         z_bottom: Bottom Z height of door cutout (default: 0.0)
         z_top: Top Z height of door cutout (default: 2.1)
-        extrude_distance: Distance to extrude along shorter axis in each direction (default: 5.0)
+        scale_factor: Factor to scale the boundary (default: 1.05)
     """
-    # Use original door boundary without scaling
-    expanded_boundary = door_boundary
+    # Scale the door boundary
+    try:
+        door_poly = Polygon(door_boundary)
+        scaled_poly = affinity.scale(
+            door_poly, xfact=scale_factor, yfact=scale_factor, origin="centroid"
+        )
 
-    # Calculate door boundary dimensions to determine shorter axis
-    x_coords = [x for x, y in expanded_boundary]
-    y_coords = [y for x, y in expanded_boundary]
-    width = max(x_coords) - min(x_coords)
-    depth = max(y_coords) - min(y_coords)
+        if scaled_poly.is_valid and not scaled_poly.is_empty:
+            expanded_boundary = list(scaled_poly.exterior.coords[:-1])
+        else:
+            expanded_boundary = door_boundary
+    except Exception as e:
+        logger.warning(f"Failed to scale door boundary: {e}")
+        expanded_boundary = door_boundary
 
-    # Determine shorter axis for extrusion
-    if width >= depth:
-        extrude_axis = 1  # Y axis (perpendicular to width)
-        axis_name = "Y"
-    else:
-        extrude_axis = 0  # X axis (perpendicular to depth)
-        axis_name = "X"
-
-    logger.debug(f"Interior door {apt_id}: width={width:.3f}, depth={depth:.3f}, extruding along {axis_name} axis")
-
-    # Create cutter mesh and apply boolean operation
+    # Create cutter mesh
     cutter_mesh = bpy.data.meshes.new(f"InteriorDoorCutter_{apt_id}_{door_idx}")
     cutter_obj = bpy.data.objects.new(f"InteriorDoorCutter_{apt_id}_{door_idx}", cutter_mesh)
     bpy.context.collection.objects.link(cutter_obj)
@@ -994,101 +989,28 @@ def _create_interior_door_cutout(
         bm.faces.new(list(reversed(top_verts)))
 
         # Create side faces
-        side_faces = []
         num_verts = len(bottom_verts)
         for i in range(num_verts):
             next_i = (i + 1) % num_verts
-            side_face = bm.faces.new(
+            bm.faces.new(
                 [bottom_verts[i], bottom_verts[next_i], top_verts[next_i], top_verts[i]]
             )
-            side_faces.append(side_face)
-
-        # Find faces aligned with the shorter axis for extrusion
-        # We need to find the two side faces that are perpendicular to the shorter axis
-        positive_axis = Vector((1, 0, 0)) if extrude_axis == 0 else Vector((0, 1, 0))
-        negative_axis = Vector((-1, 0, 0)) if extrude_axis == 0 else Vector((0, -1, 0))
-
-        def face_aligned(face, axis_vector, threshold=0.99):
-            return abs(face.normal.normalized().dot(axis_vector)) > threshold
-
-        # Find faces aligned with positive and negative directions
-        positive_faces = [f for f in side_faces if face_aligned(f, positive_axis)]
-        negative_faces = [f for f in side_faces if face_aligned(f, negative_axis)]
-
-        logger.debug(f"Found {len(positive_faces)} positive faces, {len(negative_faces)} negative faces by alignment")
-
-        # If we can't find aligned faces, fall back to selecting faces based on position
-        if not positive_faces or not negative_faces:
-            # Select faces based on their centroid position along the extrude axis
-            positive_faces = [
-                f for f in side_faces if sum(v.co[extrude_axis] for v in f.verts) / len(f.verts) > 0
-            ]
-            negative_faces = [
-                f for f in side_faces if sum(v.co[extrude_axis] for v in f.verts) / len(f.verts) < 0
-            ]
-            logger.debug(f"Fallback: Found {len(positive_faces)} positive faces, {len(negative_faces)} negative faces by position")
-
-        # Extrude both end faces if we found them
-        if positive_faces and negative_faces:
-            logger.debug(f"Extruding positive face along {axis_name} axis by +{extrude_distance}")
-            # Select positive face and extrude
-            for f in bm.faces:
-                f.select_set(False)
-            if positive_faces:
-                positive_face = positive_faces[0]  # Take the first one
-                positive_face.select_set(True)
-
-                # Extrude positive face
-                result = bmesh.ops.extrude_face_region(bm, geom=[positive_face])
-                extruded_faces = [f for f in result["geom"] if isinstance(f, bmesh.types.BMFace)]
-                logger.debug(f"Extruded positive face, created {len(extruded_faces)} new faces")
-
-                # Move extruded vertices outward
-                for face in extruded_faces:
-                    for vert in face.verts:
-                        if extrude_axis == 0:  # X axis
-                            vert.co.x += extrude_distance
-                        else:  # Y axis
-                            vert.co.y += extrude_distance
-
-            logger.debug(f"Extruding negative face along {axis_name} axis by -{extrude_distance}")
-            # Select negative face and extrude
-            for f in bm.faces:
-                f.select_set(False)
-            if negative_faces:
-                negative_face = negative_faces[0]  # Take the first one
-                negative_face.select_set(True)
-
-                # Extrude negative face
-                result = bmesh.ops.extrude_face_region(bm, geom=[negative_face])
-                extruded_faces = [f for f in result["geom"] if isinstance(f, bmesh.types.BMFace)]
-                logger.debug(f"Extruded negative face, created {len(extruded_faces)} new faces")
-
-                # Move extruded vertices outward
-                for face in extruded_faces:
-                    for vert in face.verts:
-                        if extrude_axis == 0:  # X axis
-                            vert.co.x -= extrude_distance
-                        else:  # Y axis
-                            vert.co.y -= extrude_distance
-        else:
-            logger.warning(f"No faces found for extrusion on door {apt_id}. Skipping extrusion.")
 
         bm.to_mesh(cutter_mesh)
         cutter_mesh.update()
-
-        # Apply boolean modifier
-        bool_mod = wall_obj.modifiers.new(name=f"InteriorDoorCut_{door_idx}", type="BOOLEAN")
-        bool_mod.operation = "DIFFERENCE"
-        bool_mod.object = cutter_obj
-
-        bpy.context.view_layer.objects.active = wall_obj
-        bpy.ops.object.modifier_apply(modifier=bool_mod.name)
-
-        # Clean up cutter object
-        bpy.data.objects.remove(cutter_obj, do_unlink=True)
     finally:
         bm.free()
+
+    # Apply boolean modifier
+    bool_mod = wall_obj.modifiers.new(name=f"InteriorDoorCut_{door_idx}", type="BOOLEAN")
+    bool_mod.operation = "DIFFERENCE"
+    bool_mod.object = cutter_obj
+
+    bpy.context.view_layer.objects.active = wall_obj
+    bpy.ops.object.modifier_apply(modifier=bool_mod.name)
+
+    # Clean up cutter object
+    bpy.data.objects.remove(cutter_obj, do_unlink=True)
 
 
 # NOTE: NOT USED, may be neeeded for later exterior wall
