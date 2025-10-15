@@ -235,14 +235,13 @@ def floorplan_to_origin(
     # Step 2: Calculate rotation
     rotation_angle = 0.0
     if align_rotation:
-            centered = [
-                [Vector2(x=p.x - centroid_x, y=p.y - centroid_y) for p in b] for b in all_boundaries
-            ]
-            rotation_angle = math.radians(get_dominant_angle(centered, strategy="length_weighted"))
-            # logger.debug(
-            #     f"Aligning: center=({centroid_x:.2f}, {centroid_y:.2f}), rotation={math.degrees(rotation_angle):.2f}°"
-            # )
-
+        centered = [
+            [Vector2(x=p.x - centroid_x, y=p.y - centroid_y) for p in b] for b in all_boundaries
+        ]
+        rotation_angle = math.radians(get_dominant_angle(centered, strategy="length_weighted"))
+        # logger.debug(
+        #     f"Aligning: center=({centroid_x:.2f}, {centroid_y:.2f}), rotation={math.degrees(rotation_angle):.2f}°"
+        # )
 
     # Step 3: Apply transformation
     cos_a, sin_a = math.cos(rotation_angle), math.sin(rotation_angle)
@@ -886,8 +885,10 @@ def _create_window_cutout(
     # Scale up window boundary
     try:
         window_poly = Polygon(window_boundary)
-        scaled_poly = affinity.scale(window_poly, xfact=scale_factor, yfact=scale_factor, origin="centroid")
-        
+        scaled_poly = affinity.scale(
+            window_poly, xfact=scale_factor, yfact=scale_factor, origin="centroid"
+        )
+
         if scaled_poly.is_valid and not scaled_poly.is_empty:
             expanded_boundary = list(scaled_poly.exterior.coords[:-1])
         else:
@@ -922,6 +923,162 @@ def _create_window_cutout(
 
         # Apply boolean modifier
         bool_mod = wall_obj.modifiers.new(name=f"WindowCut_{window_idx}", type="BOOLEAN")
+        bool_mod.operation = "DIFFERENCE"
+        bool_mod.object = cutter_obj
+
+        bpy.context.view_layer.objects.active = wall_obj
+        bpy.ops.object.modifier_apply(modifier=bool_mod.name)
+
+        # Clean up cutter object
+        bpy.data.objects.remove(cutter_obj, do_unlink=True)
+    finally:
+        bm.free()
+
+
+def _create_interior_door_cutout(
+    wall_obj,
+    apt_id: str,
+    door_idx: int,
+    door_boundary: list,
+    z_bottom: float = 0.0,
+    z_top: float = 2.1,
+    extrude_distance: float = 0.5,
+):
+    """Create and apply an interior door cutout to a wall object.
+
+    Uses the original door boundary without scaling, extrudes along the shorter axis,
+    and applies a boolean cutout operation.
+
+    Args:
+        wall_obj: Blender wall object to cut
+        apt_id: Apartment ID for naming
+        door_idx: Door index for naming
+        door_boundary: List of (x, y) tuples defining door polygon (no scaling applied)
+        z_bottom: Bottom Z height of door cutout (default: 0.0)
+        z_top: Top Z height of door cutout (default: 2.1)
+        extrude_distance: Distance to extrude along shorter axis in each direction (default: 5.0)
+    """
+    # Use original door boundary without scaling
+    expanded_boundary = door_boundary
+
+    # Calculate door boundary dimensions to determine shorter axis
+    x_coords = [x for x, y in expanded_boundary]
+    y_coords = [y for x, y in expanded_boundary]
+    width = max(x_coords) - min(x_coords)
+    depth = max(y_coords) - min(y_coords)
+
+    # Determine shorter axis for extrusion
+    if width >= depth:
+        extrude_axis = 1  # Y axis (perpendicular to width)
+        axis_name = "Y"
+    else:
+        extrude_axis = 0  # X axis (perpendicular to depth)
+        axis_name = "X"
+
+    logger.debug(f"Interior door {apt_id}: width={width:.3f}, depth={depth:.3f}, extruding along {axis_name} axis")
+
+    # Create cutter mesh and apply boolean operation
+    cutter_mesh = bpy.data.meshes.new(f"InteriorDoorCutter_{apt_id}_{door_idx}")
+    cutter_obj = bpy.data.objects.new(f"InteriorDoorCutter_{apt_id}_{door_idx}", cutter_mesh)
+    bpy.context.collection.objects.link(cutter_obj)
+
+    bm = bmesh.new()
+    try:
+        # Create bottom and top vertices
+        bottom_verts = [bm.verts.new((x, y, z_bottom)) for x, y in expanded_boundary]
+        top_verts = [bm.verts.new((x, y, z_top)) for x, y in expanded_boundary]
+        bm.verts.ensure_lookup_table()
+
+        # Create faces
+        bm.faces.new(bottom_verts)
+        bm.faces.new(list(reversed(top_verts)))
+
+        # Create side faces
+        side_faces = []
+        num_verts = len(bottom_verts)
+        for i in range(num_verts):
+            next_i = (i + 1) % num_verts
+            side_face = bm.faces.new(
+                [bottom_verts[i], bottom_verts[next_i], top_verts[next_i], top_verts[i]]
+            )
+            side_faces.append(side_face)
+
+        # Find faces aligned with the shorter axis for extrusion
+        # We need to find the two side faces that are perpendicular to the shorter axis
+        positive_axis = Vector((1, 0, 0)) if extrude_axis == 0 else Vector((0, 1, 0))
+        negative_axis = Vector((-1, 0, 0)) if extrude_axis == 0 else Vector((0, -1, 0))
+
+        def face_aligned(face, axis_vector, threshold=0.99):
+            return abs(face.normal.normalized().dot(axis_vector)) > threshold
+
+        # Find faces aligned with positive and negative directions
+        positive_faces = [f for f in side_faces if face_aligned(f, positive_axis)]
+        negative_faces = [f for f in side_faces if face_aligned(f, negative_axis)]
+
+        logger.debug(f"Found {len(positive_faces)} positive faces, {len(negative_faces)} negative faces by alignment")
+
+        # If we can't find aligned faces, fall back to selecting faces based on position
+        if not positive_faces or not negative_faces:
+            # Select faces based on their centroid position along the extrude axis
+            positive_faces = [
+                f for f in side_faces if sum(v.co[extrude_axis] for v in f.verts) / len(f.verts) > 0
+            ]
+            negative_faces = [
+                f for f in side_faces if sum(v.co[extrude_axis] for v in f.verts) / len(f.verts) < 0
+            ]
+            logger.debug(f"Fallback: Found {len(positive_faces)} positive faces, {len(negative_faces)} negative faces by position")
+
+        # Extrude both end faces if we found them
+        if positive_faces and negative_faces:
+            logger.debug(f"Extruding positive face along {axis_name} axis by +{extrude_distance}")
+            # Select positive face and extrude
+            for f in bm.faces:
+                f.select_set(False)
+            if positive_faces:
+                positive_face = positive_faces[0]  # Take the first one
+                positive_face.select_set(True)
+
+                # Extrude positive face
+                result = bmesh.ops.extrude_face_region(bm, geom=[positive_face])
+                extruded_faces = [f for f in result["geom"] if isinstance(f, bmesh.types.BMFace)]
+                logger.debug(f"Extruded positive face, created {len(extruded_faces)} new faces")
+
+                # Move extruded vertices outward
+                for face in extruded_faces:
+                    for vert in face.verts:
+                        if extrude_axis == 0:  # X axis
+                            vert.co.x += extrude_distance
+                        else:  # Y axis
+                            vert.co.y += extrude_distance
+
+            logger.debug(f"Extruding negative face along {axis_name} axis by -{extrude_distance}")
+            # Select negative face and extrude
+            for f in bm.faces:
+                f.select_set(False)
+            if negative_faces:
+                negative_face = negative_faces[0]  # Take the first one
+                negative_face.select_set(True)
+
+                # Extrude negative face
+                result = bmesh.ops.extrude_face_region(bm, geom=[negative_face])
+                extruded_faces = [f for f in result["geom"] if isinstance(f, bmesh.types.BMFace)]
+                logger.debug(f"Extruded negative face, created {len(extruded_faces)} new faces")
+
+                # Move extruded vertices outward
+                for face in extruded_faces:
+                    for vert in face.verts:
+                        if extrude_axis == 0:  # X axis
+                            vert.co.x -= extrude_distance
+                        else:  # Y axis
+                            vert.co.y -= extrude_distance
+        else:
+            logger.warning(f"No faces found for extrusion on door {apt_id}. Skipping extrusion.")
+
+        bm.to_mesh(cutter_mesh)
+        cutter_mesh.update()
+
+        # Apply boolean modifier
+        bool_mod = wall_obj.modifiers.new(name=f"InteriorDoorCut_{door_idx}", type="BOOLEAN")
         bool_mod.operation = "DIFFERENCE"
         bool_mod.object = cutter_obj
 
@@ -1833,105 +1990,6 @@ def setup_post_processing(scene: bpy.types.Scene):
     nt.links.new(glare_node.outputs["Image"], composite_output.inputs["Image"])
 
 
-# NOTE: temporarily, if interior door is not needed, let's delete this function later
-def mark_interior_door(
-    door_boundary: list, door_id: str, check_distance: float = 0.4, height: float = 4.0
-) -> bool:
-    """
-    Check if door is interior (between two different rooms) and mark it with a yellow cube.
-
-    Args:
-        door_boundary: List of (x, y) tuples or Vector2 points defining the door polygon
-        door_id: Identifier for the door (for naming)
-        check_distance: Distance in meters to check away from door centroid (default: 0.3m)
-        height: Height of the marker cube in meters (default: 4.0m)
-
-    Returns:
-        True if interior door was marked, False otherwise
-    """
-    if not door_boundary:
-        return False
-
-    # Convert boundary to coords
-    coords = []
-    for point in door_boundary:
-        if isinstance(point, tuple):
-            coords.append(point)
-        elif hasattr(point, "x"):
-            coords.append((point.x, point.y))
-        else:
-            coords.append((point["x"], point["y"]))
-
-    centroid_x = sum(x for x, y in coords) / len(coords)
-    centroid_y = sum(y for x, y in coords) / len(coords)
-
-    # Check four directions for different floor meshes
-    check_positions = {
-        "left": (centroid_x - check_distance, centroid_y),
-        "right": (centroid_x + check_distance, centroid_y),
-        "down": (centroid_x, centroid_y - check_distance),
-        "up": (centroid_x, centroid_y + check_distance),
-    }
-
-    floors_by_direction = {}
-    for direction, (check_x, check_y) in check_positions.items():
-        for obj in bpy.context.scene.objects:
-            if obj.type != "MESH" or not obj.name.startswith("Floor_"):
-                continue
-
-            if obj.data.polygons:
-                bbox_x = [obj.matrix_world @ Vector(v.co) for v in obj.data.vertices]
-                x_coords = [v.x for v in bbox_x]
-                y_coords = [v.y for v in bbox_x]
-
-                if x_coords and y_coords:
-                    min_x, max_x = min(x_coords), max(x_coords)
-                    min_y, max_y = min(y_coords), max(y_coords)
-
-                    if min_x <= check_x <= max_x and min_y <= check_y <= max_y:
-                        floors_by_direction[direction] = obj.name
-                        break
-
-    # Check if DIFFERENT floors exist on opposite sides
-    has_different_lr = (
-        "left" in floors_by_direction
-        and "right" in floors_by_direction
-        and floors_by_direction["left"] != floors_by_direction["right"]
-    )
-    has_different_ud = (
-        "up" in floors_by_direction
-        and "down" in floors_by_direction
-        and floors_by_direction["up"] != floors_by_direction["down"]
-    )
-
-    if not (has_different_lr or has_different_ud):
-        return False
-
-    # Create marker for interior door
-    x_coords = [x for x, y in coords]
-    y_coords = [y for x, y in coords]
-    width = max(x_coords) - min(x_coords)
-    depth = max(y_coords) - min(y_coords)
-    marker_size = min(width, depth, 0.2)
-
-    with suppress_blender_logs():
-        bpy.ops.mesh.primitive_cube_add(
-            size=marker_size, location=(centroid_x, centroid_y, height / 2)
-        )
-
-    marker = bpy.context.active_object
-    marker.name = f"DoorMarker_{door_id}"
-    marker.scale.z = height / marker_size
-
-    yellow_mat = _create_unlit_material(f"DoorMarker_Material_{door_id}", (1.0, 0.9, 0.0, 1.0))
-
-    if marker.data.materials:
-        marker.data.materials[0] = yellow_mat
-    else:
-        marker.data.materials.append(yellow_mat)
-
-    # logger.debug(f"Marked interior door {door_id} at ({centroid_x:.2f}, {centroid_y:.2f})")
-    return True
 
 
 def is_interior_door(door_boundary: list, check_distance: float = 0.4) -> bool:
@@ -2024,7 +2082,12 @@ def create_room_walls(
     walls_created = 0
 
     # Gather window and exterior door polygons
-    cutout_polygons: list[tuple[str, list[tuple[float, float]]]] = []
+    # cutout_polygons: list[tuple[str, list[tuple[float, float]]]] = []
+    win_extdoor_cutout_polygons: list[tuple[str, list[tuple[float, float]]]] = []
+
+    # Gather interior door polygons
+    interior_door_polygons: list[tuple[str, list[tuple[float, float]]]] = []
+
     if window_cutouts:
         for r in rooms:
             # Include windows
@@ -2033,7 +2096,7 @@ def create_room_walls(
                 and getattr(r, "boundary", None)
                 and len(r.boundary) >= 3
             ):
-                cutout_polygons.append((r.id, [(p.x, p.y) for p in r.boundary]))
+                win_extdoor_cutout_polygons.append((r.id, [(p.x, p.y) for p in r.boundary]))
             # Include exterior doors
             elif (
                 getattr(r, "category", None) == "door"
@@ -2042,18 +2105,20 @@ def create_room_walls(
             ):
                 door_boundary = [(p.x, p.y) for p in r.boundary]
                 if not is_interior_door(door_boundary):
-                    cutout_polygons.append((r.id, door_boundary))
+                    win_extdoor_cutout_polygons.append((r.id, door_boundary))
+                    logger.debug(f"Door {r.id}: identified as exterior door")
+                else:
+                    interior_door_polygons.append((r.id, door_boundary))
+                    logger.debug(f"Door {r.id}: identified as interior door")
 
     for room in rooms:
         # Skip windows
         if room.category == "window":
             continue
 
-        # Skip exterior doors
+        # Skip all doors (both interior and exterior)
         if room.category == "door":
-            door_boundary = [(p.x, p.y) for p in room.boundary]
-            if not is_interior_door(door_boundary):
-                continue
+            continue
 
         # Skip invalid boundaries
         if not room.boundary or len(room.boundary) < 3:
@@ -2106,8 +2171,8 @@ def create_room_walls(
             bpy.ops.object.modifier_apply(modifier="Solidify")
 
         # Apply window and exterior door cutouts if requested
-        if window_cutouts and cutout_polygons:
-            for idx, (cutout_id, cutout_boundary) in enumerate(cutout_polygons):
+        if window_cutouts and win_extdoor_cutout_polygons:
+            for idx, (cutout_id, cutout_boundary) in enumerate(win_extdoor_cutout_polygons):
                 if not cutout_boundary:
                     continue
                 _create_window_cutout(
@@ -2117,6 +2182,22 @@ def create_room_walls(
                     window_boundary=cutout_boundary,
                     z_bottom=window_height_bottom,
                     z_top=window_height_top,
+                )
+
+        # Apply interior door cutouts if requested
+        if window_cutouts and interior_door_polygons:
+            logger.debug(f"Applying {len(interior_door_polygons)} interior door cutouts to wall {obj.name}")
+            for idx, (door_id, door_boundary) in enumerate(interior_door_polygons):
+                if not door_boundary:
+                    continue
+                logger.debug(f"Creating interior door cutout {idx} for door {door_id}")
+                _create_interior_door_cutout(
+                    wall_obj=obj,
+                    apt_id=str(door_id),
+                    door_idx=idx,
+                    door_boundary=door_boundary,
+                    z_bottom=0.0,
+                    z_top=2.1,
                 )
 
         # logger.debug(f"Created wall for room {room.id} ({room.category})")
