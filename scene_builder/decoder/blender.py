@@ -238,7 +238,8 @@ def floorplan_to_origin(
         centered = [
             [Vector2(x=p.x - centroid_x, y=p.y - centroid_y) for p in b] for b in all_boundaries
         ]
-        rotation_angle = math.radians(get_dominant_angle(centered, strategy="length_weighted"))
+        # rotation_angle = math.radians(get_dominant_angle(centered, strategy="length_weighted"))
+        rotation_angle = math.radians(get_dominant_angle(centered, strategy="complex_sum"))
         # logger.debug(
         #     f"Aligning: center=({centroid_x:.2f}, {centroid_y:.2f}), rotation={math.degrees(rotation_angle):.2f}°"
         # )
@@ -971,6 +972,25 @@ def _create_interior_door_cutout(
     except Exception as e:
         logger.warning(f"Failed to scale door boundary: {e}")
         expanded_boundary = door_boundary
+
+    # # Use original door boundary without scaling
+    # expanded_boundary = door_boundary
+
+    # # Calculate door boundary dimensions to determine shorter axis
+    # x_coords = [x for x, y in expanded_boundary]
+    # y_coords = [y for x, y in expanded_boundary]
+    # width = max(x_coords) - min(x_coords)
+    # depth = max(y_coords) - min(y_coords)
+
+    # # Determine shorter axis for extrusion
+    # if width >= depth:
+    #     extrude_axis = 1  # Y axis (perpendicular to width)
+    #     axis_name = "Y"
+    # else:
+    #     extrude_axis = 0  # X axis (perpendicular to depth)
+    #     axis_name = "X"
+
+    # logger.debug(f"Interior door {apt_id}: width={width:.3f}, depth={depth:.3f}, extruding along {axis_name} axis")
 
     # Create cutter mesh
     cutter_mesh = bpy.data.meshes.new(f"InteriorDoorCutter_{apt_id}_{door_idx}")
@@ -1987,6 +2007,7 @@ def create_room_walls(
     rooms: list,
     wall_height: float = 2.7,
     wall_thickness: float = 0.05,
+    door_cutouts: bool = True,
     window_cutouts: bool = True,
     window_height_bottom: float = 1.0,
     window_height_top: float = 2.2,
@@ -2010,28 +2031,29 @@ def create_room_walls(
     # Gather interior door polygons
     interior_door_polygons: list[tuple[str, list[tuple[float, float]]]] = []
 
-    if window_cutouts:
-        for r in rooms:
-            # Include windows
-            if (
-                getattr(r, "category", None) == "window"
-                and getattr(r, "boundary", None)
-                and len(r.boundary) >= 3
-            ):
-                win_extdoor_cutout_polygons.append((r.id, [(p.x, p.y) for p in r.boundary]))
-            # Include exterior doors
-            elif (
-                getattr(r, "category", None) == "door"
-                and getattr(r, "boundary", None)
-                and len(r.boundary) >= 3
-            ):
-                door_boundary = [(p.x, p.y) for p in r.boundary]
-                if not is_interior_door(door_boundary):
-                    win_extdoor_cutout_polygons.append((r.id, door_boundary))
-                    logger.debug(f"Door {r.id}: identified as exterior door")
-                else:
-                    interior_door_polygons.append((r.id, door_boundary))
-                    logger.debug(f"Door {r.id}: identified as interior door")
+    for r in rooms:
+        # Include windows
+        if (
+            window_cutouts
+            and getattr(r, "category", None) == "window"
+            and getattr(r, "boundary", None)
+            and len(r.boundary) >= 3
+        ):
+            win_extdoor_cutout_polygons.append((r.id, [(p.x, p.y) for p in r.boundary]))
+        # Include exterior doors
+        elif (
+            door_cutouts
+            and getattr(r, "category", None) == "door"
+            and getattr(r, "boundary", None)
+            and len(r.boundary) >= 3
+        ):
+            door_boundary = [(p.x, p.y) for p in r.boundary]
+            if not is_interior_door(door_boundary):
+                win_extdoor_cutout_polygons.append((r.id, door_boundary))
+                logger.debug(f"Door {r.id}: identified as exterior door")
+            else:
+                interior_door_polygons.append((r.id, door_boundary))
+                logger.debug(f"Door {r.id}: identified as interior door")
 
     for room in rooms:
         # Skip windows
@@ -2107,7 +2129,7 @@ def create_room_walls(
                 )
 
         # Apply interior door cutouts if requested
-        if window_cutouts and interior_door_polygons:
+        if door_cutouts and interior_door_polygons:
             logger.debug(f"Applying {len(interior_door_polygons)} interior door cutouts to wall {obj.name}")
             for idx, (door_id, door_boundary) in enumerate(interior_door_polygons):
                 if not door_boundary:
