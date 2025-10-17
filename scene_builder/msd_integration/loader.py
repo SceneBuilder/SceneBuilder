@@ -85,7 +85,7 @@ def get_dominant_angle(
 
     Args:
         polygons: List of shapely Polygon objects or list of list[Vector2] boundaries
-        strategy: 'length_weighted' (robust to segmentation) or 'count' (equal weight)
+        strategy: 'length_weighted' (robust to segmentation), 'count', or 'complex_sum' (length-weighted; more precise)
 
     Returns:
         Correction angle in degrees to rotate for axis alignment
@@ -100,7 +100,7 @@ def get_dominant_angle(
         elif isinstance(poly, list) and isinstance(poly[0], Vector2):
             coords = np.array([(v.x, v.y) for v in poly])
         else:
-            raise TypeError()
+            raise TypeError("Expected shapely Polygon or list[Vector2]")
 
         vectors = np.diff(coords, axis=0)
         edge_angles = np.arctan2(vectors[:, 1], vectors[:, 0])
@@ -111,15 +111,30 @@ def get_dominant_angle(
         edge_lengths.extend(lengths)
 
     # Normalize to [0, 90) to treat parallel/perpendicular lines the same
-    normalized_angles = [angle % 90 for angle in angles]
+    normalized_angles = np.array([angle % 90 for angle in angles])
+    normalized_angles_rad = np.radians(normalized_angles)
 
     # Compute histogram with optional weighting
     if strategy == "length_weighted":
         hist, bin_edges = np.histogram(
             normalized_angles, bins=90, range=(0, 90), weights=edge_lengths
         )
-    else:
+    elif strategy == "complex_sum":
+        weights = np.array(edge_lengths)
+        double_angles = 2.0 * normalized_angles_rad
+
+        sum_cos = np.sum(weights * np.cos(double_angles))
+        sum_sin = np.sum(weights * np.sin(double_angles))
+
+        dominant_angle_rad = 0.5 * np.arctan2(sum_sin, sum_cos)
+        dominant_angle = np.rad2deg(dominant_angle_rad)
+        dominant_angle = abs(dominant_angle) % 180
+        if dominant_angle > 90:
+            dominant_angle = 180 - dominant_angle
+    elif strategy == "count":
         hist, bin_edges = np.histogram(normalized_angles, bins=90, range=(0, 90))
+    else:
+        raise ValueError("Unknown strategy. Use 'length_weighted', 'count', or 'complex_sum'.")
 
     # Find dominant angle
     dominant_angle_bin = np.argmax(hist)
@@ -271,7 +286,8 @@ def normalize_floor_plan_orientation(
 
     Args:
         rooms: List of Room objects with boundaries to normalize
-        strategy: 'length_weighted' (robust to segmentation) or 'count' (equal weight)
+        strategy: 'length_weighted' (robust to segmentation), 'count' (equal weight),
+                  or 'complex_sum' (length-weighted complex sum)
         angle_threshold: Minimum angle (degrees) to apply rotation (default: 0.1)
 
     Returns:

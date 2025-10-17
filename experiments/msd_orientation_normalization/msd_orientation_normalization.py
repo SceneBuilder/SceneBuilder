@@ -19,6 +19,8 @@
 # ## **Setup**
 
 # %%
+import random
+
 import numpy as np
 import matplotlib.pyplot as plt
 from shapely.geometry import Polygon, MultiPolygon
@@ -69,28 +71,44 @@ def get_dominant_angle(polygons, visualize_histogram=False, strategy='length_wei
         angles.extend(edge_angles_deg)
         edge_lengths.extend(lengths)
 
-    # Now, normalize all angles to the range [0, 90) to treat
-    # parallel and perpendicular lines the same.
-    normalized_angles = [angle % 90 for angle in angles]
+    # Normalize to [0, 90) to treat parallel/perpendicular lines the same
+    normalized_angles = np.array([angle % 90 for angle in angles])
+    normalized_angles_rad = np.radians(normalized_angles)
 
     # Use a histogram to find the most frequent angle "bin"
     # We use 90 bins for 0-89 degrees.
-    if strategy == 'length_weighted':
+    if strategy == "length_weighted":
         # Weight each edge by its length
         hist, bin_edges = np.histogram(normalized_angles, bins=90, range=(0, 90), weights=edge_lengths)
         ylabel = 'Weighted Frequency (by length)'
         title_suffix = ' (Length-Weighted)'
-    elif strategy == 'count':
-        # Each edge gets equal weight (legacy behavior)
+    elif strategy == "complex_sum":
+        hist, bin_edges = np.histogram(normalized_angles, bins=90, range=(0, 90), weights=edge_lengths)  # HACK: just for viz
+
+        weights = np.array(edge_lengths)
+        double_angles = 2.0 * normalized_angles_rad
+
+        sum_cos = np.sum(weights * np.cos(double_angles))
+        sum_sin = np.sum(weights * np.sin(double_angles))
+
+        dominant_angle_rad = 0.5 * np.arctan2(sum_sin, sum_cos)
+        dominant_angle = np.rad2deg(dominant_angle_rad)
+        dominant_angle = abs(dominant_angle) % 180
+        if dominant_angle > 90:
+            dominant_angle = 180 - dominant_angle
+        ylabel = '?'
+        title_suffix = ' (Complex Sum)'
+    elif strategy == "count":
         hist, bin_edges = np.histogram(normalized_angles, bins=90, range=(0, 90))
         ylabel = 'Frequency'
         title_suffix = ' (Count-Based)'
     else:
-        raise ValueError(f"Unknown strategy: {strategy}. Use 'length_weighted' or 'count'.")
+        raise ValueError(f"Unknown strategy: {strategy}. Use 'length_weighted', 'count', or 'complex_sum'.")
 
     # The dominant angle is the center of the bin with the highest count
-    dominant_angle_bin = np.argmax(hist)
-    dominant_angle = bin_edges[dominant_angle_bin] + 0.5 # Get bin center
+    if strategy in ("length_weighted", "count"):
+        dominant_angle_bin = np.argmax(hist)
+        dominant_angle = bin_edges[dominant_angle_bin] + 0.5 # Get bin center
 
     # The correction angle is the negative of the dominant angle.
     # We choose the smaller rotation, e.g., rotate by -15 deg instead of +75 deg.
@@ -117,6 +135,20 @@ def get_dominant_angle(polygons, visualize_histogram=False, strategy='length_wei
     return correction_angle
 
 
+def pick_random_apartment(msd_loader):
+    """Select a random apartment using MSDLoader's existing API."""
+    buildings = msd_loader.get_building_list()
+    if not buildings:
+        raise RuntimeError("No MSD buildings available")
+
+    building_id = random.choice(buildings)
+    apartments = msd_loader.get_apartments_in_building(building_id)
+    if not apartments:
+        raise RuntimeError(f"No apartments found in building {building_id}")
+
+    return random.choice(apartments)
+
+
 # %%
 def analyze_multiple_floor_plans(n_floor_plans=3, show_vertices=True, strategy='length_weighted'):
     """
@@ -125,7 +157,7 @@ def analyze_multiple_floor_plans(n_floor_plans=3, show_vertices=True, strategy='
     Args:
         n_floor_plans (int): Number of random floor plans to analyze
         show_vertices (bool): If True, add a fourth column showing vertices
-        strategy (str): Weighting strategy - 'length_weighted' or 'count'
+        strategy (str): Weighting strategy - 'length_weighted', 'count', or 'complex_sum'
 
     Returns:
         list: List of tuples containing (floor_plan_id, correction_angle)
@@ -144,7 +176,7 @@ def analyze_multiple_floor_plans(n_floor_plans=3, show_vertices=True, strategy='
 
     for i in range(n_floor_plans):
         # Get random floor plan
-        floor_plan_id = msd_loader.get_random_apartment()
+        floor_plan_id = pick_random_apartment(msd_loader)
         graph = msd_loader.create_graph(floor_plan_id)
         scene_data = msd_loader.graph_to_scene_data(graph)
 
@@ -166,16 +198,35 @@ def analyze_multiple_floor_plans(n_floor_plans=3, show_vertices=True, strategy='
             angles.extend(edge_angles_deg)
             edge_lengths.extend(lengths)
 
-        normalized_angles = [angle % 90 for angle in angles]
+        normalized_angles = np.array([angle % 90 for angle in angles])
+        normalized_angles_rad = np.radians(normalized_angles)
+
+        dominant_angle = 0.0
+        hist, bin_edges = None, None
 
         # Apply strategy
-        if strategy == 'length_weighted':
+        if strategy == "length_weighted":
             hist, bin_edges = np.histogram(normalized_angles, bins=90, range=(0, 90), weights=edge_lengths)
-        else:
+            dominant_angle_bin = np.argmax(hist)
+            dominant_angle = bin_edges[dominant_angle_bin] + 0.5
+        elif strategy == "complex_sum":
+            weights = np.array(edge_lengths)
+            double_angles = 2.0 * normalized_angles_rad
+            sum_cos = np.sum(weights * np.cos(double_angles))
+            sum_sin = np.sum(weights * np.sin(double_angles))
+            dominant_angle_rad = 0.5 * np.arctan2(sum_sin, sum_cos)
+            dominant_angle = np.rad2deg(dominant_angle_rad)
+            dominant_angle = abs(dominant_angle) % 180
+            if dominant_angle > 90:
+                dominant_angle = 180 - dominant_angle
+            # For complex_sum, generate a length-weighted histogram for visualization purposes
+            hist, bin_edges = np.histogram(normalized_angles, bins=90, range=(0, 90), weights=edge_lengths)
+        elif strategy == "count":
             hist, bin_edges = np.histogram(normalized_angles, bins=90, range=(0, 90))
-
-        dominant_angle_bin = np.argmax(hist)
-        dominant_angle = bin_edges[dominant_angle_bin] + 0.5
+            dominant_angle_bin = np.argmax(hist)
+            dominant_angle = bin_edges[dominant_angle_bin] + 0.5
+        else:
+            raise ValueError("Unknown strategy. Use 'length_weighted', 'count', or 'complex_sum'.")
 
         if dominant_angle > 45:
             # correction_angle = -(90 - dominant_angle)
@@ -219,7 +270,16 @@ def analyze_multiple_floor_plans(n_floor_plans=3, show_vertices=True, strategy='
         ax_hist.axvline(dominant_angle, color='red', linestyle='--', linewidth=2,
                        label=f'Dominant: {dominant_angle:.2f}°')
         ax_hist.set_xlabel('Edge Angle (degrees)', fontsize=10)
-        ylabel = 'Weighted Frequency' if strategy == 'length_weighted' else 'Frequency'
+
+        ylabel = 'Frequency'
+        strategy_label = 'Count-Based'
+        if strategy == 'length_weighted':
+            ylabel = 'Weighted Frequency'
+            strategy_label = 'Length-Weighted'
+        elif strategy == 'complex_sum':
+            ylabel = 'Weighted Frequency'
+            strategy_label = 'Complex-Sum'
+
         ax_hist.set_ylabel(ylabel, fontsize=10)
         strategy_label = 'Length-Weighted' if strategy == 'length_weighted' else 'Count-Based'
         ax_hist.set_title(f'Edge Angle Distribution ({strategy_label})\n({len(polygons)} rooms)', fontsize=10)
@@ -293,7 +353,7 @@ aligned_floor_plan = rotate(tilted_floor_plan, correction_angle, origin='center'
 msd_loader = MSDLoader()
 
 # Option 1: Use a random apartment
-floor_plan_id = msd_loader.get_random_apartment()
+floor_plan_id = pick_random_apartment(msd_loader)
 
 # Option 2: Use a specific apartment ID (uncomment to use)
 # floor_plan_id = "b2e1f754f164e5b7c268485ca55495c8"
@@ -367,6 +427,9 @@ for floor_plan_id, correction_angle in results:
 # %%
 # Compare strategies: length-weighted vs count-based
 # Uncomment to see the difference between the two strategies:
+
+# Complex sum (may yield more precise results)
+results_weighted = analyze_multiple_floor_plans(n_floor_plans=50, show_vertices=True, strategy='complex_sum')
 
 # Length-weighted (recommended - robust to edge segmentation)
 # results_weighted = analyze_multiple_floor_plans(n_floor_plans=3, show_vertices=True, strategy='length_weighted')
