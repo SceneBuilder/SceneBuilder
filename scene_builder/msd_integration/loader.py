@@ -119,26 +119,46 @@ def get_dominant_angle(
         hist, bin_edges = np.histogram(
             normalized_angles, bins=90, range=(0, 90), weights=edge_lengths
         )
+        dominant_angle_bin = np.argmax(hist)
+        dominant_angle = bin_edges[dominant_angle_bin] + 0.5
     elif strategy == "complex_sum":
+        # NOTE: based on `length_weighted`, but applies averaging afterwards to
+        #       combat histogram-induced bin truncation.
         weights = np.array(edge_lengths)
-        double_angles = 2.0 * normalized_angles_rad
+        hist, bin_edges = np.histogram(
+            normalized_angles, bins=90, range=(0, 90), weights=weights
+        )
+        dominant_angle_bin = int(np.argmax(hist))
+        bin_indices = np.digitize(normalized_angles, bin_edges, right=False) - 1
+        bin_indices = np.clip(bin_indices, 0, len(hist) - 1)
+        bin_mask = bin_indices == dominant_angle_bin
+        if not np.any(bin_mask):
+            bin_mask = np.ones_like(normalized_angles, dtype=bool)
 
-        sum_cos = np.sum(weights * np.cos(double_angles))
-        sum_sin = np.sum(weights * np.sin(double_angles))
+        masked_weights = weights[bin_mask]
+        masked_angles = normalized_angles_rad[bin_mask]
 
-        dominant_angle_rad = 0.5 * np.arctan2(sum_sin, sum_cos)
-        dominant_angle = np.rad2deg(dominant_angle_rad)
-        dominant_angle = abs(dominant_angle) % 180
-        if dominant_angle > 90:
-            dominant_angle = 180 - dominant_angle
+        if masked_angles.size == 0:
+            dominant_angle = bin_edges[dominant_angle_bin] + 0.5
+        else:
+            double_angles = 2.0 * masked_angles
+            sum_cos = np.sum(masked_weights * np.cos(double_angles))
+            sum_sin = np.sum(masked_weights * np.sin(double_angles))
+
+            if np.isclose(sum_cos, 0.0) and np.isclose(sum_sin, 0.0):
+                dominant_angle = bin_edges[dominant_angle_bin] + 0.5
+            else:
+                dominant_angle_rad = 0.5 * np.arctan2(sum_sin, sum_cos)
+                dominant_angle = np.rad2deg(dominant_angle_rad)
+                dominant_angle = abs(dominant_angle) % 180
+                if dominant_angle > 90:
+                    dominant_angle = 180 - dominant_angle
     elif strategy == "count":
         hist, bin_edges = np.histogram(normalized_angles, bins=90, range=(0, 90))
+        dominant_angle_bin = np.argmax(hist)
+        dominant_angle = bin_edges[dominant_angle_bin] + 0.5
     else:
         raise ValueError("Unknown strategy. Use 'length_weighted', 'count', or 'complex_sum'.")
-
-    # Find dominant angle
-    dominant_angle_bin = np.argmax(hist)
-    dominant_angle = bin_edges[dominant_angle_bin] + 0.5
 
     # Choose smallest rotation to align to 0° or 90°
     if dominant_angle > 45:
