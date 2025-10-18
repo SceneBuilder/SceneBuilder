@@ -943,7 +943,9 @@ def _create_interior_door_cutout(
     door_boundary: list,
     z_bottom: float = 0.0,
     z_top: float = 2.1,
-    scale_factor: float = 1.05,
+    scale_factor: float = 1.20,
+    scale_short_axis: bool = True,
+    debug=False,
 ):
     """Create and apply an interior door cutout to a wall object.
 
@@ -957,13 +959,102 @@ def _create_interior_door_cutout(
         z_bottom: Bottom Z height of door cutout (default: 0.0)
         z_top: Top Z height of door cutout (default: 2.1)
         scale_factor: Factor to scale the boundary (default: 1.05)
+        scale_short_axis: If True, scale along the axis orthogonal to the dominant direction (default: True)
+        debug: If True, plots door geometry (original scaled, dominant axis) (default: False)
     """
     # Scale the door boundary
     try:
         door_poly = Polygon(door_boundary)
-        scaled_poly = affinity.scale(
-            door_poly, xfact=scale_factor, yfact=scale_factor, origin="centroid"
+        rotation_angle = get_dominant_angle([door_poly], strategy="complex_sum")
+        centroid = door_poly.centroid
+        centroid_coords = (centroid.x, centroid.y)
+
+        aligned_poly = affinity.rotate(
+            door_poly, rotation_angle, origin=centroid_coords, use_radians=False
         )
+        minx, miny, maxx, maxy = aligned_poly.bounds
+        width = maxx - minx
+        height = maxy - miny
+        is_width_dominant = width >= height
+
+        scaled_poly = door_poly
+        scale_axis_vector = np.array([0.0, 0.0])
+        arrow_points = None
+        door_centroid = np.array(centroid_coords)
+
+        if scale_short_axis and width > 0 and height > 0:
+            x_factor = 1.0 if is_width_dominant else scale_factor
+            y_factor = scale_factor if is_width_dominant else 1.0
+
+            scaled_aligned_poly = affinity.scale(
+                aligned_poly, xfact=x_factor, yfact=y_factor, origin=centroid_coords
+            )
+            scaled_poly = affinity.rotate(
+                scaled_aligned_poly, -rotation_angle, origin=centroid_coords, use_radians=False
+            )
+
+            theta = np.radians(-rotation_angle)
+            rotation_matrix = np.array([[np.cos(theta), -np.sin(theta)], [np.sin(theta), np.cos(theta)]])
+            scale_axis_local = np.array([0.0, 1.0]) if is_width_dominant else np.array([1.0, 0.0])
+            scale_axis_vector = rotation_matrix @ scale_axis_local
+
+            if np.linalg.norm(scale_axis_vector) > 0:
+                minor_extent = height if is_width_dominant else width
+                direction_length = 0.5 * max(minor_extent, 1.0)
+                direction = scale_axis_vector / np.linalg.norm(scale_axis_vector)
+                arrow_points = np.vstack(
+                    [
+                        door_centroid - direction * direction_length,
+                        door_centroid + direction * direction_length,
+                    ]
+                )
+        elif not scale_short_axis:
+            scaled_poly = affinity.scale(
+                door_poly, xfact=scale_factor, yfact=scale_factor, origin=centroid_coords
+            )
+
+        # TEMP: visualization for debugging orthogonal scaling
+        if debug:
+            import io
+            from PIL import Image
+            from matplotlib import pyplot as plt
+
+            x, y = door_poly.exterior.xy
+            sx, sy = scaled_poly.exterior.xy
+
+            fig, ax = plt.subplots()
+            ax.plot(x, y, color="#6699cc", alpha=0.7, linewidth=1, solid_capstyle="round", zorder=2, label="original")
+            ax.plot(
+                sx,
+                sy,
+                color="#f44",
+                alpha=0.7,
+                linewidth=1,
+                solid_capstyle="round",
+                zorder=2,
+                label="scaled (orthogonal)" if scale_short_axis else "scaled (uniform)",
+            )
+
+            if arrow_points is not None:
+                ax.plot(arrow_points[:, 0], arrow_points[:, 1], color="#0f0", linewidth=1.5, label="scale axis")
+
+            ax.set_aspect("equal")
+            ax.legend()
+
+            buf = io.BytesIO()
+            plt.savefig(buf, format="png")
+            buf.seek(0)
+            debug_image = Image.open(buf)
+            logger.debug(
+                "Generated interior door scaling debug visualization (door=%s, size=%s, anisotropic=%s)",
+                door_idx,
+                debug_image.size,
+                scale_short_axis,
+            )
+            image = np.array(debug_image)
+            debug_image.close()
+            buf.close()
+            plt.close(fig)
 
         if scaled_poly.is_valid and not scaled_poly.is_empty:
             expanded_boundary = list(scaled_poly.exterior.coords[:-1])
