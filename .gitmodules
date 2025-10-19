@@ -4,3 +4,6 @@
 [submodule "external/msd"]
 	path = external/msd
 	url = https://github.com/yunho-c/msd
+[submodule "References/Learn-Blender"]
+	path = References/Learn-Blender
+	url = https://github.com/yunho-c/Learn-Blender
