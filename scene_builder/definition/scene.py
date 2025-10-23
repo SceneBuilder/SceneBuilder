@@ -88,6 +88,12 @@ class Floor(BaseModel):
 
     material_id: str | None = None
 
+class Structure(BaseModel):
+    """Represents a structural element (e.g., door, window) excl. wall"""
+    id: str
+    type: Literal["door", "window"]
+    boundary: list[Vector2] | None = None
+
 
 class Room(BaseModel):
     """Represents a single room in the scene."""
@@ -100,9 +106,10 @@ class Room(BaseModel):
     # floor_dimensions: FloorDimensions | None = None
     # viz: list[Path] = []
     objects: list[Object] = []
-    floor: Floor | None = None
     # objects: list[Object] = Field(default_factory=list)
     # objects: list[Object | Section] = Field(default_factory=list)
+    floor: Floor | None = None  # NOTE: consider refactoring into `materials` or providing floor dimensions (for easy size calc) here
+    structure: list[Structure] | None = None  # NOTE: try to make this invisible/immutable
     
     # NOTE: for origin normalization state tracking, for now
     extra_info: Any | None = None

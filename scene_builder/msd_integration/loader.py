@@ -16,6 +16,8 @@ import matplotlib.pyplot as plt
 import networkx as nx
 import numpy as np
 import pandas as pd
+from msd.constants import ROOM_NAMES
+from msd.graphs import extract_access_graph, get_geometries_from_id
 from msd.plot import plot_floor, set_figure
 from PIL import Image
 from shapely.geometry import Polygon
@@ -299,15 +301,14 @@ def scale_floor_plan(
 
 
 def normalize_floor_plan_orientation(
-    rooms: list[Room], strategy: str = "length_weighted", angle_threshold: float = 0.1
+    rooms: list[Room], strategy: str = "complex_sum", angle_threshold: float = 0.1
 ) -> tuple[list[Room], float]:
     """
     Normalize the orientation of a floor plan by rotating all rooms to be axis-aligned.
 
     Args:
         rooms: List of Room objects with boundaries to normalize
-        strategy: 'length_weighted' (robust to segmentation), 'count' (equal weight),
-                  or 'complex_sum' (length-weighted complex sum)
+        strategy: 'complex_sum' (precise), 'length_weighted' (robust to segmentation), or 'count'
         angle_threshold: Minimum angle (degrees) to apply rotation (default: 0.1)
 
     Returns:
@@ -345,6 +346,15 @@ class MSDLoader:
             self._df = pd.read_csv(self.csv_path)
         return self._df
 
+    def get_apartment_list(self, min_rooms: int = 5, max_rooms: int = 30) -> list[str]:
+        """Get list of apartment IDs"""
+        # Count actual rooms per apartment
+        room_counts = self.df[self.df["entity_type"] == "area"].groupby("apartment_id").size()
+
+        # Filter by room count
+        suitable = room_counts[(room_counts >= min_rooms) & (room_counts <= max_rooms)].index.tolist()  # fmt:skip
+        return suitable
+
     def get_building_list(self) -> List[int]:
         """Get list of building IDs"""
         buildings = self.df["building_id"].dropna().unique().tolist()
@@ -363,7 +373,7 @@ class MSDLoader:
         apartments = building_data["apartment_id"].dropna().unique().tolist()
         return apartments
 
-    def create_graph(self, apartment_id: str) -> Optional[nx.Graph]:
+    def create_graph(self, apartment_id: str, format="msd") -> Optional[nx.Graph]:
         """Create NetworkX graph for one apartment - includes all entity types"""
         apt_data = self.df[self.df["apartment_id"] == apartment_id]
 
@@ -371,42 +381,55 @@ class MSDLoader:
             print(f"No data found for apartment {apartment_id}")
             return None
 
+        # Use first floor first
         floor_id = apt_data["floor_id"].iloc[0]
 
-        # Get all entities for this apartment on this floor
-        floor_data = apt_data[apt_data["floor_id"] == floor_id].reset_index(drop=True)
+        if format == "msd":
+            geoms, geom_types = get_geometries_from_id(apt_data, floor_id, column="roomtype")
+            graph = extract_access_graph(geoms, geom_types, ROOM_NAMES, floor_id)
 
-        graph = nx.Graph()
-        graph.graph["ID"] = floor_id
-        graph.graph["floor_id"] = floor_id
+        elif format == "sb":  # SceneBuilder
+            # Get all entities for this apartment on this floor
+            floor_data = apt_data[apt_data["floor_id"] == floor_id].reset_index(drop=True)
+
+            graph = nx.Graph()
+            graph.graph["ID"] = floor_id
+            graph.graph["floor_id"] = floor_id
+
+            for idx, row in floor_data.iterrows():
+                geom_str = row.get("geom")
+                coords = []
+                centroid = (0, 0)
+
+                if pd.notna(geom_str):
+                    try:
+                        from shapely import wkt
+
+                        geom = wkt.loads(geom_str)
+                        if hasattr(geom, "exterior"):
+                            coords = list(geom.exterior.coords)
+                        if hasattr(geom, "centroid"):
+                            centroid = (geom.centroid.x, geom.centroid.y)
+                    except Exception:
+                        pass
+
+                graph.add_node(
+                    idx,
+                    entity_subtype=row.get("entity_subtype"),
+                    geometry=coords,
+                    centroid=centroid,
+                )
+
+        # Add metadata
         graph.graph["apartment_id"] = apartment_id
         graph.graph["source"] = "MSD"
 
-        for idx, row in floor_data.iterrows():
-            geom_str = row.get("geom")
-            coords = []
-            centroid = (0, 0)
-
-            if pd.notna(geom_str):
-                try:
-                    from shapely import wkt
-
-                    geom = wkt.loads(geom_str)
-                    if hasattr(geom, "exterior"):
-                        coords = list(geom.exterior.coords)
-                    if hasattr(geom, "centroid"):
-                        centroid = (geom.centroid.x, geom.centroid.y)
-                except Exception:
-                    pass
-
-            graph.add_node(
-                idx,
-                entity_subtype=row.get("entity_subtype"),
-                geometry=coords,
-                centroid=centroid,
-            )
-
         return graph
+
+    def get_random_apartment(self) -> Optional[str]:
+        """Get random suitable apartment ID"""
+        apartments = self.get_apartment_list()
+        return random.choice(apartments) if apartments else None
 
     def get_random_building(self) -> Optional[int]:
         """Get random building ID"""
@@ -414,6 +437,8 @@ class MSDLoader:
         return random.choice(buildings) if buildings else None
 
     def convert_graph_to_rooms(self, graph: nx.Graph) -> list[Room]:
+        # NOTE: This is not compatible with 'msd' format `nx.graph`s anymore, for some reason.
+        # Let's look into https://github.com/SceneBuilder/SceneBuilder/tree/50bbf93ee1bc1562b4aa67357ae602dd338dd31d/scene_builder to find out.
         """Convert NetworkX graph nodes to SceneBuilder Room objects using entity_subtype.
 
         This method uses ENTITY_SUBTYPE_MAP which filters entities based on their
@@ -422,7 +447,7 @@ class MSDLoader:
         rooms = []
 
         apartment_id = graph.graph.get("apartment_id", "unknown")
-        apt_prefix = apartment_id[:8] if len(apartment_id) >= 8 else apartment_id
+        # apt_prefix = apartment_id[:8] if len(apartment_id) >= 8 else apartment_id
 
         for node_id, attrs in graph.nodes(data=True):
             if "geometry" not in attrs:
@@ -432,7 +457,7 @@ class MSDLoader:
             geometry_data = attrs["geometry"]
             if isinstance(geometry_data, list) and len(geometry_data) > 0:
                 # Already parsed coordinates
-                coords = [round_vector2(Vector2(x=float(p[0]), y=float(p[1])), ndigits=2) for p in geometry_data]
+                coords = [round_vector2(Vector2(x=float(p[0]), y=float(p[1])), ndigits=2)for p in geometry_data]  # fmt:skip
             else:
                 coords = []
 
@@ -446,7 +471,8 @@ class MSDLoader:
                 continue
 
             room = Room(
-                id=f"msd_{apt_prefix}_{node_id}",
+                # id=f"msd_{apt_prefix}_{node_id}", # NOTE: deactivated for data cleanliness
+                id=f"{node_id}",
                 category=category,
                 tags=["msd"],
                 boundary=coords,

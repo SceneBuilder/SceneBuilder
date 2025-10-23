@@ -1,5 +1,4 @@
 import asyncio
-import os
 from pathlib import Path
 
 from pydantic_graph import Graph, GraphRunResult
@@ -31,6 +30,7 @@ from scene_builder.utils.geometry import round_vector2_list, simplify_polygon, s
 from scene_builder.utils.image import create_gif_from_images
 from scene_builder.utils.pai import transform_paths_to_binary
 from scene_builder.utils.pydantic import save_yaml
+from scene_builder.utils.room import assign_structures_to_rooms, render_structure_links
 from scene_builder.workflow.agents import generic_agent, room_design_agent
 
 # from scene_builder.workflow.graphs import (
@@ -44,6 +44,8 @@ configure_logging(level="DEBUG")
 
 # Params
 SAVE_DIR = "assets"
+# DEBUG = True
+DEBUG = False
 
 # Data
 # single room
@@ -692,8 +694,10 @@ def test_multi_room_design_workflow(case: str):
 
     # Import a unit-level floor plan from MSD
     floor_plan_id = test_data["floor_plan_id"]
-    graph = msd_loader.create_graph(floor_plan_id)
+    # graph = msd_loader.create_graph(floor_plan_id)  # OG
+    graph = msd_loader.create_graph(floor_plan_id, format="sb")  # ALT
     scene_data = msd_loader.graph_to_scene_data(graph)
+    # NOTE: green and purple rooms don't seem to be a part of scene schema for some reason. TODO: investigate
 
     # Normalize floor plan orientation
     scene_data['rooms'], correction_angle = normalize_floor_plan_orientation(scene_data['rooms'])
@@ -728,10 +732,60 @@ def test_multi_room_design_workflow(case: str):
             show_labels=True,
             figsize=(10, 10)
         )
+    from scene_builder.definition.scene import Structure
+    # Distribute structural elements into `Room`s. (De-duplicate when parsing in Blender later.)
+    # TODO: move this logic into `loader.py` (either into `convert_graph_to_rooms()` or a new function called `distribute_structure_into_rooms(list[Room]) → list[Room]`) after testing
+    # Separate structures from room data
+    rooms_to_remove = []
+    structures = []
+    for room in scene_data["rooms"]:
+        if room.category in ["window", "door"]:
+            structures.append(Structure(type=room.category, id=room.id, boundary=room.boundary))
+            # scene_data["rooms"].remove(room) # seems to cause iteration errors; let's do it lazy.
+            rooms_to_remove.append(room)
+    for structure, orig_room in zip(structures, rooms_to_remove):
+        scene_data["rooms"].remove(orig_room)
+    attachments = assign_structures_to_rooms(
+        scene_data["rooms"],
+        structures,
+        distance_threshold=0.05,
+    )
+    logger.debug("Attached %d structures to rooms", len(attachments))
+    if DEBUG:
+        render_structure_links(
+            scene_data["rooms"],
+            structures,
+            attachments,
+            Path(f"test_output/{case}/structure_debug.png"),
+        )
 
     Path(f"test_output/{case}").mkdir(parents=True, exist_ok=True)
-    floor_plan_img_path = msd_loader.render_floor_plan(graph, output_path=f"test_output/{case}/floor_plan.jpg", node_size=225, edge_size=0, show_label=True)
+    # Turn SceneBuilder-format floor plan graph into MSD-format for plotting (TEMP?)
+    # Filter out structure (shell) elements: door, entrance_door, wall, window
+    graph_msd = graph.subgraph(
+        n
+        for n, d in graph.nodes(data=True)
+        # if d.get("entity_subtype") not in ["door", "entrance_door", "wall", "window"]
+        if d.get("entity_subtype") not in ["DOOR", "ENTRANCE_DOOR", "WALL", "WINDOW"]
+    )
+    from msd.constants import ROOM_NAMES, ROOM_MAPPING
+    # Rename `entity_subtype` column to `room_type`
+    for node, data in graph_msd.nodes(data=True):
+        if "entity_subtype" in data:
+            data["room_type"] = ROOM_MAPPING[data.pop("entity_subtype")]
+    # Map string room_type field back to integer index
+    mapping = {cat: index for index, cat in enumerate(ROOM_NAMES)}
+    nodes_to_pop = []
+    for node, data in graph_msd.nodes(data=True):
+        if "room_type" in data:
+            if data["room_type"] in mapping:
+                data["room_type"] = mapping[data["room_type"]]
+            else:
+                print(f"Throwing out {node}")  # DEBUG
+                nodes_to_pop.append(node)
+    floor_plan_img_path = msd_loader.render_floor_plan(graph_msd, output_path=f"test_output/{case}/floor_plan.jpg", node_size=225, edge_size=0, show_label=True)
     images = transform_paths_to_binary([floor_plan_img_path])
+    # TODO: verify matching of IDs from floor plan viz (generated from graph_msd) and scene_data (generated from graph_sb)
     room_plan_user_prompt = (
         "You are a design orchestration agent who is part of a building interior design system. ",
         "Given the description of the desired place by the user and an image of the floor plan, ",
