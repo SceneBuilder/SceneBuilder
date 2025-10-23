@@ -1,12 +1,69 @@
 """Geometry utility functions for scene building."""
 
 from pathlib import Path
+from typing import Iterable
 
 import matplotlib.pyplot as plt
-from shapely.geometry import Polygon
+from shapely.geometry import LineString, Point, Polygon
+from shapely.geometry.base import BaseGeometry
 
 from scene_builder.definition.scene import Vector2
 from scene_builder.logging import logger
+
+
+def convert_to_shapely(vertices: list[Vector2]):
+    """Convert list[Vector2] to shapely.Polygon"""
+    coords = [(v.x, v.y) for v in vertices]
+    polygon = Polygon(coords)
+    return polygon
+
+
+def convert_to_listvec2(polygon: list[Vector2]):
+    """Convert shapely.Polygon to list[Vector2]"""
+    # Note: Shapely polygon.exterior.coords includes a duplicate closing point, which we don't need (?)
+    return [Vector2(x=x, y=y) for x, y in list(polygon.exterior.coords)[:-1]]
+
+
+def boundary_to_geometry(boundary: Iterable[Vector2] | None) -> BaseGeometry | None:
+    """Convert a boundary definition into an appropriate Shapely geometry."""
+    if not boundary:
+        return None
+
+    coords = [(v.x, v.y) for v in boundary]
+
+    if len(coords) == 1:
+        return Point(coords[0])
+    if len(coords) == 2:
+        return LineString(coords)
+
+    polygon = Polygon(coords)
+    if not polygon.is_valid or polygon.area == 0.0:
+        return LineString(coords)
+    return polygon
+
+
+def boundary_distance(
+    boundary_a: Iterable[Vector2] | None,
+    boundary_b: Iterable[Vector2] | None,
+) -> float | None:
+    """Compute the shortest distance between two boundaries."""
+    geom_a = boundary_to_geometry(boundary_a)
+    geom_b = boundary_to_geometry(boundary_b)
+    if geom_a is None or geom_b is None:
+        return None
+    return geom_a.distance(geom_b)
+
+
+def are_boundaries_close(
+    boundary_a: Iterable[Vector2] | None,
+    boundary_b: Iterable[Vector2] | None,
+    max_distance: float,
+) -> bool:
+    """Return True if two boundaries are within a specified distance."""
+    distance = boundary_distance(boundary_a, boundary_b)
+    if distance is None:
+        return False
+    return distance <= max_distance
 
 
 def polygon_centroid(vertices: list[Vector2]) -> Vector2:

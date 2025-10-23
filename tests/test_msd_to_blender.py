@@ -15,7 +15,7 @@ logger.remove()
 logger.add(sys.stderr, level="WARNING")
 
 
-def test_msd_to_blender():
+def test_msd_to_blender(door_cutout=True, window_cutout=True):
     loader = MSDLoader()
 
     # building_id = loader.get_random_building()
@@ -90,46 +90,23 @@ def test_msd_to_blender():
 
         blender.parse_scene_definition(scene_data)
 
-        apartment_outlines = []
-        apartment_windows = []
-        for apt_id, rooms in apartment_rooms:
-            outline = blender.get_apartment_outline(rooms)
-            if outline:
-                apartment_outlines.append((apt_id, outline))
+        # Create walls for each room (excluding windows and exterior doors)
+        walls_created = blender.create_room_walls(all_rooms, door_cutouts=door_cutout, window_cutouts=window_cutout)
+        if walls_created > 0:
+            print(f"   ✓ Created {walls_created} room walls (excluding windows and exterior doors)")
 
-            windows = []
-            for room in rooms:
-                if room.category == "window":
-                    window_boundary = [(p.x, p.y) for p in room.boundary]
-                    windows.append(window_boundary)
-                    # print(f"      Found window in {apt_id}: {len(window_boundary)} vertices")
-
-            if windows:
-                apartment_windows.append((apt_id, windows))
-                # print(f"    {apt_id}: {len(windows)} windows extracted")
-
-        if apartment_outlines:
-            blender.create_apartment_walls(
-                apartment_outlines, 
-                window_data=apartment_windows
-            )
-            print(f"   ✓ Added walls for {len(apartment_outlines)} apartments")
-            if apartment_windows:
-                total_windows = sum(len(windows) for _, windows in apartment_windows)
-                print(f"   ✓ Added {total_windows} window cutouts")
-
-        # Detect and mark interior doors
-        interior_door_count = 0
-        for room in all_rooms:
-            if room.category == "door":
-                door_boundary = [(p.x, p.y) for p in room.boundary]
-                if blender.mark_interior_door(door_boundary, room.id):
-                    interior_door_count += 1
+        # # Detect and mark interior doors
+        # interior_door_count = 0
+        # for room in all_rooms:
+        #     if room.category == "door":
+        #         door_boundary = [(p.x, p.y) for p in room.boundary]
+        #         if blender.mark_interior_door(door_boundary, room.id):
+        #             interior_door_count += 1
         
-        if interior_door_count > 0:
-            print(f"   ✓ Marked {interior_door_count} interior doors with yellow cubes")
+        # if interior_door_count > 0:
+        #     print(f"   ✓ Marked {interior_door_count} interior doors with yellow cubes")
 
-        output_file = output_dir / f"msd_building_{building_id}_floor_{floor_id}.blend"
+        output_file = output_dir / f"msd_building_{building_id}_floor_{floor_id}_{door_cutout=}_{window_cutout=}.blend"
         blender.save_scene(str(output_file))
         print(f"   ✓ Saved: {output_file.name}")
 
@@ -146,3 +123,6 @@ def test_msd_to_blender():
 
 if __name__ == "__main__":
     test_msd_to_blender()
+    # test_msd_to_blender(door_cutout=False)
+    # test_msd_to_blender(window_cutout=False)
+    # test_msd_to_blender(door_cutout=False, window_cutout=False)

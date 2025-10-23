@@ -16,6 +16,8 @@ import matplotlib.pyplot as plt
 import networkx as nx
 import numpy as np
 import pandas as pd
+from msd.constants import ROOM_NAMES
+from msd.graphs import extract_access_graph, get_geometries_from_id
 from msd.plot import plot_floor, set_figure
 from PIL import Image
 from shapely.geometry import Polygon
@@ -85,7 +87,7 @@ def get_dominant_angle(
 
     Args:
         polygons: List of shapely Polygon objects or list of list[Vector2] boundaries
-        strategy: 'length_weighted' (robust to segmentation) or 'count' (equal weight)
+        strategy: 'length_weighted' (robust to segmentation), 'count', or 'complex_sum' (length-weighted; more precise)
 
     Returns:
         Correction angle in degrees to rotate for axis alignment
@@ -100,7 +102,7 @@ def get_dominant_angle(
         elif isinstance(poly, list) and isinstance(poly[0], Vector2):
             coords = np.array([(v.x, v.y) for v in poly])
         else:
-            raise TypeError()
+            raise TypeError("Expected shapely Polygon or list[Vector2]")
 
         vectors = np.diff(coords, axis=0)
         edge_angles = np.arctan2(vectors[:, 1], vectors[:, 0])
@@ -111,19 +113,54 @@ def get_dominant_angle(
         edge_lengths.extend(lengths)
 
     # Normalize to [0, 90) to treat parallel/perpendicular lines the same
-    normalized_angles = [angle % 90 for angle in angles]
+    normalized_angles = np.array([angle % 90 for angle in angles])
+    normalized_angles_rad = np.radians(normalized_angles)
 
     # Compute histogram with optional weighting
     if strategy == "length_weighted":
         hist, bin_edges = np.histogram(
             normalized_angles, bins=90, range=(0, 90), weights=edge_lengths
         )
-    else:
-        hist, bin_edges = np.histogram(normalized_angles, bins=90, range=(0, 90))
+        dominant_angle_bin = np.argmax(hist)
+        dominant_angle = bin_edges[dominant_angle_bin] + 0.5
+    elif strategy == "complex_sum":
+        # NOTE: based on `length_weighted`, but applies averaging afterwards to
+        #       combat histogram-induced bin truncation.
+        weights = np.array(edge_lengths)
+        hist, bin_edges = np.histogram(
+            normalized_angles, bins=90, range=(0, 90), weights=weights
+        )
+        dominant_angle_bin = int(np.argmax(hist))
+        bin_indices = np.digitize(normalized_angles, bin_edges, right=False) - 1
+        bin_indices = np.clip(bin_indices, 0, len(hist) - 1)
+        bin_mask = bin_indices == dominant_angle_bin
+        if not np.any(bin_mask):
+            bin_mask = np.ones_like(normalized_angles, dtype=bool)
 
-    # Find dominant angle
-    dominant_angle_bin = np.argmax(hist)
-    dominant_angle = bin_edges[dominant_angle_bin] + 0.5
+        masked_weights = weights[bin_mask]
+        masked_angles = normalized_angles_rad[bin_mask]
+
+        if masked_angles.size == 0:
+            dominant_angle = bin_edges[dominant_angle_bin] + 0.5
+        else:
+            double_angles = 2.0 * masked_angles
+            sum_cos = np.sum(masked_weights * np.cos(double_angles))
+            sum_sin = np.sum(masked_weights * np.sin(double_angles))
+
+            if np.isclose(sum_cos, 0.0) and np.isclose(sum_sin, 0.0):
+                dominant_angle = bin_edges[dominant_angle_bin] + 0.5
+            else:
+                dominant_angle_rad = 0.5 * np.arctan2(sum_sin, sum_cos)
+                dominant_angle = np.rad2deg(dominant_angle_rad)
+                dominant_angle = abs(dominant_angle) % 180
+                if dominant_angle > 90:
+                    dominant_angle = 180 - dominant_angle
+    elif strategy == "count":
+        hist, bin_edges = np.histogram(normalized_angles, bins=90, range=(0, 90))
+        dominant_angle_bin = np.argmax(hist)
+        dominant_angle = bin_edges[dominant_angle_bin] + 0.5
+    else:
+        raise ValueError("Unknown strategy. Use 'length_weighted', 'count', or 'complex_sum'.")
 
     # Choose smallest rotation to align to 0° or 90°
     if dominant_angle > 45:
@@ -264,14 +301,14 @@ def scale_floor_plan(
 
 
 def normalize_floor_plan_orientation(
-    rooms: list[Room], strategy: str = "length_weighted", angle_threshold: float = 0.1
+    rooms: list[Room], strategy: str = "complex_sum", angle_threshold: float = 0.1
 ) -> tuple[list[Room], float]:
     """
     Normalize the orientation of a floor plan by rotating all rooms to be axis-aligned.
 
     Args:
         rooms: List of Room objects with boundaries to normalize
-        strategy: 'length_weighted' (robust to segmentation) or 'count' (equal weight)
+        strategy: 'complex_sum' (precise), 'length_weighted' (robust to segmentation), or 'count'
         angle_threshold: Minimum angle (degrees) to apply rotation (default: 0.1)
 
     Returns:
@@ -309,6 +346,15 @@ class MSDLoader:
             self._df = pd.read_csv(self.csv_path)
         return self._df
 
+    def get_apartment_list(self, min_rooms: int = 5, max_rooms: int = 30) -> list[str]:
+        """Get list of apartment IDs"""
+        # Count actual rooms per apartment
+        room_counts = self.df[self.df["entity_type"] == "area"].groupby("apartment_id").size()
+
+        # Filter by room count
+        suitable = room_counts[(room_counts >= min_rooms) & (room_counts <= max_rooms)].index.tolist()  # fmt:skip
+        return suitable
+
     def get_building_list(self) -> List[int]:
         """Get list of building IDs"""
         buildings = self.df["building_id"].dropna().unique().tolist()
@@ -327,7 +373,7 @@ class MSDLoader:
         apartments = building_data["apartment_id"].dropna().unique().tolist()
         return apartments
 
-    def create_graph(self, apartment_id: str) -> Optional[nx.Graph]:
+    def create_graph(self, apartment_id: str, format="msd") -> Optional[nx.Graph]:
         """Create NetworkX graph for one apartment - includes all entity types"""
         apt_data = self.df[self.df["apartment_id"] == apartment_id]
 
@@ -335,42 +381,55 @@ class MSDLoader:
             print(f"No data found for apartment {apartment_id}")
             return None
 
+        # Use first floor first
         floor_id = apt_data["floor_id"].iloc[0]
 
-        # Get all entities for this apartment on this floor
-        floor_data = apt_data[apt_data["floor_id"] == floor_id].reset_index(drop=True)
+        if format == "msd":
+            geoms, geom_types = get_geometries_from_id(apt_data, floor_id, column="roomtype")
+            graph = extract_access_graph(geoms, geom_types, ROOM_NAMES, floor_id)
 
-        graph = nx.Graph()
-        graph.graph["ID"] = floor_id
-        graph.graph["floor_id"] = floor_id
+        elif format == "sb":  # SceneBuilder
+            # Get all entities for this apartment on this floor
+            floor_data = apt_data[apt_data["floor_id"] == floor_id].reset_index(drop=True)
+
+            graph = nx.Graph()
+            graph.graph["ID"] = floor_id
+            graph.graph["floor_id"] = floor_id
+
+            for idx, row in floor_data.iterrows():
+                geom_str = row.get("geom")
+                coords = []
+                centroid = (0, 0)
+
+                if pd.notna(geom_str):
+                    try:
+                        from shapely import wkt
+
+                        geom = wkt.loads(geom_str)
+                        if hasattr(geom, "exterior"):
+                            coords = list(geom.exterior.coords)
+                        if hasattr(geom, "centroid"):
+                            centroid = (geom.centroid.x, geom.centroid.y)
+                    except Exception:
+                        pass
+
+                graph.add_node(
+                    idx,
+                    entity_subtype=row.get("entity_subtype"),
+                    geometry=coords,
+                    centroid=centroid,
+                )
+
+        # Add metadata
         graph.graph["apartment_id"] = apartment_id
         graph.graph["source"] = "MSD"
 
-        for idx, row in floor_data.iterrows():
-            geom_str = row.get("geom")
-            coords = []
-            centroid = (0, 0)
-
-            if pd.notna(geom_str):
-                try:
-                    from shapely import wkt
-
-                    geom = wkt.loads(geom_str)
-                    if hasattr(geom, "exterior"):
-                        coords = list(geom.exterior.coords)
-                    if hasattr(geom, "centroid"):
-                        centroid = (geom.centroid.x, geom.centroid.y)
-                except Exception:
-                    pass
-
-            graph.add_node(
-                idx,
-                entity_subtype=row.get("entity_subtype"),
-                geometry=coords,
-                centroid=centroid,
-            )
-
         return graph
+
+    def get_random_apartment(self) -> Optional[str]:
+        """Get random suitable apartment ID"""
+        apartments = self.get_apartment_list()
+        return random.choice(apartments) if apartments else None
 
     def get_random_building(self) -> Optional[int]:
         """Get random building ID"""
@@ -378,6 +437,8 @@ class MSDLoader:
         return random.choice(buildings) if buildings else None
 
     def convert_graph_to_rooms(self, graph: nx.Graph) -> list[Room]:
+        # NOTE: This is not compatible with 'msd' format `nx.graph`s anymore, for some reason.
+        # Let's look into https://github.com/SceneBuilder/SceneBuilder/tree/50bbf93ee1bc1562b4aa67357ae602dd338dd31d/scene_builder to find out.
         """Convert NetworkX graph nodes to SceneBuilder Room objects using entity_subtype.
 
         This method uses ENTITY_SUBTYPE_MAP which filters entities based on their
@@ -386,7 +447,7 @@ class MSDLoader:
         rooms = []
 
         apartment_id = graph.graph.get("apartment_id", "unknown")
-        apt_prefix = apartment_id[:8] if len(apartment_id) >= 8 else apartment_id
+        # apt_prefix = apartment_id[:8] if len(apartment_id) >= 8 else apartment_id
 
         for node_id, attrs in graph.nodes(data=True):
             if "geometry" not in attrs:
@@ -396,7 +457,7 @@ class MSDLoader:
             geometry_data = attrs["geometry"]
             if isinstance(geometry_data, list) and len(geometry_data) > 0:
                 # Already parsed coordinates
-                coords = [round_vector2(Vector2(x=float(p[0]), y=float(p[1])), ndigits=2) for p in geometry_data]
+                coords = [round_vector2(Vector2(x=float(p[0]), y=float(p[1])), ndigits=2)for p in geometry_data]  # fmt:skip
             else:
                 coords = []
 
@@ -410,7 +471,8 @@ class MSDLoader:
                 continue
 
             room = Room(
-                id=f"msd_{apt_prefix}_{node_id}",
+                # id=f"msd_{apt_prefix}_{node_id}", # NOTE: deactivated for data cleanliness
+                id=f"{node_id}",
                 category=category,
                 tags=["msd"],
                 boundary=coords,
