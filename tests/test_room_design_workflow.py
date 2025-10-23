@@ -692,8 +692,10 @@ def test_multi_room_design_workflow(case: str):
 
     # Import a unit-level floor plan from MSD
     floor_plan_id = test_data["floor_plan_id"]
-    graph = msd_loader.create_graph(floor_plan_id)
+    # graph = msd_loader.create_graph(floor_plan_id)  # OG
+    graph = msd_loader.create_graph(floor_plan_id, format="sb")  # ALT
     scene_data = msd_loader.graph_to_scene_data(graph)
+    # NOTE: green and purple rooms don't seem to be a part of scene schema for some reason. TODO: investigate
 
     # Normalize floor plan orientation
     scene_data['rooms'], correction_angle = normalize_floor_plan_orientation(scene_data['rooms'])
@@ -730,8 +732,32 @@ def test_multi_room_design_workflow(case: str):
         )
 
     Path(f"test_output/{case}").mkdir(parents=True, exist_ok=True)
-    floor_plan_img_path = msd_loader.render_floor_plan(graph, output_path=f"test_output/{case}/floor_plan.jpg", node_size=225, edge_size=0, show_label=True)
+    # Turn SceneBuilder-format floor plan graph into MSD-format for plotting (TEMP?)
+    # Filter out structure (shell) elements: door, entrance_door, wall, window
+    graph_msd = graph.subgraph(
+        n
+        for n, d in graph.nodes(data=True)
+        # if d.get("entity_subtype") not in ["door", "entrance_door", "wall", "window"]
+        if d.get("entity_subtype") not in ["DOOR", "ENTRANCE_DOOR", "WALL", "WINDOW"]
+    )
+    from msd.constants import ROOM_NAMES, ROOM_MAPPING
+    # Rename `entity_subtype` column to `room_type`
+    for node, data in graph_msd.nodes(data=True):
+        if "entity_subtype" in data:
+            data["room_type"] = ROOM_MAPPING[data.pop("entity_subtype")]
+    # Map string room_type field back to integer index
+    mapping = {cat: index for index, cat in enumerate(ROOM_NAMES)}
+    nodes_to_pop = []
+    for node, data in graph_msd.nodes(data=True):
+        if "room_type" in data:
+            if data["room_type"] in mapping:
+                data["room_type"] = mapping[data["room_type"]]
+            else:
+                print(f"Throwing out {node}")  # DEBUG
+                nodes_to_pop.append(node)
+    floor_plan_img_path = msd_loader.render_floor_plan(graph_msd, output_path=f"test_output/{case}/floor_plan.jpg", node_size=225, edge_size=0, show_label=True)
     images = transform_paths_to_binary([floor_plan_img_path])
+    # TODO: verify matching of IDs from floor plan viz (generated from graph_msd) and scene_data (generated from graph_sb)
     room_plan_user_prompt = (
         "You are a design orchestration agent who is part of a building interior design system. ",
         "Given the description of the desired place by the user and an image of the floor plan, ",
