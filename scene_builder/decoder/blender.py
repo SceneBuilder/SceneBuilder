@@ -945,7 +945,7 @@ def _create_interior_door_cutout(
     z_top: float = 2.1,
     scale_factor: float = 1.20,
     scale_short_axis: bool = True,
-    debug=False,
+    debug=True,
 ):
     """Create and apply an interior door cutout to a wall object.
 
@@ -1015,7 +1015,7 @@ def _create_interior_door_cutout(
 
         # TEMP: visualization for debugging orthogonal scaling
         if debug:
-            import io
+            from pathlib import Path
             from PIL import Image
             from matplotlib import pyplot as plt
 
@@ -1041,20 +1041,22 @@ def _create_interior_door_cutout(
             ax.set_aspect("equal")
             ax.legend()
 
-            buf = io.BytesIO()
-            plt.savefig(buf, format="png")
-            buf.seek(0)
-            debug_image = Image.open(buf)
-            logger.debug(
-                "Generated interior door scaling debug visualization (door=%s, size=%s, anisotropic=%s)",
-                door_idx,
-                debug_image.size,
-                scale_short_axis,
-            )
-            image = np.array(debug_image)
-            debug_image.close()
-            buf.close()
+            debug_dir = Path(__file__).resolve().parents[1] / "msd_integration" / "image_save"
+            debug_dir.mkdir(parents=True, exist_ok=True)
+            debug_path = debug_dir / f"interior_door_{apt_id}_{door_idx}.png"
+
+            plt.savefig(debug_path, format="png", dpi=150)
             plt.close(fig)
+
+            with Image.open(debug_path) as debug_image:
+                logger.debug(
+                    "Saved interior door scaling debug visualization to %s (size=%s, anisotropic=%s)",
+                    debug_path,
+                    debug_image.size,
+                    scale_short_axis,
+                )
+
+            logger.debug("Saved interior door debug visualization to %s", debug_path)
 
         if scaled_poly.is_valid and not scaled_poly.is_empty:
             expanded_boundary = list(scaled_poly.exterior.coords[:-1])
