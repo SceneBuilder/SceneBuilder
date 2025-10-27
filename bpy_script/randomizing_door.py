@@ -263,6 +263,45 @@ def center_object_bottom(obj: bpy.types.Object):
     print(f"✅ Centered '{obj.name}' — bottom now aligned with world origin.")
 
 
+def rescale_object_from_center(obj: bpy.types.Object, target_dimensions: Vector):
+    """Rescale the given object so its overall dimensions match target_dimensions,
+    scaling from the object's center rather than from one corner.
+
+    The object's visual position remains roughly centered after scaling.
+    """
+    if obj is None:
+        raise ValueError("No object provided for rescaling.")
+    if not isinstance(target_dimensions, Vector):
+        raise TypeError("target_dimensions must be a mathutils.Vector.")
+    if target_dimensions.x <= 0 or target_dimensions.y <= 0 or target_dimensions.z <= 0:
+        raise ValueError("All target dimensions must be positive values.")
+
+    # Ensure geometry is up to date before reading dimensions
+    bpy.context.view_layer.update()
+
+    current_dimensions = obj.dimensions.copy()
+
+    # Avoid division by zero
+    scale_factors = Vector((
+        target_dimensions.x / current_dimensions.x if current_dimensions.x else 1.0,
+        target_dimensions.y / current_dimensions.y if current_dimensions.y else 1.0,
+        target_dimensions.z / current_dimensions.z if current_dimensions.z else 1.0,
+    ))
+
+    # Compute offset to visually keep the object centered
+    delta = target_dimensions - current_dimensions
+    offset = Vector((-delta.x / 2, -delta.y / 2, -delta.z / 2))
+
+    # Apply scaling and offset
+    obj.scale = obj.scale * scale_factors
+    obj.location += offset
+
+    # Force viewport and depsgraph update
+    bpy.context.view_layer.update()
+
+    print(f"✅ Rescaled '{obj.name}' from center. New dimensions: {obj.dimensions}")
+    return scale_factors
+
 
 def create_interior_door(
     name: str,
@@ -429,6 +468,14 @@ if __name__ == "__main__":
 
     created = create_interior_door(**NEW_DOOR)
     print("Create door summary:", created)
+
+
+    #  rescale the door from center to target size
+    obj = bpy.data.objects.get("DoorIt_Example")
+    if obj:
+        target_dimensions = Vector((1.5, 4.0, 3.1))
+        rescale_object_from_center(obj, target_dimensions)
+
 
     if created["created"] is False and bpy.data.objects.get(created["object"]):
         # Optionally re-run settings on the already existing door.
