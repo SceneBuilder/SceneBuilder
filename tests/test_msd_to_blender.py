@@ -10,12 +10,21 @@ from loguru import logger
 
 from scene_builder.decoder import blender
 from scene_builder.msd_integration.loader import MSDLoader
+from scene_builder.utils.addon_installer import install_door_it_addon
 
 logger.remove()
 logger.add(sys.stderr, level="WARNING")
 
 
-def test_msd_to_blender(door_cutout=True, window_cutout=True):
+def test_msd_to_blender(door_cutout=True, window_cutout=True, enable_doors=True):
+    # Install Door It! Interior addon if requested and available
+    if enable_doors:
+        addon_installed = install_door_it_addon()
+        if addon_installed:
+            print("✓ Door It! Interior addon enabled - doors will be created")
+        else:
+            print("⚠️  Door It! Interior addon not available - only cutouts will be created")
+    
     loader = MSDLoader()
 
     # building_id = loader.get_random_building()

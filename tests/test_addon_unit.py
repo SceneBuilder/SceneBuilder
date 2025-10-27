@@ -54,5 +54,5 @@ if __name__ == "__main__":
         output_dir=script_dir
     )
     
-    randomizing_script = (script_dir / "../bpy_script/randomizing_door.py").resolve()
-    output_file = tester.run_test(randomizing_script, "output.blend")
+    door_controller_script = (script_dir / "../scene_builder/controllers/interior_door_controller.py").resolve()
+    output_file = tester.run_test(door_controller_script, "output.blend")
