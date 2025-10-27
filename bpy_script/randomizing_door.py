@@ -1,5 +1,6 @@
 import random
 from typing import Dict, Iterable, Optional, Sequence, Tuple
+import numpy as np
 
 import bpy
 from mathutils import Vector
@@ -235,6 +236,34 @@ def apply_interior_door_settings(
     return results
 
 
+def center_object_bottom(obj: bpy.types.Object):
+    """Center the object so its bottom center aligns with its origin (world 0,0,0)."""
+    depsgraph = bpy.context.evaluated_depsgraph_get()
+    obj_eval = obj.evaluated_get(depsgraph)
+    mesh = obj_eval.to_mesh()
+
+    # Convert vertices to world coordinates
+    verts = np.array([obj.matrix_world @ v.co for v in mesh.vertices])
+    obj_eval.to_mesh_clear()
+
+    # Compute bounds
+    min_x, max_x = np.min(verts[:, 0]), np.max(verts[:, 0])
+    min_y, max_y = np.min(verts[:, 1]), np.max(verts[:, 1])
+    min_z, max_z = np.min(verts[:, 2]), np.max(verts[:, 2])
+
+    # Compute bottom-center offset (move object so base is on Z=0, centered in X/Y)
+    center_x = (min_x + max_x) / 2
+    center_y = (min_y + max_y) / 2
+    offset = (-center_x, -center_y, -min_z)
+
+    # Apply offset to object location
+    obj.location += Vector(offset)
+    bpy.context.view_layer.update()
+
+    print(f"✅ Centered '{obj.name}' — bottom now aligned with world origin.")
+
+
+
 def create_interior_door(
     name: str,
     location: Sequence[float],
@@ -360,6 +389,12 @@ def create_interior_door(
         modifier_name=modifier_name,
         trigger_rebuild=trigger_rebuild,
     )
+
+    try:
+        center_object_bottom(door_object)
+    except Exception as e:
+        print(f"⚠️ Could not center door '{door_object.name}': {e}")
+
 
     return {
         "object": door_object.name,
