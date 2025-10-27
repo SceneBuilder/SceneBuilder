@@ -248,11 +248,28 @@ def floorplan_to_origin(
     # Step 3: Apply transformation
     cos_a, sin_a = math.cos(rotation_angle), math.sin(rotation_angle)
 
-    # Transform scene_data (floors)
+    # Transform scene_data (floors and structures)
     for room in rooms:
+        # Floor boundary
         for point in room.get("boundary", []):
             x, y = point["x"] - centroid_x, point["y"] - centroid_y
             point["x"], point["y"] = x * cos_a - y * sin_a, x * sin_a + y * cos_a
+        # Attached structures (window/door) boundaries, if present
+        for s in room.get("structure", []) or []:
+            if isinstance(s, dict):
+                boundary = s.get("boundary")
+                if boundary:
+                    for p in boundary:
+                        x, y = p["x"] - centroid_x, p["y"] - centroid_y
+                        p["x"], p["y"] = x * cos_a - y * sin_a, x * sin_a + y * cos_a
+            else:
+                boundary = getattr(s, "boundary", None)
+                if boundary:
+                    for p in boundary:
+                        x = p.x - centroid_x
+                        y = p.y - centroid_y
+                        p.x = x * cos_a - y * sin_a
+                        p.y = x * sin_a + y * cos_a
 
     if rooms_by_apartment:
         for _, room_list in rooms_by_apartment:
@@ -265,6 +282,19 @@ def floorplan_to_origin(
                         )
                         for p in room.boundary
                     ]
+                # Transform attached structures on Room objects as well
+                if hasattr(room, "structure") and room.structure:
+                    for s in room.structure:
+                        if getattr(s, "boundary", None):
+                            new_boundary = []
+                            for p in s.boundary:
+                                new_boundary.append(
+                                    Vector2(
+                                        x=(p.x - centroid_x) * cos_a - (p.y - centroid_y) * sin_a,
+                                        y=(p.x - centroid_x) * sin_a + (p.y - centroid_y) * cos_a,
+                                    )
+                                )
+                            s.boundary = new_boundary
 
     return scene_data
 
@@ -2156,42 +2186,61 @@ def create_room_walls(
     win_extdoor_cutout_polygons: list[tuple[str, list[tuple[float, float]]]] = []
     interior_door_polygons: list[tuple[str, list[tuple[float, float]]]] = []
 
+    # Create structural elements
     for r in rooms:
-        if (
-            window_cutouts
-            and getattr(r, "category", None) == "window"
-            and getattr(r, "boundary", None)
-            and len(r.boundary) >= 3
-        ):
-            win_extdoor_cutout_polygons.append((r.id, [(p.x, p.y) for p in r.boundary]))
-        elif (
-            door_cutouts
-            and getattr(r, "category", None) == "door"
-            and getattr(r, "boundary", None)
-            and len(r.boundary) >= 3
-        ):
-            door_boundary = [(p.x, p.y) for p in r.boundary]
-            if not is_interior_door(door_boundary):
-                win_extdoor_cutout_polygons.append((r.id, door_boundary))
-                logger.debug(f"Door {r.id}: identified as exterior door")
-            else:
-                interior_door_polygons.append((r.id, door_boundary))
-                logger.debug(f"Door {r.id}: identified as interior door")
+        # Handle pydantic Room or dict
+        r_structs = getattr(r, "structure", None)
+        if r_structs is None and isinstance(r, dict):
+            r_structs = r.get("structure")
+        if not r_structs:
+            continue
+        for s in r_structs:
+            # s can be pydantic Structure or dict
+            s_type = getattr(s, "type", None) if not isinstance(s, dict) else s.get("type")
+            s_id = getattr(s, "id", None) if not isinstance(s, dict) else s.get("id")
+            s_boundary = getattr(s, "boundary", None) if not isinstance(s, dict) else s.get("boundary")
+            if not s_boundary or len(s_boundary) < 3:
+                continue
+            # Normalize boundary to list of (x, y)
+            boundary_xy: list[tuple[float, float]] = []
+            for p in s_boundary:
+                if hasattr(p, "x"):
+                    boundary_xy.append((p.x, p.y))
+                else:
+                    boundary_xy.append((p["x"], p["y"]))
+
+            if window_cutouts and s_type == "window":
+                win_extdoor_cutout_polygons.append((str(s_id), boundary_xy))
+            elif door_cutouts and s_type == "door":
+                if not is_interior_door(boundary_xy):
+                    win_extdoor_cutout_polygons.append((str(s_id), boundary_xy))
+                    logger.debug(f"Door {s_id}: identified as exterior door")
+                else:
+                    interior_door_polygons.append((str(s_id), boundary_xy))
+                    logger.debug(f"Door {s_id}: identified as interior door")
 
     for room in rooms:
-        if room.category == "window":
+        # Extract boundary safely
+        r_boundary = getattr(room, "boundary", None)
+        if r_boundary is None and isinstance(room, dict):
+            r_boundary = room.get("boundary")
+        if not r_boundary or len(r_boundary) < 3:
             continue
 
-        if room.category == "door":
-            continue
+        # Support Vector2 objects or dict-like points
+        boundary_points = []
+        for p in r_boundary:
+            if hasattr(p, "x"):
+                boundary_points.append((p.x, p.y))
+            else:
+                boundary_points.append((p["x"], p["y"]))
 
-        if not room.boundary or len(room.boundary) < 3:
-            continue
+        room_id = getattr(room, "id", None)
+        if room_id is None and isinstance(room, dict):
+            room_id = room.get("id", "unknown")
 
-        boundary_points = [(p.x, p.y) for p in room.boundary]
-
-        mesh = bpy.data.meshes.new(f"Wall_{room.id}")
-        obj = bpy.data.objects.new(f"Wall_{room.id}", mesh)
+        mesh = bpy.data.meshes.new(f"Wall_{room_id}")
+        obj = bpy.data.objects.new(f"Wall_{room_id}", mesh)
         bpy.context.collection.objects.link(obj)
 
         bm = bmesh.new()
