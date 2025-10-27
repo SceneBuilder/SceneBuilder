@@ -353,12 +353,11 @@ def _create_room(room_data: dict[str, Any]):
         return
 
     room_id = room_data.get("id", "unknown_room")
-    room_category = room_data.get("category", "unknown")
-    # logger.debug(f"Creating room: {room_id}")
+    logger.debug(f"Creating room: {room_id}")
 
     # Create floor mesh
-    floor_result = _create_floor_mesh(room_data["boundary"], room_id, room_category=room_category)
-    # logger.debug(f"Created floor: {floor_result['status']}")
+    floor_result = _create_floor_mesh(room_data["boundary"], room_id)
+    logger.debug(f"Created floor: {floor_result['status']}")
 
     # Apply floor material
     if room_data.get("floor"):
@@ -375,37 +374,6 @@ def _create_room(room_data: dict[str, Any]):
             _create_object(obj_data)
         except Exception as e:
             logger.warning(e)
-
-
-def _check_object_duplicate_status(obj_data: dict[str, Any]) -> str:
-    """
-    Check if object already exists and determine what action to take.
-
-    Args:
-        obj_data: Dictionary containing object data
-
-    Returns:
-        String indicating status: "skip_unchanged", "recreate_moved", or "proceed_new"
-    """
-    object_id = obj_data.get("id")
-    object_name = obj_data.get("name", "Unnamed Object")
-    pos = obj_data.get("position", {"x": 0, "y": 0, "z": 0})
-    rot = obj_data.get("rotation", {"x": 0, "y": 0, "z": 0})
-
-    if not object_id:
-        return "proceed_new"
-
-    if _scene_tracker.object_exists_unchanged(object_id, pos, rot):
-        logger.debug(
-            f"Skipping duplicate object: {object_name} (id: {object_id}) - unchanged at {pos}"
-        )
-        return "skip_unchanged"
-
-    if _scene_tracker.object_exists_but_moved(object_id, pos, rot):
-        logger.debug(f"Object {object_name} (id: {object_id}) has moved - will recreate at {pos}")
-        return "recreate_moved"
-
-    return "proceed_new"
 
 
 def _check_object_duplicate_status(obj_data: dict[str, Any]) -> str:
@@ -629,7 +597,6 @@ def _create_floor_mesh(
     room_id: str,
     floor_thickness_m: float = 0.1,
     origin: str = "center",
-    room_category: str = "unknown",
 ) -> dict[str, Any]:
     """
     Args:
@@ -637,7 +604,6 @@ def _create_floor_mesh(
         room_id: Room identifier for naming
         floor_thickness_m: Thickness of the floor in meters (default: 0.1)
         origin: Origin placement - "center" or "min" (default: "center")
-        room_category: Room category from ENTITY_SUBTYPE_MAP (e.g., "bedroom", "bathroom")
 
     Returns:
         Dictionary with creation status and metadata
@@ -649,8 +615,8 @@ def _create_floor_mesh(
             "message": f"Room {room_id}: At least 3 boundary points required for floor mesh",
         }
 
-    floor_name = f"Floor_{room_category}_{room_id}"
-    mesh_name = f"FloorMesh_{room_category}_{room_id}"
+    floor_name = f"Floor_{room_id}"
+    mesh_name = f"FloorMesh_{room_id}"
 
     # Check if floor already exists
     if floor_name in bpy.data.objects:
@@ -869,13 +835,11 @@ def _create_window_cutout(
     window_boundary: list,
     z_bottom: float,
     z_top: float,
-    scale_factor: float = 1.1,
     extension_m: float = 0.05,
 ):
     """Create and apply a window cutout to a wall object.
 
     Expands the window boundary along its shorter dimension before applying a boolean cutout.
-    Falls back to uniform scaling if extension fails.
 
     Args:
         wall_obj: Blender wall object to cut
@@ -884,7 +848,6 @@ def _create_window_cutout(
         window_boundary: List of (x, y) tuples defining window polygon
         z_bottom: Bottom Z height of window cutout
         z_top: Top Z height of window cutout
-        scale_factor: Uniform scale factor used as fallback when expansion is not possible (default: 1.1)
         extension_m: Meters to extend the shorter dimension in each direction (default: 0.05m)
     """
     expanded_boundary = window_boundary
@@ -902,21 +865,13 @@ def _create_window_cutout(
                 elif width <= depth and width > 0:
                     scale_x = (width + 2 * extension_m) / width
 
-                if scale_x != 1.0 or scale_y != 1.0:
+                if (scale_x != 1.0 or scale_y != 1.0) and width > 0 and depth > 0:
                     buffered_poly = affinity.scale(
                         window_poly, xfact=scale_x, yfact=scale_y, origin="centroid"
                     )
 
             if buffered_poly and buffered_poly.is_valid and not buffered_poly.is_empty:
                 expanded_boundary = list(buffered_poly.exterior.coords[:-1])
-            else:
-                scaled_poly = affinity.scale(
-                    window_poly, xfact=scale_factor, yfact=scale_factor, origin="centroid"
-                )
-                if scaled_poly.is_valid and not scaled_poly.is_empty:
-                    expanded_boundary = list(scaled_poly.exterior.coords[:-1])
-                else:
-                    expanded_boundary = window_boundary
         else:
             expanded_boundary = window_boundary
     except Exception as e:
