@@ -23,7 +23,7 @@ from scene_builder.database.material import MaterialDatabase
 from scene_builder.definition.scene import Object, Room, Scene, Vector2
 from scene_builder.importer import objaverse_importer, test_asset_importer
 from scene_builder.logging import logger
-from scene_builder.msd_integration.loader import get_dominant_angle
+from scene_builder.msd_importer.loader import get_dominant_angle
 from scene_builder.tools.material_applicator import texture_floor_mesh
 from scene_builder.utils.blender import SceneSwitcher
 from scene_builder.utils.conversions import pydantic_to_dict
@@ -945,7 +945,7 @@ def _create_interior_door_cutout(
     z_top: float = 2.1,
     scale_factor: float = 1.20,
     scale_short_axis: bool = True,
-    debug=True,
+    debug=False,
 ):
     """Create and apply an interior door cutout to a wall object.
 
@@ -1124,6 +1124,152 @@ def _create_interior_door_cutout(
 
     # Clean up cutter object
     bpy.data.objects.remove(cutter_obj, do_unlink=True)
+
+
+def check_and_enable_door_addon() -> bool:
+    """Check if Door It! Interior addon is available and enable it if needed.
+    
+    Returns:
+        True if addon is available and enabled, False otherwise
+    """
+    import addon_utils
+    
+    addon_module = "DoorItInterior"
+    
+    # Check if addon is already enabled
+    if addon_utils.check(addon_module)[1]:
+        return True
+    
+    # Try to enable it
+    try:
+        bpy.ops.preferences.addon_enable(module=addon_module)
+        addon_utils.modules_refresh()
+        logger.debug(f"Enabled {addon_module} addon")
+        return True
+    except Exception as e:
+        logger.debug(f"Door It! Interior addon not available: {e}")
+        return False
+
+
+def create_door_from_boundary(
+    door_boundary: list,
+    door_id: str,
+    z_position: float = 0.0,
+    default_depth: float = 0.1,  # Default door thickness/depth
+    **door_settings
+) -> Optional[Dict[str, object]]:
+    """Create a Door It! Interior door object from a door boundary polygon.
+    
+    Args:
+        door_boundary: List of (x, y) tuples defining door polygon
+        door_id: Unique identifier for the door
+        z_position: Z-height to place the door (default: 0.0 for floor level)
+        default_depth: Default door depth/thickness in meters (default: 0.1m)
+        **door_settings: Additional settings to pass to create_interior_door
+        
+    Returns:
+        Dictionary with creation summary, or None if failed
+    """
+    # Check if Door It! addon is available
+    if not check_and_enable_door_addon():
+        logger.debug(
+            f"Skipping door creation for {door_id}: Door It! Interior addon not installed. "
+            "Install from: https://blendermarket.com/products/door-it-interior"
+        )
+        return None
+    
+    # Import Door It! functions
+    try:
+        from scene_builder.controllers.interior_door_controller import (
+            create_interior_door,
+            rescale_object_from_center,
+        )
+    except ImportError as e:
+        logger.error(f"Failed to import Door It! functions: {e}")
+        return None
+    
+    if not door_boundary or len(door_boundary) < 3:
+        logger.warning(f"Invalid door boundary for door {door_id}")
+        return None
+    
+    try:
+        # Create polygon and get basic properties
+        door_poly = Polygon(door_boundary)
+        centroid = door_poly.centroid
+        centroid_coords = (centroid.x, centroid.y)
+        
+        # Get rotation angle to align with axes
+        rotation_angle = get_dominant_angle([door_poly], strategy="complex_sum")
+        
+        # Rotate polygon to axis-aligned orientation
+        aligned_poly = affinity.rotate(
+            door_poly, rotation_angle, origin=centroid_coords, use_radians=False
+        )
+        
+        # Get axis-aligned dimensions
+        minx, miny, maxx, maxy = aligned_poly.bounds
+        width = maxx - minx
+        height = maxy - miny
+        
+        # Determine which is longer axis
+        is_width_dominant = width >= height
+        
+        # Map to Door It! coordinate system:
+        # x = depth (shorter axis, door thickness)
+        # y = width (longer axis, door opening width)
+        # z = height (door height)
+        if is_width_dominant:
+            door_depth = min(height, default_depth)  # Use smaller of actual or default
+            door_width = width  # Longer axis = door opening
+        else:
+            door_depth = min(width, default_depth)  # Use smaller of actual or default
+            door_width = height  # Longer axis = door opening
+        
+        # Door height (vertical dimension)
+        door_height = door_settings.pop("door_height", 2.1)  # Standard door height
+        
+        # Calculate location (centroid at floor level)
+        location = (centroid.x, centroid.y, z_position)
+        
+        # Calculate rotation in radians for Blender (rotate around Z-axis)
+        rotation_z = math.radians(-rotation_angle)
+        
+        logger.debug(
+            f"Door {door_id}: dimensions x={door_depth:.3f}m (depth), "
+            f"y={door_width:.3f}m (width), z={door_height:.3f}m (height), "
+            f"rotation={-rotation_angle:.1f}°"
+        )
+        
+        # Create the door using Door It! system
+        result = create_interior_door(
+            name=f"InteriorDoor_{door_id}",
+            location=location,
+            width=door_width,  # Door It! uses width parameter for opening width
+            height=door_height,
+            **door_settings
+        )
+        
+        # Apply rotation and rescale to align with boundary orientation
+        if result.get("created") or result.get("linked"):
+            door_obj = bpy.data.objects.get(result["object"])
+            if door_obj:
+                # Apply rotation
+                door_obj.rotation_euler.z = rotation_z
+                bpy.context.view_layer.update()
+                
+                # Rescale to exact dimensions using target_dimensions
+                target_dimensions = Vector((door_depth, door_width, door_height))
+                rescale_object_from_center(door_obj, target_dimensions)
+                
+                logger.debug(f"Created and positioned door '{door_obj.name}' at {location}")
+        
+        return result
+        
+    except Exception as e:
+        logger.warning(f"Failed to create door from boundary for {door_id}: {e}")
+        import traceback
+        logger.debug(traceback.format_exc())
+        return None
 
 
 # NOTE: NOT USED, may be neeeded for later exterior wall
@@ -2228,6 +2374,8 @@ def create_room_walls(
                 if not door_boundary:
                     continue
                 logger.debug(f"Creating interior door cutout {idx} for door {door_id}")
+                
+                # Create the cutout in the wall
                 _create_interior_door_cutout(
                     wall_obj=obj,
                     apt_id=str(door_id),
@@ -2236,6 +2384,23 @@ def create_room_walls(
                     z_bottom=0.0,
                     z_top=2.1,
                 )
+                
+                # Create the actual door object at this boundary
+                door_result = create_door_from_boundary(
+                    door_boundary=door_boundary,
+                    door_id=str(door_id),
+                    z_position=0.0,
+                    default_depth=0.1,  # 10cm door thickness
+                    door_height=2.1,  # 2.1m door height
+                    randomize_type=True,
+                    randomize_handle=True,
+                    randomize_material=True,
+                    randomize_color=False,
+                    paint_color=(1.0, 1.0, 1.0, 1.0),  # White door
+                )
+                
+                if door_result:
+                    logger.debug(f"Successfully created door object: {door_result.get('object')}")
 
         # logger.debug(f"Created wall for room {room.id} ({room.category})")
         walls_created += 1
