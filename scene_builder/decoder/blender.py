@@ -208,6 +208,10 @@ def floorplan_to_origin(
     Returns:
         Modified scene_data (rooms modified in-place)
     """
+    # Cast into dict if input is a Pydantic Scene
+    if isinstance(scene_data, Scene):
+        scene_data = pydantic_to_dict(scene_data)
+
     rooms = scene_data.get("rooms", [])
     if not rooms:
         return scene_data
@@ -1554,6 +1558,29 @@ def export_to_gltf(filepath: str, scene: str = None, exclude_grid: bool = True) 
     return filepath
 
 
+def debug_scene_summary(max_other: int = 20) -> dict:
+    """Return a quick summary of objects in the current scene.
+
+    Includes lists of floor and wall object names and a sample of other objects.
+    """
+    objs = list(bpy.context.scene.objects)
+    floors = [o.name for o in objs if o.type == "MESH" and o.name.startswith("Floor_")]
+    walls = [o.name for o in objs if o.type == "MESH" and o.name.startswith("Wall_")]
+    others = [(o.name, o.type) for o in objs if o.name not in floors + walls][:max_other]
+
+    summary = {
+        "count": len(objs),
+        "floors": floors,
+        "walls": walls,
+        "others": others,
+    }
+    logger.debug(
+        "Scene summary: count=%d, floors=%d, walls=%d, others(sample)=%d",
+        summary["count"], len(floors), len(walls), len(others)
+    )
+    return summary
+
+
 def _configure_output_image(format: str, resolution: int):
     format = format.upper()
     mapping = {"JPG": "JPEG"}
@@ -2304,6 +2331,7 @@ def create_room_walls(
                     door_boundary=door_boundary,
                     z_bottom=0.0,
                     z_top=2.1,
+                    # debug=True,  # DEBUG
                 )
 
         walls_created += 1

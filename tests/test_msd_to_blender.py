@@ -7,6 +7,8 @@ from pathlib import Path
 
 from scene_builder.decoder import blender
 from scene_builder.msd_integration.loader import MSDLoader
+from scene_builder.utils.conversions import pydantic_to_dict
+from scene_builder.utils.room import render_structure_links
 
 
 def test_msd_to_blender(door_cutout=True, window_cutout=True):
@@ -63,16 +65,7 @@ def test_msd_to_blender(door_cutout=True, window_cutout=True):
                 "apartment_count": len(apt_graphs),
                 "source": "MSD",
             },
-            "rooms": [
-                {
-                    "id": room.id,
-                    "category": room.category,
-                    "tags": room.tags,
-                    "boundary": [{"x": p.x, "y": p.y} for p in room.boundary],
-                    "objects": room.objects,
-                }
-                for room in all_rooms
-            ],
+            "rooms": pydantic_to_dict(all_rooms),
         }
 
         # Align floor plan 
@@ -82,10 +75,32 @@ def test_msd_to_blender(door_cutout=True, window_cutout=True):
             align_rotation=True
         )
 
+        # Render room ↔ structure (door/window) link visualization for debugging
+        structures = []
+        attachments = []
+        # for room_list in [all_rooms]:
+        for room_list in [scene_data["rooms"]]:
+        # for room_list in scene_data["rooms"]:
+            for room in room_list:
+                # if getattr(room, "structure", None):
+                if room["structure"]:
+                    # for s in room.structure:
+                    for s in room["structure"]:
+                        structures.append(s)
+                        # attachments.append((s.id, room.id))
+                        attachments.append((s["id"], room["id"]))
+
+        if structures:
+            links_img = output_dir / f"msd_building_{building_id}_floor_{floor_id}_structure_links.png"
+            render_structure_links(scene_data["rooms"], structures, attachments, links_img)
+            # render_structure_links(all_rooms, structures, attachments, links_img)
+            print(f"   ✓ Saved structure links viz: {links_img.name}")
+
         blender.parse_scene_definition(scene_data)
 
         # Create walls for each room (excluding windows and exterior doors)
-        walls_created = blender.create_room_walls(all_rooms, door_cutouts=door_cutout, window_cutouts=window_cutout)
+        # walls_created = blender.create_room_walls(all_rooms, door_cutouts=door_cutout, window_cutouts=window_cutout)
+        walls_created = blender.create_room_walls(scene_data["rooms"], door_cutouts=door_cutout, window_cutouts=window_cutout)
         if walls_created > 0:
             print(f"   ✓ Created {walls_created} room walls (excluding windows and exterior doors)")
 
