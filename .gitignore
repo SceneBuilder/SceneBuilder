@@ -259,5 +259,5 @@ MATERIAL_WORKFLOW.md
 CLAUDE.md
 
 # Large data files and addons
-scene_builder/msd_importer/data/mds_V2_5.372k.csv
-scene_builder/msd_importer/data/addons_zip/*.zip
+scene_builder/importer/msd_importer/data/mds_V2_5.372k.csv
+scene_builder/importer/msd_importer/data/addons_zip/*.zip

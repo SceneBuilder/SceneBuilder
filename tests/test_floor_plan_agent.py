@@ -49,7 +49,7 @@ async def test_floor_plan_agent_rectangular_classroom():
                 # Create visual output with floor and walls
                 print(f"\n✓ Creating Blender scene with floor and walls...")
                 try:
-                    from scene_builder.decoder import blender
+                    from scene_builder.decoder.blender import blender
                     from scene_builder.utils.conversions import pydantic_to_dict
 
                     room_data = pydantic_to_dict(room)

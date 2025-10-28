@@ -7,7 +7,7 @@ from pydantic_ai.messages import ModelMessage
 
 from rich.console import Console
 
-from scene_builder.decoder import blender
+from scene_builder.decoder.blender import blender
 from scene_builder.database.object import ObjectDatabase
 from scene_builder.definition.scene import Scene, Room, Object, Vector3
 from scene_builder.utils.conversions import pydantic_to_dict

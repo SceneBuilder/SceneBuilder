@@ -1,8 +1,8 @@
 import random
 from typing import Dict, Iterable, Optional, Sequence, Tuple
-import numpy as np
 
 import bpy
+import numpy as np
 from mathutils import Vector
 
 
@@ -260,8 +260,6 @@ def center_object_bottom(obj: bpy.types.Object):
     obj.location += Vector(offset)
     bpy.context.view_layer.update()
 
-    print(f"✅ Centered '{obj.name}' — bottom now aligned with world origin.")
-
 
 def rescale_object_from_center(obj: bpy.types.Object, target_dimensions: Vector):
     """Rescale the given object so its overall dimensions match target_dimensions,
@@ -299,7 +297,6 @@ def rescale_object_from_center(obj: bpy.types.Object, target_dimensions: Vector)
     # Force viewport and depsgraph update
     bpy.context.view_layer.update()
 
-    print(f"✅ Rescaled '{obj.name}' from center. New dimensions: {obj.dimensions}")
     return scale_factors
 
 

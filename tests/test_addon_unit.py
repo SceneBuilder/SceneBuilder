@@ -3,6 +3,7 @@
 import bpy
 import os
 import addon_utils
+from scene_builder.config import DOOR_ADDON_ZIP_PATH
 from pathlib import Path
 
 
@@ -49,9 +50,9 @@ if __name__ == "__main__":
     script_dir = Path(os.path.dirname(os.path.realpath(__file__)))
     
     tester = BlenderAddonTester(
-        addon_path="/tmp/Door It! Interior 4.0,4.1.zip",
+        addon_path=str(DOOR_ADDON_ZIP_PATH),
         addon_module="DoorItInterior",
-        output_dir=script_dir
+        output_dir=script_dir.parent / "test_output"
     )
     
     door_controller_script = (script_dir / "../scene_builder/controllers/interior_door_controller.py").resolve()

@@ -7,7 +7,7 @@ from rich.console import Console
 
 from scene_builder.config import DEBUG, generation_config
 from scene_builder.database.object import ObjectDatabase
-from scene_builder.decoder import blender
+from scene_builder.decoder.blender import blender
 # from scene_builder.definition.scene import Object, Room, Vector3
 from scene_builder.definition.scene import Floor, Object, ObjectBlueprint, Room, Scene, Vector3
 from scene_builder.logging import logger
