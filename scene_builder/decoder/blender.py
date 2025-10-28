@@ -2190,7 +2190,7 @@ def is_interior_door(door_boundary: list, check_distance: float = 0.4) -> bool:
 
 
 def create_room_walls(
-    rooms: list,
+    rooms: list[Room],
     wall_height: float = 2.7,
     wall_thickness: float = 0.05,
     door_cutouts: bool = True,
