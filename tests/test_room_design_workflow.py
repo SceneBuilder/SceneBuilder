@@ -30,7 +30,6 @@ from scene_builder.utils.geometry import round_vector2_list, simplify_polygon, s
 from scene_builder.utils.image import create_gif_from_images
 from scene_builder.utils.pai import transform_paths_to_binary
 from scene_builder.utils.pydantic import save_yaml
-from scene_builder.utils.room import assign_structures_to_rooms, render_structure_links
 from scene_builder.workflow.agents import generic_agent, room_design_agent
 
 # from scene_builder.workflow.graphs import (
@@ -732,32 +731,7 @@ def test_multi_room_design_workflow(case: str):
             show_labels=True,
             figsize=(10, 10)
         )
-    from scene_builder.definition.scene import Structure
-    # Distribute structural elements into `Room`s. (De-duplicate when parsing in Blender later.)
-    # TODO: move this logic into `loader.py` (either into `convert_graph_to_rooms()` or a new function called `distribute_structure_into_rooms(list[Room]) → list[Room]`) after testing
-    # Separate structures from room data
-    rooms_to_remove = []
-    structures = []
-    for room in scene_data["rooms"]:
-        if room.category in ["window", "door"]:
-            structures.append(Structure(type=room.category, id=room.id, boundary=room.boundary))
-            # scene_data["rooms"].remove(room) # seems to cause iteration errors; let's do it lazy.
-            rooms_to_remove.append(room)
-    for structure, orig_room in zip(structures, rooms_to_remove):
-        scene_data["rooms"].remove(orig_room)
-    attachments = assign_structures_to_rooms(
-        scene_data["rooms"],
-        structures,
-        distance_threshold=0.05,
-    )
-    logger.debug("Attached %d structures to rooms", len(attachments))
-    if DEBUG:
-        render_structure_links(
-            scene_data["rooms"],
-            structures,
-            attachments,
-            Path(f"test_output/{case}/structure_debug.png"),
-        )
+    # Structural elements are already distributed into rooms by default in loader.convert_graph_to_rooms()
 
     Path(f"test_output/{case}").mkdir(parents=True, exist_ok=True)
     # Turn SceneBuilder-format floor plan graph into MSD-format for plotting (TEMP?)

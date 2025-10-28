@@ -6,9 +6,7 @@ from collections import defaultdict
 from pathlib import Path
 
 from scene_builder.decoder import blender
-from scene_builder.definition.scene import Structure
 from scene_builder.msd_integration.loader import MSDLoader
-from scene_builder.utils.room import assign_structures_to_rooms
 
 
 def test_msd_to_blender(door_cutout=True, window_cutout=True):
@@ -50,21 +48,9 @@ def test_msd_to_blender(door_cutout=True, window_cutout=True):
         apartment_rooms = []
         for apt_id, graph in apt_graphs:
             rooms = loader.convert_graph_to_rooms(graph)
-
-            # Separate structures (windows/doors) from rooms and attach to nearest rooms
-            structures = [
-                Structure(id=r.id, type=r.category, boundary=r.boundary)
-                for r in rooms
-                if r.category in ("window", "door")
-            ]
-            normal_rooms = [r for r in rooms if r.category not in ("window", "door")]
-
-            # Attach structural elements to rooms
-            assign_structures_to_rooms(normal_rooms, structures, distance_threshold=0.05)
-
-            all_rooms.extend(normal_rooms)
-            apartment_rooms.append((apt_id, normal_rooms))
-            print(f"    {apt_id}: {len(normal_rooms)} entities (rooms only)")
+            all_rooms.extend(rooms)
+            apartment_rooms.append((apt_id, rooms))
+            print(f"    {apt_id}: {len(rooms)} entities (rooms only)")
 
         # Prepare scene data for this floor
         scene_data = {

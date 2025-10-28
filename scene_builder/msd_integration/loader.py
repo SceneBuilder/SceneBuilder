@@ -23,8 +23,9 @@ from PIL import Image
 from shapely.geometry import Polygon
 
 from scene_builder.config import MSD_CSV_PATH
-from scene_builder.definition.scene import Room, Vector2
+from scene_builder.definition.scene import Room, Structure, Vector2
 from scene_builder.utils.geometry import round_vector2
+from scene_builder.utils.room import assign_structures_to_rooms
 
 # Entity subtype mapping (MSD entity_subtype → SceneBuilder category)
 # Comment or uncomment to add or remove entities
@@ -436,7 +437,13 @@ class MSDLoader:
         buildings = self.get_building_list()
         return random.choice(buildings) if buildings else None
 
-    def convert_graph_to_rooms(self, graph: nx.Graph) -> list[Room]:
+    def convert_graph_to_rooms(
+        self,
+        graph: nx.Graph,
+        *,
+        include_structure: bool = True,
+        distance_threshold: float = 0.05,
+    ) -> list[Room]:
         # NOTE: This is not compatible with 'msd' format `nx.graph`s anymore, for some reason.
         # Let's look into https://github.com/SceneBuilder/SceneBuilder/tree/50bbf93ee1bc1562b4aa67357ae602dd338dd31d/scene_builder to find out.
         """Convert NetworkX graph nodes to SceneBuilder Room objects using entity_subtype.
@@ -444,7 +451,9 @@ class MSDLoader:
         This method uses ENTITY_SUBTYPE_MAP which filters entities based on their
         entity_subtype attribute (e.g., "BEDROOM", "LIVING_ROOM"). More selective
         """
-        rooms = []
+        # Collect rooms and structural elements separately
+        rooms: list[Room] = []
+        structures: list[Structure] = []
 
         apartment_id = graph.graph.get("apartment_id", "unknown")
         apt_prefix = apartment_id[:8] if len(apartment_id) >= 8 else apartment_id
@@ -470,17 +479,32 @@ class MSDLoader:
             if category is None:
                 continue
 
-            room = Room(
-                id=f"msd_{apt_prefix}_{node_id}", # ensures unique id; future-proof
-                category=category,
-                tags=["msd"],
-                boundary=coords,
-                objects=[],
-            )
+            uid = f"msd_{apt_prefix}_{node_id}"  # NOTE: ensures unique id; future-proof
 
-            rooms.append(room)
+            # Detect structural elements
+            if category in ("window", "door") and coords:
+                structures.append(Structure(id=uid, type=category, boundary=coords))
+
+            else:
+                # Regular room
+                room = Room(
+                    id=uid,
+                    category=category,
+                    tags=["msd"],
+                    boundary=coords,
+                    objects=[],
+                )
+                rooms.append(room)
+
+        if not rooms:
+            return rooms
+
+        # Attach structural elements to connected rooms
+        if include_structure and structures:
+            assign_structures_to_rooms(rooms, structures, distance_threshold)
 
         return rooms
+
 
     def graph_to_scene_data(self, graph: nx.Graph) -> dict:
         """Convert graph to scene data dict"""
