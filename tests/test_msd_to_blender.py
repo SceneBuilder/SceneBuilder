@@ -54,6 +54,7 @@ def _render_structure_links_for_rooms(rooms_dict: list, output_path: Path) -> bo
 def test_msd_to_blender(
     door_cutout: bool = True,
     window_cutout: bool = True,
+    entire_floor: bool = False,
     building_id: Optional[int] = None,  # random by default
     floor_id: Optional[str] = None,
     align_rotation: bool = True,
@@ -74,38 +75,99 @@ def test_msd_to_blender(
     for floor_id, apt_graphs in floors.items():
         print(f"Floor {floor_id}: {len(apt_graphs)} apartments")
 
-        for apt_id, graph in apt_graphs:
-            apt_scene_dict = loader.graph_to_scene_data(graph)
-            apt_scene = Scene.model_validate(apt_scene_dict)  # cast to pydantic
+        if entire_floor:
+            # Aggregate all rooms across apartments into a single floor-level scene
+            all_rooms = []
+            for _, graph in apt_graphs:
+                apt_scene = loader.apt_graph_to_scene(graph)
+                all_rooms.extend(apt_scene.rooms)
 
-            scene_data = blender.floorplan_to_origin(apt_scene, align_rotation=align_rotation)
+            # Build a combined floor Scene, normalize, and decode once
+            floor_scene = Scene(
+                category="residential",
+                tags=["msd", "floor"],
+                height_class="single_story",
+                rooms=all_rooms,
+            )
+
+            scene_data = blender.floorplan_to_origin(floor_scene, align_rotation=align_rotation)
             rooms_dict = scene_data.get("rooms", [])
 
             if render_links:
-                apt_prefix = str(apt_id)[:8]
-                links_img = OUTPUT_DIR / f"msd_building_{building_id}_floor_{floor_id}_apt_{apt_prefix}_structure_links.png"  # fmt:skip
+                links_img = OUTPUT_DIR / f"msd_building_{building_id}_floor_{floor_id}_structure_links.png"
                 _render_structure_links_for_rooms(rooms_dict, links_img)
 
             blender.parse_scene_definition(scene_data)
-            walls_created = blender.create_room_walls(rooms_dict, door_cutouts=door_cutout, window_cutouts=window_cutout)  # fmt:skip
-            if walls_created > 0:
-                print(f"   ✓ Created {walls_created} room walls for {apt_id}")
 
-            # Save file and and create render
-            apt_prefix = str(apt_id)[:8]
-            output_file = OUTPUT_DIR / f"msd_building_{building_id}_floor_{floor_id}_apt_{apt_prefix}_door_cutouts={door_cutout}_window_cutouts={window_cutout}.blend"  # fmt:skip
+            # Create walls per-room to keep cutouts local and performant
+            walls_created_total = 0
+            for room in rooms_dict:
+                walls_created_total += blender.create_room_walls(
+                    [room], door_cutouts=door_cutout, window_cutouts=window_cutout
+                )
+            if walls_created_total > 0:
+                print(f"   ✓ Created {walls_created_total} room walls for floor {floor_id}")
+
+            # Save floor-level file and render once
+            output_file = OUTPUT_DIR / (
+                f"msd_building_{building_id}_floor_{floor_id}_"
+                f"door_cutouts={door_cutout}_window_cutouts={window_cutout}.blend"
+            )
             blender.save_scene(str(output_file))
             print(f"   ✓ Saved: {output_file.name}")
 
             render_path = blender.create_scene_visualization(
                 resolution=1024,
                 format="PNG",
-                filename=f"msd_building_{building_id}_floor_{floor_id}_apt_{apt_prefix}",
+                filename=f"msd_building_{building_id}_floor_{floor_id}",
                 output_dir=str(OUTPUT_DIR),
                 view="top_down",
                 show_grid=False,
             )
             print(f"   ✓ Rendered: {render_path.name}")
+
+        else:
+            # Default: apartment-per-file workflow (existing behavior)
+            for apt_id, graph in apt_graphs:
+                apt_scene = loader.apt_graph_to_scene(graph)
+
+                scene_data = blender.floorplan_to_origin(
+                    apt_scene, align_rotation=align_rotation
+                )
+                rooms_dict = scene_data.get("rooms", [])
+
+                if render_links:
+                    apt_prefix = str(apt_id)[:8]
+                    links_img = OUTPUT_DIR / (
+                        f"msd_building_{building_id}_floor_{floor_id}_apt_{apt_prefix}_structure_links.png"
+                    )
+                    _render_structure_links_for_rooms(rooms_dict, links_img)
+
+                blender.parse_scene_definition(scene_data)
+                walls_created = blender.create_room_walls(
+                    rooms_dict, door_cutouts=door_cutout, window_cutouts=window_cutout
+                )
+                if walls_created > 0:
+                    print(f"   ✓ Created {walls_created} room walls for {apt_id}")
+
+                # Save file and and create render
+                apt_prefix = str(apt_id)[:8]
+                output_file = OUTPUT_DIR / (
+                    f"msd_building_{building_id}_floor_{floor_id}_apt_{apt_prefix}_"
+                    f"door_cutouts={door_cutout}_window_cutouts={window_cutout}.blend"
+                )
+                blender.save_scene(str(output_file))
+                print(f"   ✓ Saved: {output_file.name}")
+
+                render_path = blender.create_scene_visualization(
+                    resolution=1024,
+                    format="PNG",
+                    filename=f"msd_building_{building_id}_floor_{floor_id}_apt_{apt_prefix}",
+                    output_dir=str(OUTPUT_DIR),
+                    view="top_down",
+                    show_grid=False,
+                )
+                print(f"   ✓ Rendered: {render_path.name}")
 
 
 if __name__ == "__main__":
@@ -114,6 +176,7 @@ if __name__ == "__main__":
     test_msd_to_blender(
         door_cutout=True,
         window_cutout=True,
+        entire_floor=True,
         building_id=2144,
         floor_id=None,
         align_rotation=True,

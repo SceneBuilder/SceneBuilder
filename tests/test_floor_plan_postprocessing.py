@@ -42,10 +42,10 @@ def _run_orientation_correction(
 
         apartment_id = random.choice(apartments)
         scene = loader.get_scene(apartment_id)
-        if not scene or not scene["rooms"]:
+        if scene is None or not scene.rooms:
             continue
 
-        rooms = scene["rooms"]
+        rooms = scene.rooms
         original_polys = [_room_to_polygon(room) for room in rooms]
         _, correction_angle = normalize_floor_plan_orientation(rooms, strategy=strategy)
         corrected_polys = [_room_to_polygon(room) for room in rooms]

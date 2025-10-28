@@ -23,7 +23,7 @@ from PIL import Image
 from shapely.geometry import Polygon
 
 from scene_builder.config import MSD_CSV_PATH
-from scene_builder.definition.scene import Room, Structure, Vector2
+from scene_builder.definition.scene import Room, Scene, Structure, Vector2
 from scene_builder.utils.geometry import round_vector2
 from scene_builder.utils.room import assign_structures_to_rooms
 
@@ -128,9 +128,7 @@ def get_dominant_angle(
         # NOTE: based on `length_weighted`, but applies averaging afterwards to
         #       combat histogram-induced bin truncation.
         weights = np.array(edge_lengths)
-        hist, bin_edges = np.histogram(
-            normalized_angles, bins=90, range=(0, 90), weights=weights
-        )
+        hist, bin_edges = np.histogram(normalized_angles, bins=90, range=(0, 90), weights=weights)
         dominant_angle_bin = int(np.argmax(hist))
         bin_indices = np.digitize(normalized_angles, bin_edges, right=False) - 1
         bin_indices = np.clip(bin_indices, 0, len(hist) - 1)
@@ -505,29 +503,42 @@ class MSDLoader:
 
         return rooms
 
+    def apt_graph_to_scene(self, graph: nx.Graph) -> Scene:
+        """Convert a single-apartment graph to a Scene (pydantic) object.
 
-    def graph_to_scene_data(self, graph: nx.Graph) -> dict:
-        """Convert graph to scene data dict"""
+        Returns a Scene; apartment-specific metadata (e.g., apartment_id) is not
+        embedded in the Scene model, but remains available from the graph if
+        needed by callers.
+        """
         rooms = self.convert_graph_to_rooms(graph)
+        return Scene(
+            category="residential",
+            tags=["msd", "apartment"],
+            height_class="single_story",
+            rooms=rooms,
+        )
 
-        return {
-            "category": "residential",
-            "tags": ["msd", "apartment"],
-            "height_class": "single_story",
-            "rooms": rooms,
-            "metadata": {
-                "apartment_id": graph.graph.get("apartment_id", "unknown"),
-                "room_count": len(rooms),
-                "source": "MSD",
-            },
-        }
+    def floor_graph_to_scene(self, graph: nx.Graph) -> Scene:
+        """Convert a floor-level graph (multiple apartments) to a Scene.
 
-    def get_scene(self, apartment_id: str) -> Optional[dict]:
-        """Create graph and convert to scene data in one step"""
+        Returns a Scene; building/floor/apartment metadata is not embedded in
+        the Scene model and should be tracked separately by callers if needed.
+        """
+        rooms = self.convert_graph_to_rooms(graph)
+        return Scene(
+            category="residential",
+            tags=["msd", "floor"],
+            height_class="single_story",
+            rooms=rooms,
+        )
+
+    # NOTE: Only used in `test_floor_plan_postprocessing.py`; TODO: refactor out.
+    def get_scene(self, apartment_id: str) -> Optional[Scene]:
+        """Create graph and convert to a Scene in one step."""
         graph = self.create_graph(apartment_id)
         if graph is None:
             return None
-        return self.graph_to_scene_data(graph)
+        return self.apt_graph_to_scene(graph)
 
     def render_floor_plan(
         self,

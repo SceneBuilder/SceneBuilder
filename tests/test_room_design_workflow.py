@@ -695,7 +695,14 @@ def test_multi_room_design_workflow(case: str):
     floor_plan_id = test_data["floor_plan_id"]
     # graph = msd_loader.create_graph(floor_plan_id)  # OG
     graph = msd_loader.create_graph(floor_plan_id, format="sb")  # ALT
-    scene_data = msd_loader.graph_to_scene_data(graph)
+    scene = msd_loader.apt_graph_to_scene(graph)
+    # Keep a dict-like handle with Pydantic Room objects for downstream steps
+    scene_data = {
+        'category': scene.category,
+        'tags': scene.tags,
+        'height_class': scene.height_class,
+        'rooms': scene.rooms,
+    }
     # NOTE: green and purple rooms don't seem to be a part of scene schema for some reason. TODO: investigate
 
     # Normalize floor plan orientation
