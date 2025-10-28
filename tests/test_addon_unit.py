@@ -7,7 +7,7 @@ from scene_builder.config import DOOR_ADDON_ZIP_PATH
 from pathlib import Path
 
 
-class BlenderAddonTester:
+class BlenderAddonManager:
     """Test harness for Blender addons with door randomization."""
     
     def __init__(self, addon_path: str, addon_module: str, output_dir: Path):
@@ -49,11 +49,11 @@ class BlenderAddonTester:
 if __name__ == "__main__":
     script_dir = Path(os.path.dirname(os.path.realpath(__file__)))
     
-    tester = BlenderAddonTester(
+    tester = BlenderAddonManager(
         addon_path=str(DOOR_ADDON_ZIP_PATH),
         addon_module="DoorItInterior",
         output_dir=script_dir.parent / "test_output"
     )
     
-    door_controller_script = (script_dir / "../scene_builder/controllers/interior_door_controller.py").resolve()
+    door_controller_script = (script_dir / "../scene_builder/controllers/interior_door.py").resolve()
     output_file = tester.run_test(door_controller_script, "output.blend")

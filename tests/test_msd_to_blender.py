@@ -9,7 +9,7 @@ from pathlib import Path
 from loguru import logger
 
 from scene_builder.decoder.blender import blender
-from scene_builder.importer.msd_importer.loader import MSDLoader
+from scene_builder.importer.msd.loader import MSDLoader
 from scene_builder.utils.blender import install_door_it_addon
 
 logger.remove()

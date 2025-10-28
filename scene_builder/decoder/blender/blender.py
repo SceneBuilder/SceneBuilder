@@ -23,7 +23,7 @@ from scene_builder.database.material import MaterialDatabase
 from scene_builder.definition.scene import Object, Room, Scene, Vector2
 from scene_builder.importer import objaverse_importer, test_asset_importer
 from scene_builder.logging import logger
-from scene_builder.importer.msd_importer.loader import get_dominant_angle
+from scene_builder.importer.msd.loader import get_dominant_angle
 from scene_builder.tools.material_applicator import texture_floor_mesh
 from scene_builder.utils.blender import SceneSwitcher
 from scene_builder.utils.conversions import pydantic_to_dict
@@ -1041,7 +1041,7 @@ def _create_interior_door_cutout(
             ax.set_aspect("equal")
             ax.legend()
 
-            debug_dir = Path(__file__).resolve().parents[1] / "importer" / "msd_importer" / "image_save"
+            debug_dir = Path(__file__).resolve().parents[1] / "importer" / "msd" / "image_save"
             debug_dir.mkdir(parents=True, exist_ok=True)
             debug_path = debug_dir / f"interior_door_{apt_id}_{door_idx}.png"
 
@@ -1180,7 +1180,7 @@ def create_door_from_boundary(
     
     # Import Door It! functions
     try:
-        from scene_builder.decoder.controllers.interior_door_controller import (
+        from scene_builder.decoder.blender.controllers.interior_door import (
             create_interior_door,
             rescale_object_from_center,
         )
