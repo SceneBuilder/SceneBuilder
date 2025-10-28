@@ -9,11 +9,11 @@ from rich.panel import Panel
 from rich.syntax import Syntax
 
 from scene_builder.decoder import blender
-from scene_builder.definition.scene import Room
+from scene_builder.definition.scene import Room, Scene
 from scene_builder.workflow.graphs import main_graph
 from scene_builder.workflow.states import MainState
 from scene_builder.utils.blender import SceneSwitcher
-from scene_builder.utils.conversions import pydantic_to_dict
+from scene_builder.utils.conversions import pydantic_to_dict, pydantic_from_yaml
 
 console = Console()
 app = typer.Typer(help="SceneBuilder: Generate 3D scenes using AI")
@@ -100,19 +100,19 @@ def decode_room(
 
     console.print(f"[bold]Loading room definition from:[/] {yaml_path}")
 
-    # Load YAML file
-    with open(yaml_path) as f:
-        room_data: dict = yaml.safe_load(f)
+    # Load YAML file as Pydantic model
+    room: Room = pydantic_from_yaml(yaml_path, Room)
 
     # Parse and create Blender scene
-    blender.parse_room_definition(room_data, clear=True)
-    with SceneSwitcher(room_data["id"]) as active_scene:
-        # Add walls if requested
+    blender.parse_room_definition(room, clear=True)
+    with SceneSwitcher(room.id) as active_scene:
+        # Add walls with structural cutouts if requested
         if with_walls:
-            outline = blender.get_apartment_outline([Room(**room_data)])
-            if outline:
-                blender.create_apartment_walls([(room_data["id"], outline)])
-                console.print("[bold green]✓[/] Added walls around room boundary")
+            walls_created = blender.create_room_walls([room])
+            if walls_created > 0:
+                console.print(f"[bold green]✓[/] Created {walls_created} wall(s) with structural cutouts")
+            else:
+                console.print("[bold yellow]•[/] No walls created (missing or invalid boundary)")
 
         blender.setup_lighting_foundation(bpy.context.scene)
         blender.setup_post_processing(bpy.context.scene)
@@ -121,7 +121,7 @@ def decode_room(
     # Export based on file extension
     output_suffix = output.suffix.lower()
     if output_suffix in ['.gltf', '.glb']:
-        blender.export_to_gltf(str(output), scene=room_data["id"], exclude_grid=exclude_grid)
+        blender.export_to_gltf(str(output), scene=room.id, exclude_grid=exclude_grid)
         console.print(
             Panel(
                 f"Room scene exported to GLTF: [bold cyan]{output}[/bold cyan]",
@@ -166,24 +166,19 @@ def decode_scene(
 
     console.print(f"[bold]Loading scene definition from:[/] {yaml_path}")
 
-    # Load YAML file
-    with open(yaml_path) as f:
-        scene_data = yaml.safe_load(f)
+    # Load YAML file as Pydantic model
+    scene: Scene = pydantic_from_yaml(yaml_path, Scene)
 
     # Parse and create Blender scene
-    blender.parse_scene_definition(scene_data)
+    blender.parse_scene_definition(scene)
 
-    # Add walls if requested
+    # Add walls with structural cutouts if requested
     if with_walls:
-        apartment_outlines = []
-        for room_data in scene_data.get("rooms", []):
-            outline = blender.get_apartment_outline([Room(**room_data)])
-            if outline:
-                apartment_outlines.append((room_data["id"], outline))
-
-        if apartment_outlines:
-            blender.create_apartment_walls(apartment_outlines)
-            console.print(f"[bold green]✓[/] Added walls for {len(apartment_outlines)} room(s)")
+        walls_created = blender.create_room_walls(scene.rooms)
+        if walls_created > 0:
+            console.print(f"[bold green]✓[/] Created walls for {walls_created} room(s) with structural cutouts")
+        else:
+            console.print("[bold yellow]•[/] No walls created (missing or invalid boundaries)")
 
     blender.setup_lighting_foundation(bpy.context.scene)
     blender.setup_post_processing(bpy.context.scene)
