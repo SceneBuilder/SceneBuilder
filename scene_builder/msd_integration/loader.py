@@ -447,7 +447,7 @@ class MSDLoader:
         rooms = []
 
         apartment_id = graph.graph.get("apartment_id", "unknown")
-        # apt_prefix = apartment_id[:8] if len(apartment_id) >= 8 else apartment_id
+        apt_prefix = apartment_id[:8] if len(apartment_id) >= 8 else apartment_id
 
         for node_id, attrs in graph.nodes(data=True):
             if "geometry" not in attrs:
@@ -471,8 +471,7 @@ class MSDLoader:
                 continue
 
             room = Room(
-                # id=f"msd_{apt_prefix}_{node_id}", # NOTE: deactivated for data cleanliness
-                id=f"{node_id}",
+                id=f"msd_{apt_prefix}_{node_id}", # ensures unique id; future-proof
                 category=category,
                 tags=["msd"],
                 boundary=coords,
