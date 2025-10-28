@@ -40,7 +40,7 @@ class GenerationConfig(BaseModel):
 
 
 # note: MSD data path in jkim3191 local
-MSD_CSV_PATH = Path(__file__).parent.parent / "external" / "Door It! Interior 4.0,4.1.zip"
+MSD_CSV_PATH = Path(__file__).parent / "importer" / "msd" / "data" / "mds_V2_5.372k.csv"
 # door zip adding.
 DOOR_ADDON_ZIP_PATH = Path(__file__).parent.parent / "external" / "Door It! Interior 4.0,4.1.zip" 
 
