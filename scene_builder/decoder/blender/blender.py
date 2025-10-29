@@ -9,9 +9,11 @@ from typing import Any, Dict, Optional, Tuple
 
 import bpy
 import bmesh
-import addon_utils  
+import addon_utils
 import numpy as np
 import yaml
+from matplotlib import pyplot as plt
+from PIL import Image
 from mathutils import Vector
 from mathutils.geometry import tessellate_polygon
 from scipy.spatial.transform import Rotation
@@ -24,7 +26,7 @@ from scene_builder.database.material import MaterialDatabase
 from scene_builder.decoder.blender.controllers.interior_door import create_interior_door
 from scene_builder.definition.scene import Object, Room, Scene, Vector2
 from scene_builder.importer import objaverse_importer, test_asset_importer
-from scene_builder.importer.msd.loader import get_dominant_angle
+from scene_builder.importer.msd.loader import get_dominant_angle, get_longest_edge_angle
 from scene_builder.logging import logger
 from scene_builder.tools.material_applicator import texture_floor_mesh
 from scene_builder.utils.blender import SceneSwitcher
@@ -1018,11 +1020,6 @@ def _create_interior_door_cutout(
 
         # TEMP: visualization for debugging orthogonal scaling
         if debug:
-            from pathlib import Path
-
-            from matplotlib import pyplot as plt
-            from PIL import Image
-
             x, y = door_poly.exterior.xy
             sx, sy = scaled_poly.exterior.xy
 
@@ -1127,7 +1124,6 @@ def _create_interior_door_cutout(
 def check_and_enable_door_addon() -> bool:
     """Enable Door It! Interior addon."""
 
-
     addon_module = (
         "DoorItInterior"  # NOTE: more addon_moudle will be added for exterior walls, windows, etc.
     )
@@ -1162,8 +1158,7 @@ def create_door_from_boundary(
     centroid = door_poly.centroid
     centroid_coords = (centroid.x, centroid.y)
 
-    # Get rotation angle to align with axes
-    rotation_angle = get_dominant_angle([door_poly], strategy="complex_sum")
+    rotation_angle = get_longest_edge_angle(door_poly)
 
     # Rotate polygon to axis-aligned orientation
     aligned_poly = affinity.rotate(
@@ -1182,12 +1177,14 @@ def create_door_from_boundary(
     # x = depth (shorter axis, door thickness)
     # y = width (longer axis, door opening width)
     # z = height (door height)
+    clearance_per_side = 0.04  # Add 0.02m clearance on each side (0.04m total)
+
     if is_width_dominant:
         door_depth = min(height, default_depth)  # Use smaller of actual or default
-        door_width = width  # Longer axis = door opening
+        door_width = width + (clearance_per_side * 2)  # Longer axis + clearance
     else:
         door_depth = min(width, default_depth)  # Use smaller of actual or default
-        door_width = height  # Longer axis = door opening
+        door_width = height + (clearance_per_side * 2)  # Longer axis + clearance
 
     # Door height (vertical dimension)
     door_height = door_settings.pop("door_height", 2.1)  # Standard door height
@@ -1201,31 +1198,25 @@ def create_door_from_boundary(
         f"rotation={-rotation_angle:.1f}°"
     )
 
-    # Create the door using Door It! system
+    # Create the door using Door It! system (rotation is applied in create_interior_door)
     result = create_interior_door(
         name=f"InteriorDoor_{door_id}",
         location=location,
+        rotation_angle=rotation_angle + 90,  # Add 90° to align door with boundary
         width=door_width,  # Door It! uses width parameter for opening width
         height=door_height,
         **door_settings,
     )
 
-    # Verify door and empty controller creation
+    # Log door creation
     if result.get("created") or result.get("linked"):
         door_obj = bpy.data.objects.get(result["object"])
-        if door_obj:
-            # Verify the empty controller exists (door is parented to it)
-            empty_name = f"DoorIt_Controller_InteriorDoor_Arrow{door_id}"
-            empty_obj = bpy.data.objects.get(empty_name)
+        controller_name = result.get("controller")
 
-            if empty_obj:
-                logger.debug(
-                    f"Created door '{door_obj.name}' at {location} with empty controller '{empty_name}'"
-                )
-            else:
-                logger.debug(
-                    f"Created door '{door_obj.name}' at {location} (empty controller not found)"
-                )
+        if door_obj and controller_name:
+            logger.debug(
+                f"Created door '{door_obj.name}' at {location} with rotation {-rotation_angle:.1f}° via empty controller '{controller_name}'"
+            )
 
     return result
 

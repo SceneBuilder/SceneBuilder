@@ -1,3 +1,4 @@
+import math  # 
 import random
 from typing import Dict, Iterable, Optional, Sequence, Tuple
 
@@ -238,6 +239,7 @@ def apply_interior_door_settings(
 def create_interior_door(
     name: str,
     location: Sequence[float],
+    rotation_angle: float = 0.0,
     width: Optional[float] = None,
     height: Optional[float] = None,
     door_type: Optional[int] = None,
@@ -386,11 +388,17 @@ def create_interior_door(
     # Step 4: Move empty to door_boundary centroid (door moves with it due to parenting)
     empty_obj.location = location_vec
 
+    # Step 5: Apply rotation to empty
+    rotation_z = math.radians(rotation_angle)
+    empty_obj.rotation_euler.z = rotation_z
+    bpy.context.view_layer.update()
+
     print(f"  ✓ Created controller '{empty_name}' and moved door to door_boundary centroid for '{door_object.name}'.")
 
 
     return {
         "object": door_object.name,
+        "controller": empty_name,
         "created": True,
         "settings": settings_summary,
     }
@@ -417,6 +425,8 @@ if __name__ == "__main__":
     NEW_DOOR = {
         "name": "DoorIt_Example",
         "location": (0.0, 0.0, 0.0),
+        "rotation_angle": 0.0,  
+
         **SETTINGS,
     }
 
