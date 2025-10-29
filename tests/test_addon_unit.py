@@ -55,5 +55,5 @@ if __name__ == "__main__":
         output_dir=script_dir.parent / "test_output"
     )
     
-    door_controller_script = (script_dir / "../scene_builder/controllers/interior_door.py").resolve()
+    door_controller_script = (script_dir / "../scene_builder/decoder/blender/controllers/interior_door.py").resolve()
     output_file = tester.run_test(door_controller_script, "output.blend")

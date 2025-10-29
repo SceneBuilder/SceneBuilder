@@ -2,7 +2,6 @@ import random
 from typing import Dict, Iterable, Optional, Sequence, Tuple
 
 import bpy
-import numpy as np
 from mathutils import Vector
 
 
@@ -236,70 +235,6 @@ def apply_interior_door_settings(
     return results
 
 
-def center_object_bottom(obj: bpy.types.Object):
-    """Center the object so its bottom center aligns with its origin (world 0,0,0)."""
-    depsgraph = bpy.context.evaluated_depsgraph_get()
-    obj_eval = obj.evaluated_get(depsgraph)
-    mesh = obj_eval.to_mesh()
-
-    # Convert vertices to world coordinates
-    verts = np.array([obj.matrix_world @ v.co for v in mesh.vertices])
-    obj_eval.to_mesh_clear()
-
-    # Compute bounds
-    min_x, max_x = np.min(verts[:, 0]), np.max(verts[:, 0])
-    min_y, max_y = np.min(verts[:, 1]), np.max(verts[:, 1])
-    min_z, max_z = np.min(verts[:, 2]), np.max(verts[:, 2])
-
-    # Compute bottom-center offset (move object so base is on Z=0, centered in X/Y)
-    center_x = (min_x + max_x) / 2
-    center_y = (min_y + max_y) / 2
-    offset = (-center_x, -center_y, -min_z)
-
-    # Apply offset to object location
-    obj.location += Vector(offset)
-    bpy.context.view_layer.update()
-
-
-def rescale_object_from_center(obj: bpy.types.Object, target_dimensions: Vector):
-    """Rescale the given object so its overall dimensions match target_dimensions,
-    scaling from the object's center rather than from one corner.
-
-    The object's visual position remains roughly centered after scaling.
-    """
-    if obj is None:
-        raise ValueError("No object provided for rescaling.")
-    if not isinstance(target_dimensions, Vector):
-        raise TypeError("target_dimensions must be a mathutils.Vector.")
-    if target_dimensions.x <= 0 or target_dimensions.y <= 0 or target_dimensions.z <= 0:
-        raise ValueError("All target dimensions must be positive values.")
-
-    # Ensure geometry is up to date before reading dimensions
-    bpy.context.view_layer.update()
-
-    current_dimensions = obj.dimensions.copy()
-
-    # Avoid division by zero
-    scale_factors = Vector((
-        target_dimensions.x / current_dimensions.x if current_dimensions.x else 1.0,
-        target_dimensions.y / current_dimensions.y if current_dimensions.y else 1.0,
-        target_dimensions.z / current_dimensions.z if current_dimensions.z else 1.0,
-    ))
-
-    # Compute offset to visually keep the object centered
-    delta = target_dimensions - current_dimensions
-    offset = Vector((-delta.x / 2, -delta.y / 2, -delta.z / 2))
-
-    # Apply scaling and offset
-    obj.scale = obj.scale * scale_factors
-    obj.location += offset
-
-    # Force viewport and depsgraph update
-    bpy.context.view_layer.update()
-
-    return scale_factors
-
-
 def create_interior_door(
     name: str,
     location: Sequence[float],
@@ -426,10 +361,32 @@ def create_interior_door(
         trigger_rebuild=trigger_rebuild,
     )
 
-    try:
-        center_object_bottom(door_object)
-    except Exception as e:
-        print(f"⚠️ Could not center door '{door_object.name}': {e}")
+    # --- NEW: Create Empty (Arrows) controller and position it ---
+    empty_name = f"DoorIt_Controller_{name}_Arrow"
+
+    # Step 1: Calculate bottom-center of the door using bounding box
+    bbox = [door_object.matrix_world @ Vector(corner) for corner in door_object.bound_box]
+    min_z = min(v.z for v in bbox)
+    avg_x = sum(v.x for v in bbox) / len(bbox)
+    avg_y = sum(v.y for v in bbox) / len(bbox)
+    empty_initial_location = (avg_x, avg_y, min_z)
+
+    # Step 2: Create empty at door's bottom-center
+    bpy.ops.object.empty_add(type='ARROWS', location=empty_initial_location)
+    empty_obj = bpy.context.active_object
+    empty_obj.name = empty_name
+    empty_obj.empty_display_size = 1.5
+
+    # Step 3: Parent the door to the empty
+    door_object.select_set(True)
+    empty_obj.select_set(True)
+    bpy.context.view_layer.objects.active = empty_obj
+    bpy.ops.object.parent_set(type='OBJECT', keep_transform=True)
+
+    # Step 4: Move empty to door_boundary centroid (door moves with it due to parenting)
+    empty_obj.location = location_vec
+
+    print(f"  ✓ Created controller '{empty_name}' and moved door to door_boundary centroid for '{door_object.name}'.")
 
 
     return {
@@ -465,14 +422,6 @@ if __name__ == "__main__":
 
     created = create_interior_door(**NEW_DOOR)
     print("Create door summary:", created)
-
-
-    #  rescale the door from center to target size
-    obj = bpy.data.objects.get("DoorIt_Example")
-    if obj:
-        target_dimensions = Vector((1.5, 4.0, 3.1)) # x depth y width z height
-        rescale_object_from_center(obj, target_dimensions)
-
 
     if created["created"] is False and bpy.data.objects.get(created["object"]):
         # Optionally re-run settings on the already existing door.

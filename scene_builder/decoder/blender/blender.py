@@ -1179,14 +1179,10 @@ def create_door_from_boundary(
         return None
     
     # Import Door It! functions
-    try:
-        from scene_builder.decoder.blender.controllers.interior_door import (
-            create_interior_door,
-            rescale_object_from_center,
-        )
-    except ImportError as e:
-        logger.error(f"Failed to import Door It! functions: {e}")
-        return None
+    
+    from scene_builder.decoder.blender.controllers.interior_door import (
+        create_interior_door,
+    )
     
     if not door_boundary or len(door_boundary) < 3:
         logger.warning(f"Invalid door boundary for door {door_id}")
@@ -1231,9 +1227,6 @@ def create_door_from_boundary(
         # Calculate location (centroid at floor level)
         location = (centroid.x, centroid.y, z_position)
         
-        # Calculate rotation in radians for Blender (rotate around Z-axis)
-        rotation_z = math.radians(-rotation_angle)
-        
         logger.debug(
             f"Door {door_id}: dimensions x={door_depth:.3f}m (depth), "
             f"y={door_width:.3f}m (width), z={door_height:.3f}m (height), "
@@ -1249,19 +1242,18 @@ def create_door_from_boundary(
             **door_settings
         )
         
-        # Apply rotation and rescale to align with boundary orientation
+        # Verify door and empty controller creation
         if result.get("created") or result.get("linked"):
             door_obj = bpy.data.objects.get(result["object"])
             if door_obj:
-                # Apply rotation
-                door_obj.rotation_euler.z = rotation_z
-                bpy.context.view_layer.update()
+                # Verify the empty controller exists (door is parented to it)
+                empty_name = f"DoorIt_Controller_InteriorDoor_Arrow{door_id}"
+                empty_obj = bpy.data.objects.get(empty_name)
                 
-                # Rescale to exact dimensions using target_dimensions
-                target_dimensions = Vector((door_depth, door_width, door_height))
-                rescale_object_from_center(door_obj, target_dimensions)
-                
-                logger.debug(f"Created and positioned door '{door_obj.name}' at {location}")
+                if empty_obj:
+                    logger.debug(f"Created door '{door_obj.name}' at {location} with empty controller '{empty_name}'")
+                else:
+                    logger.debug(f"Created door '{door_obj.name}' at {location} (empty controller not found)")
         
         return result
         
