@@ -38,6 +38,7 @@ HDRI_FILE_PATH = Path(
 ).expanduser()  # TEMP HACK
 
 BACKGROUND_COLOR = (0.02, 0.02, 0.02, 1.0)
+DEFAULT_DOOR_HEIGHT = 2.5
 
 
 @dataclass
@@ -1186,8 +1187,7 @@ def create_door_from_boundary(
         door_depth = min(width, default_depth)  # Use smaller of actual or default
         door_width = height + (clearance_per_side * 2)  # Longer axis + clearance
 
-    # Door height (vertical dimension)
-    door_height = door_settings.pop("door_height", 2.1)  # Standard door height
+    door_height = door_settings.pop("door_height", DEFAULT_DOOR_HEIGHT)
 
     # Calculate location (centroid at floor level)
     location = (centroid.x, centroid.y, z_position)
@@ -2243,7 +2243,7 @@ def create_room_walls(
                     door_idx=idx,
                     door_boundary=door_boundary,
                     z_bottom=0.0,
-                    z_top=2.1,
+                    z_top=DEFAULT_DOOR_HEIGHT,
                 )
 
                 # Create the actual door object at this boundary
@@ -2251,8 +2251,8 @@ def create_room_walls(
                     door_boundary=door_boundary,
                     door_id=str(door_id),
                     z_position=0.0,
-                    default_depth=0.1,  # 10cm door thickness
-                    door_height=2.1,  # 2.1m door height
+                    default_depth=0.1,
+                    door_height=DEFAULT_DOOR_HEIGHT,
                     randomize_type=True,
                     randomize_handle=True,
                     randomize_material=True,
