@@ -118,8 +118,13 @@ class DoorItInteriorController:
         return self._set_numeric("Width", value)
 
     def set_height(self, value: float) -> float:
-        """Set the door height socket in meters. Returns the applied value (clamped if needed)."""
-        return self._set_numeric("Height", value)
+        """Set the door height socket in meters (true world height). Returns the applied value."""
+        # Convert from real height to GeometryNodes internal height
+        corrected_value = value - 1.07  # empirical offset
+        if corrected_value < 0.1:
+            corrected_value = 0.1  # safety clamp
+        applied = self._set_numeric("Height", corrected_value)
+        return applied
 
     def set_type(self, value: int) -> int:
         """Set the style/type index. Returns the applied integer value."""
@@ -408,7 +413,7 @@ if __name__ == "__main__":
     # Example usage: tweak values here and run the script from Blender's text editor.
     SETTINGS = {
         "width": 1.9144,          # 36 inches in meters
-        "height": 2.032,          # 80 inches in meters
+        "height": 2.7,          # 80 inches in meters
         "door_type": None,        # Set to an int to force a style, or keep None to randomize
         "randomize_type": True,   # Ignored when 'door_type' is provided
         "handle_type": None,      # Handle style index; None to randomize
