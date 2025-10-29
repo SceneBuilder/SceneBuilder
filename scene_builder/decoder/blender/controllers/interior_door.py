@@ -247,6 +247,7 @@ def create_interior_door(
     rotation_angle: float = 0.0,
     width: Optional[float] = None,
     height: Optional[float] = None,
+    depth: Optional[float] = None,
     door_type: Optional[int] = None,
     randomize_type: bool = False,
     handle_type: Optional[int] = None,
@@ -368,7 +369,9 @@ def create_interior_door(
         trigger_rebuild=trigger_rebuild,
     )
 
-    # --- NEW: Create Empty (Arrows) controller and position it ---
+    door_object.dimensions.x = depth
+    bpy.context.view_layer.update()
+
     empty_name = f"DoorIt_Controller_{name}_Arrow"
 
     # Step 1: Calculate bottom-center of the door using bounding box
@@ -397,9 +400,6 @@ def create_interior_door(
     rotation_z = math.radians(rotation_angle)
     empty_obj.rotation_euler.z = rotation_z
     bpy.context.view_layer.update()
-
-    print(f"  ✓ Created controller '{empty_name}' and moved door to door_boundary centroid for '{door_object.name}'.")
-
 
     return {
         "object": door_object.name,

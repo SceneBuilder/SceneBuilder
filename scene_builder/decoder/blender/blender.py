@@ -1174,17 +1174,13 @@ def create_door_from_boundary(
     # Determine which is longer axis
     is_width_dominant = width >= height
 
-    # Map to Door It! coordinate system:
-    # x = depth (shorter axis, door thickness)
-    # y = width (longer axis, door opening width)
-    # z = height (door height)
     clearance_per_side = 0.04  # Add 0.02m clearance on each side (0.04m total)
 
     if is_width_dominant:
-        door_depth = min(height, default_depth)  # Use smaller of actual or default
+        door_depth = height  # Use actual depth from door boundary
         door_width = width + (clearance_per_side * 2)  # Longer axis + clearance
     else:
-        door_depth = min(width, default_depth)  # Use smaller of actual or default
+        door_depth = width  # Use actual depth from door boundary
         door_width = height + (clearance_per_side * 2)  # Longer axis + clearance
 
     door_height = door_settings.pop("door_height", DEFAULT_DOOR_HEIGHT)
@@ -1198,13 +1194,13 @@ def create_door_from_boundary(
         f"rotation={-rotation_angle:.1f}°"
     )
 
-    # Create the door using Door It! system (rotation is applied in create_interior_door)
     result = create_interior_door(
         name=f"InteriorDoor_{door_id}",
         location=location,
-        rotation_angle=rotation_angle + 90,  # Add 90° to align door with boundary
-        width=door_width,  # Door It! uses width parameter for opening width
+        rotation_angle=rotation_angle + 90,
+        width=door_width,
         height=door_height,
+        depth=door_depth,
         **door_settings,
     )
 
