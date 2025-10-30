@@ -72,7 +72,8 @@ class RoomDesignNode(BaseNode[RoomDesignState]):
     ) -> RoomDesignNode | End[Room]:
         console.print("[bold cyan]Executing Node:[/] RoomDesignNode")
         room = ctx.state.room
-        blender.parse_room_definition(room)
+        # Build room and add translucent walls for clearer feedback renders
+        blender.parse_room_definition(room, with_walls="translucent")
         output_dir = f"test_output/{ctx.state.extra_info['building_name']}/{ctx.state.room.id}"
         top_down_render = blender.visualize(scene=room.id, output_dir=output_dir, show_grid=True)
         isometric_render = blender.visualize(
@@ -193,7 +194,8 @@ class RoomDesignNode(BaseNode[RoomDesignState]):
             ctx.state.room.objects = placement_response.output
             
             # post-placement render
-            blender.parse_room_definition(room)
+            # Rebuild room after placement with translucent walls for feedback
+            blender.parse_room_definition(room, with_walls="translucent")
             top_down_render = blender.visualize(scene=room.id, output_dir=output_dir, show_grid=True)
             isometric_render = blender.visualize(
                 scene=room.id, output_dir=output_dir, view="isometric", show_grid=True

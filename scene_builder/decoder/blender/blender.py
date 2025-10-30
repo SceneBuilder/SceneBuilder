@@ -5,7 +5,7 @@ import tempfile
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple, Union
 
 import bpy
 import bmesh
@@ -307,12 +307,16 @@ def floorplan_to_origin(
     return scene_data
 
 
-def parse_scene_definition(scene_data: dict[str, Any]):
+def parse_scene_definition(scene_data: dict[str, Any], with_walls: bool = False):
     """
     Parses the scene definition dictionary and creates the scene in Blender.
 
+    Optionally creates room walls (with structural cutouts) after all rooms
+    are laid out when `with_walls` is True.
+
     Args:
         scene_data: A dictionary representing the scene, loaded from the YAML file.
+        with_walls: If True, also create walls for all rooms after layout.
     """
     # logger.debug("Parsing scene definition and creating scene in Blender...")
 
@@ -326,14 +330,28 @@ def parse_scene_definition(scene_data: dict[str, Any]):
     for room_data in scene_data.get("rooms", []):
         _create_room(room_data)
 
+    # Optionally add walls after all floors/objects are created
+    if with_walls:
+        try:
+            create_room_walls(scene_data.get("rooms", []))
+        except Exception as e:
+            logger.warning(f"Failed to create walls: {e}")
 
-def parse_room_definition(room_data: dict[str, Any], clear=True):
+
+def parse_room_definition(
+    room_data: dict[str, Any],
+    clear=True,
+    with_walls: Union[bool, str] = False,
+):
     """
     Parses the room definition dictionary and creates the scene in Blender.
 
     Args:
         room_data: A dictionary representing the room, loaded from the YAML file.
         clear: Whether to clear the Blender scene before building room.
+        with_walls: If True, also create walls for this room after layout.
+                    If set to "translucent", creates walls with a translucent material
+                    for clearer visual feedback.
 
     # NOTE: not sure if it's good for `clear` to default to True; (it was for testing)
     # NOTE: I think there's a bug where if `clear=True`, not all assets are recreated at next iteration's `parse_room_definition()` call. this happens after critique's rejection. look into it!
@@ -350,6 +368,17 @@ def parse_room_definition(room_data: dict[str, Any], clear=True):
                 _clear_scene()
 
             _create_room(room_data)
+
+            if with_walls:
+                try:
+                    translucent = (
+                        isinstance(with_walls, str) and with_walls.lower() == "translucent"
+                    )
+                    create_room_walls([room_data], translucent=translucent)
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to create walls for room {room_data.get('id', 'unknown')}: {e}"
+                    )
 
 
 def cleanup_orphan_data(num_passes: int = 3):
@@ -385,7 +414,7 @@ def _clear_scene():
 
 
 def _create_room(room_data: dict[str, Any]):
-    """Creates a representation of a room including floor mesh, walls, and objects."""
+    """Creates a representation of a room including floor mesh and objects."""
     if room_data is None:
         logger.warning("room_data is None, skipping room creation")
         return
@@ -1579,7 +1608,10 @@ def debug_scene_summary(max_other: int = 20) -> dict:
     }
     logger.debug(
         "Scene summary: count=%d, floors=%d, walls=%d, others(sample)=%d",
-        summary["count"], len(floors), len(walls), len(others)
+        summary["count"],
+        len(floors),
+        len(walls),
+        len(others),
     )
     return summary
 
@@ -2234,7 +2266,9 @@ def create_room_walls(
             # s can be pydantic Structure or dict
             s_type = getattr(s, "type", None) if not isinstance(s, dict) else s.get("type")
             s_id = getattr(s, "id", None) if not isinstance(s, dict) else s.get("id")
-            s_boundary = getattr(s, "boundary", None) if not isinstance(s, dict) else s.get("boundary")
+            s_boundary = (
+                getattr(s, "boundary", None) if not isinstance(s, dict) else s.get("boundary")
+            )
             if not s_boundary or len(s_boundary) < 3:
                 continue
             # Normalize boundary to list of (x, y)
@@ -2314,12 +2348,16 @@ def create_room_walls(
 
         # If requested, use translucent material for walls
         if translucent:
-            wall_material = create_translucent_material(
-                name=f"WallMaterial_{room_id}",
-                color=(0.8, 0.8, 0.8, 1.0),
-                alpha=0.2,
-            )
-            obj.data.materials.append(wall_material)
+            # Don't create material if it exists already
+            mat_name = "TranslucentWallMaterial"
+            if mat_name in bpy.data.materials:
+                wall_material = bpy.data.materials[mat_name]
+            else:
+                wall_material = create_translucent_material(name=mat_name)
+
+            # Prevent duplicate material assignment
+            if not any(m and m.name == mat_name for m in obj.data.materials):
+                obj.data.materials.append(wall_material)
 
         if window_cutouts and win_extdoor_cutout_polygons:
             for idx, (cutout_id, cutout_boundary) in enumerate(win_extdoor_cutout_polygons):
