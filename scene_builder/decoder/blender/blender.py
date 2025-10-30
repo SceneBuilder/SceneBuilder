@@ -1136,96 +1136,6 @@ def _create_interior_door_cutout(
     bpy.data.objects.remove(cutter_obj, do_unlink=True)
 
 
-def create_apartment_walls(
-    apartment_outlines: list,
-    window_data: list = None,
-    wall_height: float = 2.7,
-    wall_thickness: float = 0.001,
-    window_height_bottom: float = 1.0,
-    window_height_top: float = 2.0,
-):
-    """Create extruded walls for apartment outlines with window cutouts.
-
-    Args:
-        apartment_outlines: List of (apt_id, outline_points) tuples
-        window_data: List of (apt_id, window_geometries) tuples where window_geometries
-                     is a list of window boundary polygons (default: None)
-        wall_height: Height of walls in meters (default: 2.7m)
-        wall_thickness: Thickness of walls in meters (default: 0.001m)
-        window_height_bottom: Bottom height of window cutouts in meters (default: 1.0m)
-        window_height_top: Top height of window cutouts in meters (default: 2.0m)
-    """
-    window_lookup = {apt_id: windows for apt_id, windows in window_data} if window_data else {}
-
-    for apt_idx, (apt_id, outline_points) in enumerate(apartment_outlines):
-        if not outline_points:
-            continue
-
-        mesh = bpy.data.meshes.new(f"Walls_Apt_{apt_id}")
-        obj = bpy.data.objects.new(f"Walls_Apt_{apt_id}", mesh)
-        bpy.context.collection.objects.link(obj)
-
-        bm = bmesh.new()
-
-        bottom_verts = []
-        for x, y in outline_points:
-            v = bm.verts.new((x, y, 0))
-            bottom_verts.append(v)
-
-        top_verts = []
-        for x, y in outline_points:
-            v = bm.verts.new((x, y, wall_height))
-            top_verts.append(v)
-
-        num_verts = len(bottom_verts)
-        for i in range(num_verts):
-            next_i = (i + 1) % num_verts
-            face = bm.faces.new(
-                [bottom_verts[i], bottom_verts[next_i], top_verts[next_i], top_verts[i]]
-            )
-            face.normal_update()
-
-        bm.to_mesh(mesh)
-        bm.free()
-        mesh.update()
-
-        solidify = obj.modifiers.new(name="Solidify", type="SOLIDIFY")
-        solidify.thickness = wall_thickness
-        solidify.offset = 0
-
-        bpy.context.view_layer.objects.active = obj
-        bpy.ops.object.modifier_apply(modifier="Solidify")
-
-        wall_material = create_translucent_material(
-            name=f"WallMaterial_{apt_id}",
-            color=(0.8, 0.8, 0.8, 1.0),
-            alpha=0.2,
-        )
-        obj.data.materials.append(wall_material)
-
-        logger.debug(f"Created walls for apartment {apt_id}")
-
-        windows = window_lookup.get(apt_id, [])
-        if not windows:
-            continue
-
-        logger.debug(f"Applying {len(windows)} window cutouts to apartment {apt_id}")
-        for window_idx, window_boundary in enumerate(windows):
-            if not window_boundary or len(window_boundary) < 3:
-                continue
-            try:
-                _create_window_cutout(
-                    obj,
-                    apt_id,
-                    window_idx,
-                    window_boundary,
-                    window_height_bottom,
-                    window_height_top,
-                )
-            except Exception as e:
-                logger.warning(f"Failed to create window cutter {window_idx}: {e}")
-
-
 def check_and_enable_door_addon() -> bool:
     """Enable Door It! Interior addon."""
 
@@ -2290,6 +2200,7 @@ def create_room_walls(
     window_cutouts: bool = True,
     window_height_bottom: float = 1.0,
     window_height_top: float = 2.2,
+    translucent: bool = False,
 ):
     """Create walls for each room individually (excluding windows and exterior doors).
 
@@ -2297,6 +2208,11 @@ def create_room_walls(
         rooms: List of Room objects with boundary and category data
         wall_height: Height of walls in meters (default: 2.7m)
         wall_thickness: Thickness of walls in meters (default: 0.15m)
+        door_cutouts: If True, cut interior doors and instantiate door objects
+        window_cutouts: If True, cut windows and exterior doors
+        window_height_bottom: Bottom Z for window cutouts
+        window_height_top: Top Z for window cutouts
+        translucent: If True, assign a translucent wall material
 
     Returns:
         Number of walls created
@@ -2395,6 +2311,15 @@ def create_room_walls(
         bpy.context.view_layer.objects.active = obj
         with suppress_blender_logs():
             bpy.ops.object.modifier_apply(modifier="Solidify")
+
+        # If requested, use translucent material for walls
+        if translucent:
+            wall_material = create_translucent_material(
+                name=f"WallMaterial_{room_id}",
+                color=(0.8, 0.8, 0.8, 1.0),
+                alpha=0.2,
+            )
+            obj.data.materials.append(wall_material)
 
         if window_cutouts and win_extdoor_cutout_polygons:
             for idx, (cutout_id, cutout_boundary) in enumerate(win_extdoor_cutout_polygons):
