@@ -3,7 +3,7 @@ from pathlib import Path
 import addon_utils
 import bpy
 
-from scene_builder.config import DOOR_ADDON_ZIP_PATH
+from scene_builder.config import DOOR_ADDON_ZIP_PATH, WINDOW_ADDON_ZIP_PATH
 from scene_builder.logging import logger
 
 
@@ -99,4 +99,66 @@ def enable_door_it_addon() -> bool:
         return True
     except Exception as e:
         logger.debug(f"Door It! Interior addon not available: {e}")
+        return False
+
+
+def install_window_it_addon(addon_path: str = WINDOW_ADDON_ZIP_PATH) -> bool:
+    """Install and enable Window It! addon.
+
+    Args:
+        addon_path: Path to the Window It! addon zip file
+
+    Returns:
+        True if successfully installed and enabled, False otherwise
+    """
+    addon_module = "WindowIt"
+
+    # Check if already enabled
+    if addon_utils.check(addon_module)[1]:
+        logger.info(f"✓ {addon_module} addon already enabled")
+        return True
+
+    # Check if addon file exists
+    addon_file = Path(addon_path)
+    if not addon_file.exists():
+        logger.warning(f"Window It! addon not found at: {addon_path}\n")
+        return False
+
+    try:
+        # Install addon
+        bpy.ops.preferences.addon_install(filepath=str(addon_path))
+        logger.info(f"✓ Installed Window It! from {addon_path}")
+
+        # Enable addon
+        bpy.ops.preferences.addon_enable(module=addon_module)
+        bpy.ops.wm.save_userpref()
+        addon_utils.modules_refresh()
+        logger.info(f"✓ Enabled {addon_module} addon")
+        return True
+
+    except Exception as e:
+        logger.error(f"Failed to install/enable Window It! addon: {e}")
+        return False
+
+
+def enable_window_it_addon() -> bool:
+    """Enable Window It! addon if already installed.
+
+    Returns:
+        True if addon is enabled, False otherwise
+    """
+    addon_module = "WindowIt"
+
+    # Check if already enabled
+    if addon_utils.check(addon_module)[1]:
+        return True
+
+    # Try to enable it
+    try:
+        bpy.ops.preferences.addon_enable(module=addon_module)
+        addon_utils.modules_refresh()
+        logger.info(f"✓ Enabled {addon_module} addon")
+        return True
+    except Exception as e:
+        logger.debug(f"Window It! addon not available: {e}")
         return False
