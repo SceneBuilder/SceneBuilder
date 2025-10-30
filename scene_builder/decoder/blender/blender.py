@@ -23,6 +23,7 @@ from shapely.ops import unary_union
 
 from scene_builder.config import BLENDER_LOG_FILE, TEST_ASSET_DIR
 from scene_builder.database.material import MaterialDatabase
+from scene_builder.decoder.blender_materials import create_translucent_material
 from scene_builder.decoder.blender.controllers.interior_door import create_interior_door
 from scene_builder.definition.scene import Object, Room, Scene, Vector2
 from scene_builder.importer import objaverse_importer, test_asset_importer
@@ -211,6 +212,10 @@ def floorplan_to_origin(
     Returns:
         Modified scene_data (rooms modified in-place)
     """
+    # Cast into dict if input is a Pydantic Scene
+    if isinstance(scene_data, Scene):
+        scene_data = pydantic_to_dict(scene_data)
+
     rooms = scene_data.get("rooms", [])
     if not rooms:
         return scene_data
@@ -251,11 +256,28 @@ def floorplan_to_origin(
     # Step 3: Apply transformation
     cos_a, sin_a = math.cos(rotation_angle), math.sin(rotation_angle)
 
-    # Transform scene_data (floors)
+    # Transform scene_data (floors and structures)
     for room in rooms:
+        # Floor boundary
         for point in room.get("boundary", []):
             x, y = point["x"] - centroid_x, point["y"] - centroid_y
             point["x"], point["y"] = x * cos_a - y * sin_a, x * sin_a + y * cos_a
+        # Attached structures (window/door) boundaries, if present
+        for s in room.get("structure", []) or []:
+            if isinstance(s, dict):
+                boundary = s.get("boundary")
+                if boundary:
+                    for p in boundary:
+                        x, y = p["x"] - centroid_x, p["y"] - centroid_y
+                        p["x"], p["y"] = x * cos_a - y * sin_a, x * sin_a + y * cos_a
+            else:
+                boundary = getattr(s, "boundary", None)
+                if boundary:
+                    for p in boundary:
+                        x = p.x - centroid_x
+                        y = p.y - centroid_y
+                        p.x = x * cos_a - y * sin_a
+                        p.y = x * sin_a + y * cos_a
 
     if rooms_by_apartment:
         for _, room_list in rooms_by_apartment:
@@ -268,6 +290,19 @@ def floorplan_to_origin(
                         )
                         for p in room.boundary
                     ]
+                # Transform attached structures on Room objects as well
+                if hasattr(room, "structure") and room.structure:
+                    for s in room.structure:
+                        if getattr(s, "boundary", None):
+                            new_boundary = []
+                            for p in s.boundary:
+                                new_boundary.append(
+                                    Vector2(
+                                        x=(p.x - centroid_x) * cos_a - (p.y - centroid_y) * sin_a,
+                                        y=(p.x - centroid_x) * sin_a + (p.y - centroid_y) * cos_a,
+                                    )
+                                )
+                            s.boundary = new_boundary
 
     return scene_data
 
@@ -356,12 +391,11 @@ def _create_room(room_data: dict[str, Any]):
         return
 
     room_id = room_data.get("id", "unknown_room")
-    room_category = room_data.get("category", "unknown")
-    # logger.debug(f"Creating room: {room_id}")
+    logger.debug(f"Creating room: {room_id}")
 
     # Create floor mesh
-    floor_result = _create_floor_mesh(room_data["boundary"], room_id, room_category=room_category)
-    # logger.debug(f"Created floor: {floor_result['status']}")
+    floor_result = _create_floor_mesh(room_data["boundary"], room_id)
+    logger.debug(f"Created floor: {floor_result['status']}")
 
     # Apply floor material
     if room_data.get("floor"):
@@ -378,37 +412,6 @@ def _create_room(room_data: dict[str, Any]):
             _create_object(obj_data)
         except Exception as e:
             logger.warning(e)
-
-
-def _check_object_duplicate_status(obj_data: dict[str, Any]) -> str:
-    """
-    Check if object already exists and determine what action to take.
-
-    Args:
-        obj_data: Dictionary containing object data
-
-    Returns:
-        String indicating status: "skip_unchanged", "recreate_moved", or "proceed_new"
-    """
-    object_id = obj_data.get("id")
-    object_name = obj_data.get("name", "Unnamed Object")
-    pos = obj_data.get("position", {"x": 0, "y": 0, "z": 0})
-    rot = obj_data.get("rotation", {"x": 0, "y": 0, "z": 0})
-
-    if not object_id:
-        return "proceed_new"
-
-    if _scene_tracker.object_exists_unchanged(object_id, pos, rot):
-        logger.debug(
-            f"Skipping duplicate object: {object_name} (id: {object_id}) - unchanged at {pos}"
-        )
-        return "skip_unchanged"
-
-    if _scene_tracker.object_exists_but_moved(object_id, pos, rot):
-        logger.debug(f"Object {object_name} (id: {object_id}) has moved - will recreate at {pos}")
-        return "recreate_moved"
-
-    return "proceed_new"
 
 
 def _check_object_duplicate_status(obj_data: dict[str, Any]) -> str:
@@ -632,7 +635,6 @@ def _create_floor_mesh(
     room_id: str,
     floor_thickness_m: float = 0.1,
     origin: str = "center",
-    room_category: str = "unknown",
 ) -> dict[str, Any]:
     """
     Args:
@@ -640,7 +642,6 @@ def _create_floor_mesh(
         room_id: Room identifier for naming
         floor_thickness_m: Thickness of the floor in meters (default: 0.1)
         origin: Origin placement - "center" or "min" (default: "center")
-        room_category: Room category from ENTITY_SUBTYPE_MAP (e.g., "bedroom", "bathroom")
 
     Returns:
         Dictionary with creation status and metadata
@@ -652,8 +653,8 @@ def _create_floor_mesh(
             "message": f"Room {room_id}: At least 3 boundary points required for floor mesh",
         }
 
-    floor_name = f"Floor_{room_category}_{room_id}"
-    mesh_name = f"FloorMesh_{room_category}_{room_id}"
+    floor_name = f"Floor_{room_id}"
+    mesh_name = f"FloorMesh_{room_id}"
 
     # Check if floor already exists
     if floor_name in bpy.data.objects:
@@ -872,11 +873,11 @@ def _create_window_cutout(
     window_boundary: list,
     z_bottom: float,
     z_top: float,
-    scale_factor: float = 1.1,
+    extension_m: float = 0.05,
 ):
     """Create and apply a window cutout to a wall object.
 
-    Scales up the boundary and applies a boolean cutout operation to the wall.
+    Expands the window boundary along its shorter dimension before applying a boolean cutout.
 
     Args:
         wall_obj: Blender wall object to cut
@@ -885,21 +886,34 @@ def _create_window_cutout(
         window_boundary: List of (x, y) tuples defining window polygon
         z_bottom: Bottom Z height of window cutout
         z_top: Top Z height of window cutout
-        scale_factor: Factor to scale up the cutout (default: 1.2 = 20% larger)
+        extension_m: Meters to extend the shorter dimension in each direction (default: 0.05m)
     """
-    # Scale up window boundary
+    expanded_boundary = window_boundary
     try:
         window_poly = Polygon(window_boundary)
-        scaled_poly = affinity.scale(
-            window_poly, xfact=scale_factor, yfact=scale_factor, origin="centroid"
-        )
+        if window_poly.is_valid and not window_poly.is_empty:
+            minx, miny, maxx, maxy = window_poly.bounds
+            width, depth = maxx - minx, maxy - miny
 
-        if scaled_poly.is_valid and not scaled_poly.is_empty:
-            expanded_boundary = list(scaled_poly.exterior.coords[:-1])
+            buffered_poly = None
+            if extension_m > 0:
+                scale_x, scale_y = 1.0, 1.0
+                if width > depth and depth > 0:
+                    scale_y = (depth + 2 * extension_m) / depth
+                elif width <= depth and width > 0:
+                    scale_x = (width + 2 * extension_m) / width
+
+                if (scale_x != 1.0 or scale_y != 1.0) and width > 0 and depth > 0:
+                    buffered_poly = affinity.scale(
+                        window_poly, xfact=scale_x, yfact=scale_y, origin="centroid"
+                    )
+
+            if buffered_poly and buffered_poly.is_valid and not buffered_poly.is_empty:
+                expanded_boundary = list(buffered_poly.exterior.coords[:-1])
         else:
             expanded_boundary = window_boundary
     except Exception as e:
-        logger.warning(f"Failed to scale cutout boundary: {e}")
+        logger.warning(f"Failed to expand window boundary: {e}")
         expanded_boundary = window_boundary
 
     # Create cutter mesh and apply boolean operation
@@ -1120,6 +1134,96 @@ def _create_interior_door_cutout(
 
     # Clean up cutter object
     bpy.data.objects.remove(cutter_obj, do_unlink=True)
+
+
+def create_apartment_walls(
+    apartment_outlines: list,
+    window_data: list = None,
+    wall_height: float = 2.7,
+    wall_thickness: float = 0.001,
+    window_height_bottom: float = 1.0,
+    window_height_top: float = 2.0,
+):
+    """Create extruded walls for apartment outlines with window cutouts.
+
+    Args:
+        apartment_outlines: List of (apt_id, outline_points) tuples
+        window_data: List of (apt_id, window_geometries) tuples where window_geometries
+                     is a list of window boundary polygons (default: None)
+        wall_height: Height of walls in meters (default: 2.7m)
+        wall_thickness: Thickness of walls in meters (default: 0.001m)
+        window_height_bottom: Bottom height of window cutouts in meters (default: 1.0m)
+        window_height_top: Top height of window cutouts in meters (default: 2.0m)
+    """
+    window_lookup = {apt_id: windows for apt_id, windows in window_data} if window_data else {}
+
+    for apt_idx, (apt_id, outline_points) in enumerate(apartment_outlines):
+        if not outline_points:
+            continue
+
+        mesh = bpy.data.meshes.new(f"Walls_Apt_{apt_id}")
+        obj = bpy.data.objects.new(f"Walls_Apt_{apt_id}", mesh)
+        bpy.context.collection.objects.link(obj)
+
+        bm = bmesh.new()
+
+        bottom_verts = []
+        for x, y in outline_points:
+            v = bm.verts.new((x, y, 0))
+            bottom_verts.append(v)
+
+        top_verts = []
+        for x, y in outline_points:
+            v = bm.verts.new((x, y, wall_height))
+            top_verts.append(v)
+
+        num_verts = len(bottom_verts)
+        for i in range(num_verts):
+            next_i = (i + 1) % num_verts
+            face = bm.faces.new(
+                [bottom_verts[i], bottom_verts[next_i], top_verts[next_i], top_verts[i]]
+            )
+            face.normal_update()
+
+        bm.to_mesh(mesh)
+        bm.free()
+        mesh.update()
+
+        solidify = obj.modifiers.new(name="Solidify", type="SOLIDIFY")
+        solidify.thickness = wall_thickness
+        solidify.offset = 0
+
+        bpy.context.view_layer.objects.active = obj
+        bpy.ops.object.modifier_apply(modifier="Solidify")
+
+        wall_material = create_translucent_material(
+            name=f"WallMaterial_{apt_id}",
+            color=(0.8, 0.8, 0.8, 1.0),
+            alpha=0.2,
+        )
+        obj.data.materials.append(wall_material)
+
+        logger.debug(f"Created walls for apartment {apt_id}")
+
+        windows = window_lookup.get(apt_id, [])
+        if not windows:
+            continue
+
+        logger.debug(f"Applying {len(windows)} window cutouts to apartment {apt_id}")
+        for window_idx, window_boundary in enumerate(windows):
+            if not window_boundary or len(window_boundary) < 3:
+                continue
+            try:
+                _create_window_cutout(
+                    obj,
+                    apt_id,
+                    window_idx,
+                    window_boundary,
+                    window_height_bottom,
+                    window_height_top,
+                )
+            except Exception as e:
+                logger.warning(f"Failed to create window cutter {window_idx}: {e}")
 
 
 def check_and_enable_door_addon() -> bool:
@@ -1545,6 +1649,29 @@ def export_to_gltf(filepath: str, scene: str = None, exclude_grid: bool = True) 
                 current_scene.collection.objects.link(obj)
 
     return filepath
+
+
+def debug_scene_summary(max_other: int = 20) -> dict:
+    """Return a quick summary of objects in the current scene.
+
+    Includes lists of floor and wall object names and a sample of other objects.
+    """
+    objs = list(bpy.context.scene.objects)
+    floors = [o.name for o in objs if o.type == "MESH" and o.name.startswith("Floor_")]
+    walls = [o.name for o in objs if o.type == "MESH" and o.name.startswith("Wall_")]
+    others = [(o.name, o.type) for o in objs if o.name not in floors + walls][:max_other]
+
+    summary = {
+        "count": len(objs),
+        "floors": floors,
+        "walls": walls,
+        "others": others,
+    }
+    logger.debug(
+        "Scene summary: count=%d, floors=%d, walls=%d, others(sample)=%d",
+        summary["count"], len(floors), len(walls), len(others)
+    )
+    return summary
 
 
 def _configure_output_image(format: str, resolution: int):
@@ -2028,6 +2155,75 @@ def setup_post_processing(scene: bpy.types.Scene):
     nt.links.new(glare_node.outputs["Image"], composite_output.inputs["Image"])
 
 
+# NOTE: temporarily, if interior door is not needed, let's delete this function later
+
+
+def _door_boundary_to_coords(door_boundary: list) -> list[tuple[float, float]]:
+    """Normalize mixed point representations into (x, y) tuples."""
+    coords: list[tuple[float, float]] = []
+    for point in door_boundary or []:
+        if isinstance(point, tuple):
+            coords.append(point)
+        elif hasattr(point, "x") and hasattr(point, "y"):
+            coords.append((point.x, point.y))
+        else:
+            coords.append((point["x"], point["y"]))
+    return coords
+
+
+def mark_interior_door(
+    door_boundary: list, door_id: str, check_distance: float = 0.4, height: float = 2.0
+) -> bool:
+    """
+    Check if a door is interior and, if so, mark it with a yellow cube.
+
+    Args:
+        door_boundary: List of (x, y) tuples or Vector2 points defining the door polygon
+        door_id: Identifier for the door (for naming)
+        check_distance: Distance in meters to check away from door centroid (default: 0.4m)
+        height: Height of the marker cube in meters (default: 2.0m)
+
+    Returns:
+        True if interior door was marked, False otherwise
+    """
+    coords = _door_boundary_to_coords(door_boundary)
+    if not coords:
+        return False
+
+    if not is_interior_door(coords, check_distance=check_distance):
+        return False
+
+    centroid_x = sum(x for x, _ in coords) / len(coords)
+    centroid_y = sum(y for _, y in coords) / len(coords)
+
+    x_coords = [x for x, _ in coords]
+    y_coords = [y for _, y in coords]
+    width = max(x_coords) - min(x_coords)
+    depth = max(y_coords) - min(y_coords)
+    marker_size = min(width, depth, 0.2)
+    if marker_size <= 0:
+        marker_size = 0.1
+
+    with suppress_blender_logs():
+        bpy.ops.mesh.primitive_cube_add(
+            size=marker_size, location=(centroid_x, centroid_y, height / 2)
+        )
+
+    marker = bpy.context.active_object
+    marker.name = f"DoorMarker_{door_id}"
+    marker.scale.z = height / marker_size
+
+    yellow_mat = _create_unlit_material(f"DoorMarker_Material_{door_id}", (1.0, 0.9, 0.0, 1.0))
+
+    if marker.data.materials:
+        marker.data.materials[0] = yellow_mat
+    else:
+        marker.data.materials.append(yellow_mat)
+
+    logger.debug(f"Marked interior door {door_id} at ({centroid_x:.2f}, {centroid_y:.2f})")
+    return True
+
+
 def is_interior_door(door_boundary: list, check_distance: float = 0.4) -> bool:
     """
     Check if door is interior (between two different rooms).
@@ -2039,23 +2235,13 @@ def is_interior_door(door_boundary: list, check_distance: float = 0.4) -> bool:
     Returns:
         True if interior door, False if exterior door
     """
-    if not door_boundary:
+    coords = _door_boundary_to_coords(door_boundary)
+    if not coords:
         return False
 
-    # Convert boundary to coords
-    coords = []
-    for point in door_boundary:
-        if isinstance(point, tuple):
-            coords.append(point)
-        elif hasattr(point, "x"):
-            coords.append((point.x, point.y))
-        else:
-            coords.append((point["x"], point["y"]))
+    centroid_x = sum(x for x, _ in coords) / len(coords)
+    centroid_y = sum(y for _, y in coords) / len(coords)
 
-    centroid_x = sum(x for x, y in coords) / len(coords)
-    centroid_y = sum(y for x, y in coords) / len(coords)
-
-    # Check four directions for different floor meshes
     check_positions = {
         "left": (centroid_x - check_distance, centroid_y),
         "right": (centroid_x + check_distance, centroid_y),
@@ -2082,7 +2268,6 @@ def is_interior_door(door_boundary: list, check_distance: float = 0.4) -> bool:
                         floors_by_direction[direction] = obj.name
                         break
 
-    # Check if DIFFERENT floors exist on opposite sides
     has_different_lr = (
         "left" in floors_by_direction
         and "right" in floors_by_direction
@@ -2098,7 +2283,7 @@ def is_interior_door(door_boundary: list, check_distance: float = 0.4) -> bool:
 
 
 def create_room_walls(
-    rooms: list,
+    rooms: list[Room],
     wall_height: float = 2.7,
     wall_thickness: float = 0.05,
     door_cutouts: bool = True,
@@ -2118,72 +2303,78 @@ def create_room_walls(
     """
     walls_created = 0
 
-    # Gather window and exterior door polygons
-    # cutout_polygons: list[tuple[str, list[tuple[float, float]]]] = []
     win_extdoor_cutout_polygons: list[tuple[str, list[tuple[float, float]]]] = []
-
-    # Gather interior door polygons
     interior_door_polygons: list[tuple[str, list[tuple[float, float]]]] = []
 
+    # Create structural elements
     for r in rooms:
-        # Include windows
-        if (
-            window_cutouts
-            and getattr(r, "category", None) == "window"
-            and getattr(r, "boundary", None)
-            and len(r.boundary) >= 3
-        ):
-            win_extdoor_cutout_polygons.append((r.id, [(p.x, p.y) for p in r.boundary]))
-        # Include exterior doors
-        elif (
-            door_cutouts
-            and getattr(r, "category", None) == "door"
-            and getattr(r, "boundary", None)
-            and len(r.boundary) >= 3
-        ):
-            door_boundary = [(p.x, p.y) for p in r.boundary]
-            if not is_interior_door(door_boundary):
-                win_extdoor_cutout_polygons.append((r.id, door_boundary))
-                logger.debug(f"Door {r.id}: identified as exterior door")
-            else:
-                interior_door_polygons.append((r.id, door_boundary))
-                logger.debug(f"Door {r.id}: identified as interior door")
+        # Handle pydantic Room or dict
+        r_structs = getattr(r, "structure", None)
+        if r_structs is None and isinstance(r, dict):
+            r_structs = r.get("structure")
+        if not r_structs:
+            continue
+        for s in r_structs:
+            # s can be pydantic Structure or dict
+            s_type = getattr(s, "type", None) if not isinstance(s, dict) else s.get("type")
+            s_id = getattr(s, "id", None) if not isinstance(s, dict) else s.get("id")
+            s_boundary = getattr(s, "boundary", None) if not isinstance(s, dict) else s.get("boundary")
+            if not s_boundary or len(s_boundary) < 3:
+                continue
+            # Normalize boundary to list of (x, y)
+            boundary_xy: list[tuple[float, float]] = []
+            for p in s_boundary:
+                if hasattr(p, "x"):
+                    boundary_xy.append((p.x, p.y))
+                else:
+                    boundary_xy.append((p["x"], p["y"]))
+
+            if window_cutouts and s_type == "window":
+                win_extdoor_cutout_polygons.append((str(s_id), boundary_xy))
+            elif door_cutouts and s_type == "door":
+                if not is_interior_door(boundary_xy):
+                    win_extdoor_cutout_polygons.append((str(s_id), boundary_xy))
+                    logger.debug(f"Door {s_id}: identified as exterior door")
+                else:
+                    interior_door_polygons.append((str(s_id), boundary_xy))
+                    logger.debug(f"Door {s_id}: identified as interior door")
 
     for room in rooms:
-        # Skip windows
-        if room.category == "window":
+        # Extract boundary safely
+        r_boundary = getattr(room, "boundary", None)
+        if r_boundary is None and isinstance(room, dict):
+            r_boundary = room.get("boundary")
+        if not r_boundary or len(r_boundary) < 3:
             continue
 
-        # Skip all doors (both interior and exterior)
-        if room.category == "door":
-            continue
+        # Support Vector2 objects or dict-like points
+        boundary_points = []
+        for p in r_boundary:
+            if hasattr(p, "x"):
+                boundary_points.append((p.x, p.y))
+            else:
+                boundary_points.append((p["x"], p["y"]))
 
-        # Skip invalid boundaries
-        if not room.boundary or len(room.boundary) < 3:
-            continue
+        room_id = getattr(room, "id", None)
+        if room_id is None and isinstance(room, dict):
+            room_id = room.get("id", "unknown")
 
-        # Create wall for this room
-        boundary_points = [(p.x, p.y) for p in room.boundary]
-
-        mesh = bpy.data.meshes.new(f"Wall_{room.id}")
-        obj = bpy.data.objects.new(f"Wall_{room.id}", mesh)
+        mesh = bpy.data.meshes.new(f"Wall_{room_id}")
+        obj = bpy.data.objects.new(f"Wall_{room_id}", mesh)
         bpy.context.collection.objects.link(obj)
 
         bm = bmesh.new()
 
-        # Create bottom vertices
         bottom_verts = []
         for x, y in boundary_points:
             v = bm.verts.new((x, y, 0))
             bottom_verts.append(v)
 
-        # Create top vertices
         top_verts = []
         for x, y in boundary_points:
             v = bm.verts.new((x, y, wall_height))
             top_verts.append(v)
 
-        # Create wall faces
         num_verts = len(bottom_verts)
         for i in range(num_verts):
             next_i = (i + 1) % num_verts
@@ -2193,22 +2384,18 @@ def create_room_walls(
             )
             face.normal_update()
 
-        # Apply mesh
         bm.to_mesh(mesh)
         bm.free()
         mesh.update()
 
-        # Add solidify modifier for wall thickness
         solidify = obj.modifiers.new(name="Solidify", type="SOLIDIFY")
         solidify.thickness = wall_thickness
         solidify.offset = -1
 
-        # Apply modifier
         bpy.context.view_layer.objects.active = obj
         with suppress_blender_logs():
             bpy.ops.object.modifier_apply(modifier="Solidify")
 
-        # Apply window and exterior door cutouts if requested
         if window_cutouts and win_extdoor_cutout_polygons:
             for idx, (cutout_id, cutout_boundary) in enumerate(win_extdoor_cutout_polygons):
                 if not cutout_boundary:
@@ -2222,7 +2409,6 @@ def create_room_walls(
                     z_top=window_height_top,
                 )
 
-        # Apply interior door cutouts if requested
         if door_cutouts and interior_door_polygons:
             logger.debug(
                 f"Applying {len(interior_door_polygons)} interior door cutouts to wall {obj.name}"

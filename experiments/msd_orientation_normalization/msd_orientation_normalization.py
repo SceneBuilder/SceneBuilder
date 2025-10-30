@@ -178,11 +178,11 @@ def analyze_multiple_floor_plans(n_floor_plans=3, show_vertices=True, strategy='
         # Get random floor plan
         floor_plan_id = pick_random_apartment(msd_loader)
         graph = msd_loader.create_graph(floor_plan_id)
-        scene_data = msd_loader.graph_to_scene_data(graph)
+        scene = msd_loader.apt_graph_to_scene(graph)
 
         # Convert to shapely polygons
         polygons = []
-        for room in scene_data['rooms']:
+        for room in scene.rooms:
             coords = [(v.x, v.y) for v in room.boundary]
             polygons.append(Polygon(coords))
 
@@ -360,11 +360,11 @@ floor_plan_id = pick_random_apartment(msd_loader)
 
 # Create graph and get room boundaries
 graph = msd_loader.create_graph(floor_plan_id)
-scene_data = msd_loader.graph_to_scene_data(graph)
+scene = msd_loader.apt_graph_to_scene(graph)
 
 # Convert room boundaries to shapely Polygons
 msd_polygons = []
-for room in scene_data['rooms']:
+for room in scene.rooms:
     coords = [(v.x, v.y) for v in room.boundary]
     msd_polygons.append(Polygon(coords))
 
