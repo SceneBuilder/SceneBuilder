@@ -8,7 +8,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.syntax import Syntax
 
-from scene_builder.decoder import blender
+from scene_builder.decoder.blender import blender
 from scene_builder.definition.scene import Room, Scene
 from scene_builder.workflow.graphs import main_graph
 from scene_builder.workflow.states import MainState

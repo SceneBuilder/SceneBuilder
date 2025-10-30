@@ -6,9 +6,9 @@ import pytest
 from pathlib import Path
 
 from scene_builder.definition.scene import Vector2
-from scene_builder.decoder import blender
+from scene_builder.decoder.blender import blender
 from scene_builder.database.material import MaterialWorkflow
-from scene_builder.decoder.blender import apply_floor_material
+from scene_builder.decoder.blender.blender import apply_floor_material
 
 
 def test_material_workflow_integration():

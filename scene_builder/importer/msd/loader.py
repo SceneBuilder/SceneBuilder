@@ -7,6 +7,7 @@ TODO: add rounding (safe-rounding) to boundary, to keep scene def files clean an
 """
 
 import io
+import math
 import random
 import re
 from pathlib import Path
@@ -20,12 +21,15 @@ from msd.constants import ROOM_NAMES
 from msd.graphs import extract_access_graph, get_geometries_from_id
 from msd.plot import plot_floor, set_figure
 from PIL import Image
+from rich.console import Console
+from shapely import wkt
 from shapely.geometry import Polygon
 
 from scene_builder.config import MSD_CSV_PATH
 from scene_builder.definition.scene import Room, Scene, Structure, Vector2
 from scene_builder.utils.geometry import round_vector2
 from scene_builder.utils.room import assign_structures_to_rooms
+
 
 # Entity subtype mapping (MSD entity_subtype → SceneBuilder category)
 # Comment or uncomment to add or remove entities
@@ -56,6 +60,9 @@ ENTITY_SUBTYPE_MAP = {
 }
 
 
+console = Console()
+
+
 def parse_polygon(geom_string: str) -> list[Vector2]:
     """Parse POLYGON string to Vector2 list"""
     if not geom_string:
@@ -78,6 +85,47 @@ def parse_polygon(geom_string: str) -> list[Vector2]:
         return []
 
     return coords
+
+
+def get_longest_edge_angle(polygon: Polygon | list[Vector2]) -> float:
+    """
+    Calculate the angle of the longest edge in a polygon.
+    Useful for determining the orientation of rectangular features like doors or windows.
+
+    Args:
+        polygon: Shapely Polygon object or list of Vector2 points
+
+    Returns:
+        Angle in degrees (from X-axis, counterclockwise) of the longest edge
+    """
+
+    # Convert to coordinate list
+    if isinstance(polygon, Polygon):
+        coords = list(polygon.exterior.coords[:-1])  # Exclude duplicate last point
+    elif isinstance(polygon, list) and isinstance(polygon[0], Vector2):
+        coords = [(v.x, v.y) for v in polygon]
+    else:
+        raise TypeError("Expected shapely Polygon or list[Vector2]")
+
+    max_length = 0
+    angle = 0.0
+
+    for i in range(len(coords)):
+        p1 = coords[i]
+        p2 = coords[(i + 1) % len(coords)]
+
+        # Calculate edge vector and length
+        dx = p2[0] - p1[0]
+        dy = p2[1] - p1[1]
+        length = math.sqrt(dx**2 + dy**2)
+
+        # Track the longest edge and its angle
+        if length > max_length:
+            max_length = length
+            # Calculate angle in degrees (from X-axis, counterclockwise)
+            angle = math.degrees(math.atan2(dy, dx))
+
+    return angle
 
 
 def get_dominant_angle(
@@ -402,8 +450,6 @@ class MSDLoader:
 
                 if pd.notna(geom_str):
                     try:
-                        from shapely import wkt
-
                         geom = wkt.loads(geom_str)
                         if hasattr(geom, "exterior"):
                             coords = list(geom.exterior.coords)
@@ -412,12 +458,12 @@ class MSDLoader:
                     except Exception:
                         pass
 
-                graph.add_node(
-                    idx,
-                    entity_subtype=row.get("entity_subtype"),
-                    geometry=coords,
-                    centroid=centroid,
-                )
+                    graph.add_node(
+                        idx,
+                        entity_subtype=row.get("entity_subtype"),
+                        geometry=coords,
+                        centroid=centroid,
+                    )
 
         # Add metadata
         graph.graph["apartment_id"] = apartment_id
@@ -464,7 +510,10 @@ class MSDLoader:
             geometry_data = attrs["geometry"]
             if isinstance(geometry_data, list) and len(geometry_data) > 0:
                 # Already parsed coordinates
-                coords = [round_vector2(Vector2(x=float(p[0]), y=float(p[1])), ndigits=2)for p in geometry_data]  # fmt:skip
+                coords = [
+                    round_vector2(Vector2(x=float(p[0]), y=float(p[1])), ndigits=2)
+                    for p in geometry_data
+                ]
             else:
                 coords = []
 

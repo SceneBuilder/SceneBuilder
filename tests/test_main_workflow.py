@@ -4,7 +4,7 @@ from pathlib import Path
 from rich.console import Console
 from rich.panel import Panel
 
-from scene_builder.decoder import blender
+from scene_builder.decoder.blender import blender
 # from scene_builder.nodes.general import MetadataNode
 from scene_builder.utils.conversions import pydantic_to_dict
 from scene_builder.workflow.graphs import main_graph

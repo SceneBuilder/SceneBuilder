@@ -1,4 +1,4 @@
-from scene_builder.decoder.blender import parse_scene_definition, save_scene
+from scene_builder.decoder.blender.blender import parse_scene_definition, save_scene
 from scene_builder.definition.scene import Scene
 from scene_builder.utils.conversions import pydantic_from_yaml
 

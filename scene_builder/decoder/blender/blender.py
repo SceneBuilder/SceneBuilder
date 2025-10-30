@@ -9,8 +9,11 @@ from typing import Any, Dict, Optional, Tuple
 
 import bpy
 import bmesh
+import addon_utils
 import numpy as np
 import yaml
+from matplotlib import pyplot as plt
+from PIL import Image
 from mathutils import Vector
 from mathutils.geometry import tessellate_polygon
 from scipy.spatial.transform import Rotation
@@ -21,21 +24,22 @@ from shapely.ops import unary_union
 from scene_builder.config import BLENDER_LOG_FILE, TEST_ASSET_DIR
 from scene_builder.database.material import MaterialDatabase
 from scene_builder.decoder.blender_materials import create_translucent_material
+from scene_builder.decoder.blender.controllers.interior_door import create_interior_door
 from scene_builder.definition.scene import Object, Room, Scene, Vector2
 from scene_builder.importer import objaverse_importer, test_asset_importer
+from scene_builder.importer.msd.loader import get_dominant_angle, get_longest_edge_angle
 from scene_builder.logging import logger
-from scene_builder.msd_integration.loader import get_dominant_angle
 from scene_builder.tools.material_applicator import texture_floor_mesh
 from scene_builder.utils.blender import SceneSwitcher
 from scene_builder.utils.conversions import pydantic_to_dict
 from scene_builder.utils.file import get_filename
-
 
 HDRI_FILE_PATH = Path(
     f"{TEST_ASSET_DIR}/hdri/autumn_field_puresky_4k.exr"
 ).expanduser()  # TEMP HACK
 
 BACKGROUND_COLOR = (0.02, 0.02, 0.02, 1.0)
+DEFAULT_DOOR_HEIGHT = 2.5
 
 
 @dataclass
@@ -1008,7 +1012,9 @@ def _create_interior_door_cutout(
             )
 
             theta = np.radians(-rotation_angle)
-            rotation_matrix = np.array([[np.cos(theta), -np.sin(theta)], [np.sin(theta), np.cos(theta)]])
+            rotation_matrix = np.array(
+                [[np.cos(theta), -np.sin(theta)], [np.sin(theta), np.cos(theta)]]
+            )
             scale_axis_local = np.array([0.0, 1.0]) if is_width_dominant else np.array([1.0, 0.0])
             scale_axis_vector = rotation_matrix @ scale_axis_local
 
@@ -1029,15 +1035,20 @@ def _create_interior_door_cutout(
 
         # TEMP: visualization for debugging orthogonal scaling
         if debug:
-            import io
-            from PIL import Image
-            from matplotlib import pyplot as plt
-
             x, y = door_poly.exterior.xy
             sx, sy = scaled_poly.exterior.xy
 
             fig, ax = plt.subplots()
-            ax.plot(x, y, color="#6699cc", alpha=0.7, linewidth=1, solid_capstyle="round", zorder=2, label="original")
+            ax.plot(
+                x,
+                y,
+                color="#6699cc",
+                alpha=0.7,
+                linewidth=1,
+                solid_capstyle="round",
+                zorder=2,
+                label="original",
+            )
             ax.plot(
                 sx,
                 sy,
@@ -1050,25 +1061,33 @@ def _create_interior_door_cutout(
             )
 
             if arrow_points is not None:
-                ax.plot(arrow_points[:, 0], arrow_points[:, 1], color="#0f0", linewidth=1.5, label="scale axis")
+                ax.plot(
+                    arrow_points[:, 0],
+                    arrow_points[:, 1],
+                    color="#0f0",
+                    linewidth=1.5,
+                    label="scale axis",
+                )
 
             ax.set_aspect("equal")
             ax.legend()
 
-            buf = io.BytesIO()
-            plt.savefig(buf, format="png")
-            buf.seek(0)
-            debug_image = Image.open(buf)
-            logger.debug(
-                "Generated interior door scaling debug visualization (door=%s, size=%s, anisotropic=%s)",
-                door_idx,
-                debug_image.size,
-                scale_short_axis,
-            )
-            image = np.array(debug_image)
-            debug_image.close()
-            buf.close()
+            debug_dir = Path(__file__).resolve().parents[1] / "importer" / "msd" / "image_save"
+            debug_dir.mkdir(parents=True, exist_ok=True)
+            debug_path = debug_dir / f"interior_door_{apt_id}_{door_idx}.png"
+
+            plt.savefig(debug_path, format="png", dpi=150)
             plt.close(fig)
+
+            with Image.open(debug_path) as debug_image:
+                logger.debug(
+                    "Saved interior door scaling debug visualization to %s (size=%s, anisotropic=%s)",
+                    debug_path,
+                    debug_image.size,
+                    scale_short_axis,
+                )
+
+            logger.debug("Saved interior door debug visualization to %s", debug_path)
 
         if scaled_poly.is_valid and not scaled_poly.is_empty:
             expanded_boundary = list(scaled_poly.exterior.coords[:-1])
@@ -1077,25 +1096,6 @@ def _create_interior_door_cutout(
     except Exception as e:
         logger.warning(f"Failed to scale door boundary: {e}")
         expanded_boundary = door_boundary
-
-    # # Use original door boundary without scaling
-    # expanded_boundary = door_boundary
-
-    # # Calculate door boundary dimensions to determine shorter axis
-    # x_coords = [x for x, y in expanded_boundary]
-    # y_coords = [y for x, y in expanded_boundary]
-    # width = max(x_coords) - min(x_coords)
-    # depth = max(y_coords) - min(y_coords)
-
-    # # Determine shorter axis for extrusion
-    # if width >= depth:
-    #     extrude_axis = 1  # Y axis (perpendicular to width)
-    #     axis_name = "Y"
-    # else:
-    #     extrude_axis = 0  # X axis (perpendicular to depth)
-    #     axis_name = "X"
-
-    # logger.debug(f"Interior door {apt_id}: width={width:.3f}, depth={depth:.3f}, extruding along {axis_name} axis")
 
     # Create cutter mesh
     cutter_mesh = bpy.data.meshes.new(f"InteriorDoorCutter_{apt_id}_{door_idx}")
@@ -1117,9 +1117,7 @@ def _create_interior_door_cutout(
         num_verts = len(bottom_verts)
         for i in range(num_verts):
             next_i = (i + 1) % num_verts
-            bm.faces.new(
-                [bottom_verts[i], bottom_verts[next_i], top_verts[next_i], top_verts[i]]
-            )
+            bm.faces.new([bottom_verts[i], bottom_verts[next_i], top_verts[next_i], top_verts[i]])
 
         bm.to_mesh(cutter_mesh)
         cutter_mesh.update()
@@ -1226,6 +1224,101 @@ def create_apartment_walls(
                 )
             except Exception as e:
                 logger.warning(f"Failed to create window cutter {window_idx}: {e}")
+
+
+def check_and_enable_door_addon() -> bool:
+    """Enable Door It! Interior addon."""
+
+    addon_module = (
+        "DoorItInterior"  # NOTE: more addon_moudle will be added for exterior walls, windows, etc.
+    )
+
+    bpy.ops.preferences.addon_enable(module=addon_module)
+    addon_utils.modules_refresh()
+    logger.debug(f"Enabled {addon_module} addon")
+
+
+def create_door_from_boundary(
+    door_boundary: list,
+    door_id: str,
+    z_position: float = 0.0,
+    default_depth: float = 0.1,  # Default door thickness/depth
+    **door_settings,
+) -> Optional[Dict[str, object]]:
+    """Create a Door It! Interior door object from a door boundary polygon.
+
+    Args:
+        door_boundary: List of (x, y) tuples defining door polygon
+        door_id: Unique identifier for the door
+        z_position: Z-height to place the door (default: 0.0 for floor level)
+        default_depth: Default door depth/thickness in meters (default: 0.1m)
+        **door_settings: Additional settings to pass to create_interior_door
+
+    Returns:
+        Dictionary with creation summary, or None if failed
+    """
+
+    # Create polygon and get basic properties
+    door_poly = Polygon(door_boundary)
+    centroid = door_poly.centroid
+    centroid_coords = (centroid.x, centroid.y)
+
+    rotation_angle = get_longest_edge_angle(door_poly)
+
+    # Rotate polygon to axis-aligned orientation
+    aligned_poly = affinity.rotate(
+        door_poly, rotation_angle, origin=centroid_coords, use_radians=False
+    )
+
+    # Get axis-aligned dimensions
+    minx, miny, maxx, maxy = aligned_poly.bounds
+    width = maxx - minx
+    height = maxy - miny
+
+    # Determine which is longer axis
+    is_width_dominant = width >= height
+
+    clearance_per_side = 0.04  # Add 0.02m clearance on each side (0.04m total)
+
+    if is_width_dominant:
+        door_depth = height  # Use actual depth from door boundary
+        door_width = width + (clearance_per_side * 2)  # Longer axis + clearance
+    else:
+        door_depth = width  # Use actual depth from door boundary
+        door_width = height + (clearance_per_side * 2)  # Longer axis + clearance
+
+    door_height = door_settings.pop("door_height", DEFAULT_DOOR_HEIGHT)
+
+    # Calculate location (centroid at floor level)
+    location = (centroid.x, centroid.y, z_position)
+
+    logger.debug(
+        f"Door {door_id}: dimensions x={door_depth:.3f}m (depth), "
+        f"y={door_width:.3f}m (width), z={door_height:.3f}m (height), "
+        f"rotation={-rotation_angle:.1f}°"
+    )
+
+    result = create_interior_door(
+        name=f"InteriorDoor_{door_id}",
+        location=location,
+        rotation_angle=rotation_angle + 90,
+        width=door_width,
+        height=door_height,
+        depth=door_depth,
+        **door_settings,
+    )
+
+    # Log door creation
+    if result.get("created") or result.get("linked"):
+        door_obj = bpy.data.objects.get(result["object"])
+        controller_name = result.get("controller")
+
+        if door_obj and controller_name:
+            logger.debug(
+                f"Created door '{door_obj.name}' at {location} with rotation {-rotation_angle:.1f}° via empty controller '{controller_name}'"
+            )
+
+    return result
 
 
 def _calculate_bounds(
@@ -2324,16 +2417,35 @@ def create_room_walls(
                 if not door_boundary:
                     continue
                 logger.debug(f"Creating interior door cutout {idx} for door {door_id}")
+
+                # Create the cutout in the wall
                 _create_interior_door_cutout(
                     wall_obj=obj,
                     apt_id=str(door_id),
                     door_idx=idx,
                     door_boundary=door_boundary,
                     z_bottom=0.0,
-                    z_top=2.1,
-                    # debug=True,  # DEBUG
+                    z_top=DEFAULT_DOOR_HEIGHT,
                 )
 
+                # Create the actual door object at this boundary
+                door_result = create_door_from_boundary(
+                    door_boundary=door_boundary,
+                    door_id=str(door_id),
+                    z_position=0.0,
+                    default_depth=0.1,
+                    door_height=DEFAULT_DOOR_HEIGHT,
+                    randomize_type=True,
+                    randomize_handle=True,
+                    randomize_material=True,
+                    randomize_color=False,
+                    paint_color=(1.0, 1.0, 1.0, 1.0),  # White door
+                )
+
+                if door_result:
+                    logger.debug(f"Successfully created door object: {door_result.get('object')}")
+
+        # logger.debug(f"Created wall for room {room.id} ({room.category})")
         walls_created += 1
 
     return walls_created

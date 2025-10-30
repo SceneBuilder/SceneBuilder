@@ -257,3 +257,7 @@ $RECYCLE.BIN/
 # End of https://www.toptal.com/developers/gitignore/api/windows,macos,linux,python
 MATERIAL_WORKFLOW.md
 CLAUDE.md
+
+# Large data files and addons
+scene_builder/importer/msd/data/mds_V2_5.372k.csv
+external/*.zip

@@ -5,7 +5,7 @@ from pydantic_graph import Graph, GraphRunResult
 
 from scene_builder.config import TEST_ASSET_DIR, generation_config
 from scene_builder.database.object import ObjectDatabase
-from scene_builder.decoder import blender
+from scene_builder.decoder.blender import blender
 from scene_builder.definition.plan import RoomPlan
 from scene_builder.definition.scene import Object, ObjectBlueprint, Room, Vector2, Scene
 from scene_builder.importer.test_asset_importer import search_test_asset
@@ -24,7 +24,7 @@ from scene_builder.nodes.placement import (
 )
 
 from scene_builder.nodes.routing import MultiRoomDesignOrchestrator
-from scene_builder.msd_integration.loader import MSDLoader, normalize_floor_plan_orientation, scale_floor_plan
+from scene_builder.importer.msd.loader import MSDLoader, normalize_floor_plan_orientation, scale_floor_plan
 from scene_builder.utils.conversions import pydantic_from_yaml
 from scene_builder.utils.geometry import round_vector2_list, simplify_polygon, save_polygon_image
 from scene_builder.utils.image import create_gif_from_images

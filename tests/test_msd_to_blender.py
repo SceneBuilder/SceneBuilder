@@ -6,13 +6,23 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Optional
 
-from scene_builder.decoder import blender
+from scene_builder.decoder.blender import blender
 from scene_builder.definition.scene import Scene
-from scene_builder.msd_integration.loader import MSDLoader
+from scene_builder.importer.msd.loader import MSDLoader
+from scene_builder.utils.blender import install_door_it_addon
 from scene_builder.utils.room import render_structure_links
 
 
 OUTPUT_DIR = Path("test_output/msd_to_blender")
+
+
+def _enable_addons(enable_doors=True):
+    if enable_doors:
+        addon_installed = install_door_it_addon()
+        if addon_installed:
+            print("✅ Door It! Interior addon enabled - doors will be created")
+        else:
+            print("⛔️ Door It! Interior addon not available - only cutouts will be created")
 
 
 def _collect_building_floors(
@@ -52,6 +62,7 @@ def _render_structure_links_for_rooms(rooms_dict: list, output_path: Path) -> bo
 
 
 def test_msd_to_blender(
+    enable_addons: bool = True,
     door_cutout: bool = True,
     window_cutout: bool = True,
     entire_floor: bool = False,
@@ -61,6 +72,9 @@ def test_msd_to_blender(
     render_links: bool = False,
 ):
     loader = MSDLoader()
+
+    if enable_addons:
+        _enable_addons(enable_doors=True)
 
     # Load the specified or a random building from MSD
     if building_id is None:
@@ -174,6 +188,7 @@ if __name__ == "__main__":
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     test_msd_to_blender(
+        enable_addons=True,
         door_cutout=True,
         window_cutout=True,
         entire_floor=True,

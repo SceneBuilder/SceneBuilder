@@ -3,7 +3,7 @@ from __future__ import annotations
 from pydantic_graph import BaseNode, End, Graph, GraphRunContext
 
 from scene_builder.config import DEBUG, TEST_ASSET_DIR
-from scene_builder.decoder import blender
+from scene_builder.decoder.blender import blender
 from scene_builder.definition.scene import Room
 from scene_builder.utils.conversions import pydantic_to_dict
 from scene_builder.workflow.agents import placement_agent
