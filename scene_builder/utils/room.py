@@ -134,15 +134,23 @@ def assign_structures_to_rooms(
 
 
 def render_structure_links(
-    rooms: Iterable[Room],
-    structures: Iterable[Structure],
+    rooms: Iterable[Room] | Iterable[dict],
+    structures: Iterable[Structure] | Iterable[dict],
     attachments: Iterable[tuple[str, str]],
     output_path: str | Path,
     *,
     figsize: tuple[float, float] = (10.0, 10.0),
     dpi: int = 150,
 ) -> Path:
-    """Render a debug visualization of room boundaries and structure links."""
+    """Render a debug visualization of room boundaries and structure links.
+
+    Accepts either Pydantic models (Room/Structure) or dicts with equivalent
+    fields (e.g., produced by pydantic_to_dict). Dict inputs are cast to
+    Pydantic models for consistent handling.
+    """
+    # Normalize inputs and one-line cast of dicts → Pydantic models (HACK?)
+    rooms = [r if isinstance(r, Room) else Room.model_validate(r) for r in list(rooms)]
+    structures = [s if isinstance(s, Structure) else Structure.model_validate(s) for s in list(structures)]
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
