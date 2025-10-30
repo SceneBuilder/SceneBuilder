@@ -1,7 +1,7 @@
 import pytest
 from pathlib import Path
 
-from scene_builder.decoder import blender
+from scene_builder.decoder.blender import blender
 from scene_builder.definition.scene import Vector2
 
 def test_floor_mesh():
