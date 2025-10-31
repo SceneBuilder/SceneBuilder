@@ -26,7 +26,7 @@ from scene_builder.database.material import MaterialDatabase
 from scene_builder.decoder.blender.controllers.interior_door import create_interior_door
 from scene_builder.definition.scene import Object, Room, Scene, Vector2
 from scene_builder.importer import objaverse_importer, test_asset_importer
-from scene_builder.importer.msd.loader import get_dominant_angle, get_longest_edge_angle, classify_door_type
+from scene_builder.importer.msd.loader import get_dominant_angle, get_longest_edge_angle, classify_door_type, scale_boundary_for_cutout
 from scene_builder.logging import logger
 from scene_builder.tools.material_applicator import texture_floor_mesh
 from scene_builder.utils.blender import SceneSwitcher
@@ -872,11 +872,13 @@ def _create_window_cutout(
     window_boundary: list,
     z_bottom: float,
     z_top: float,
-    scale_factor: float = 1.1,
+    scale_factor: float = 1.10,
+    scale_short_axis: bool = True,
+    debug=False,
 ):
     """Create and apply a window cutout to a wall object.
 
-    Scales up the boundary and applies a boolean cutout operation to the wall.
+    Scales the window boundary by scale_factor and applies a boolean cutout operation.
 
     Args:
         wall_obj: Blender wall object to cut
@@ -885,24 +887,21 @@ def _create_window_cutout(
         window_boundary: List of (x, y) tuples defining window polygon
         z_bottom: Bottom Z height of window cutout
         z_top: Top Z height of window cutout
-        scale_factor: Factor to scale up the cutout (default: 1.2 = 20% larger)
+        scale_factor: Factor to scale the boundary (default: 1.10)
+        scale_short_axis: If True, scale along the axis orthogonal to the dominant direction (default: True)
+        debug: If True, plots window geometry (original scaled, dominant axis) (default: False)
     """
-    # Scale up window boundary
-    try:
-        window_poly = Polygon(window_boundary)
-        scaled_poly = affinity.scale(
-            window_poly, xfact=scale_factor, yfact=scale_factor, origin="centroid"
-        )
+    # Scale the window boundary using geometry function (no Blender dependency)
+    expanded_boundary = scale_boundary_for_cutout(
+        boundary=window_boundary,
+        scale_factor=scale_factor,
+        scale_short_axis=scale_short_axis,
+        debug=debug,
+        debug_prefix="window",
+        debug_id=f"{apt_id}_{window_idx}",
+    )
 
-        if scaled_poly.is_valid and not scaled_poly.is_empty:
-            expanded_boundary = list(scaled_poly.exterior.coords[:-1])
-        else:
-            expanded_boundary = window_boundary
-    except Exception as e:
-        logger.warning(f"Failed to scale cutout boundary: {e}")
-        expanded_boundary = window_boundary
-
-    # Create cutter mesh and apply boolean operation
+    # Create cutter mesh and apply boolean operation (Blender-specific)
     cutter_mesh = bpy.data.meshes.new(f"WindowCutter_{apt_id}_{window_idx}")
     cutter_obj = bpy.data.objects.new(f"WindowCutter_{apt_id}_{window_idx}", cutter_mesh)
     bpy.context.collection.objects.link(cutter_obj)
@@ -962,128 +961,21 @@ def _create_interior_door_cutout(
         door_boundary: List of (x, y) tuples defining door polygon
         z_bottom: Bottom Z height of door cutout (default: 0.0)
         z_top: Top Z height of door cutout (default: 2.1)
-        scale_factor: Factor to scale the boundary (default: 1.05)
+        scale_factor: Factor to scale the boundary (default: 1.20)
         scale_short_axis: If True, scale along the axis orthogonal to the dominant direction (default: True)
         debug: If True, plots door geometry (original scaled, dominant axis) (default: False)
     """
-    # Scale the door boundary
-    try:
-        door_poly = Polygon(door_boundary)
-        rotation_angle = get_dominant_angle([door_poly], strategy="complex_sum")
-        centroid = door_poly.centroid
-        centroid_coords = (centroid.x, centroid.y)
+    # Scale the door boundary using geometry function (no Blender dependency)
+    expanded_boundary = scale_boundary_for_cutout(
+        boundary=door_boundary,
+        scale_factor=scale_factor,
+        scale_short_axis=scale_short_axis,
+        debug=debug,
+        debug_prefix="interior_door",
+        debug_id=f"{apt_id}_{door_idx}",
+    )
 
-        aligned_poly = affinity.rotate(
-            door_poly, rotation_angle, origin=centroid_coords, use_radians=False
-        )
-        minx, miny, maxx, maxy = aligned_poly.bounds
-        width = maxx - minx
-        height = maxy - miny
-        is_width_dominant = width >= height
-
-        scaled_poly = door_poly
-        scale_axis_vector = np.array([0.0, 0.0])
-        arrow_points = None
-        door_centroid = np.array(centroid_coords)
-
-        if scale_short_axis and width > 0 and height > 0:
-            x_factor = 1.0 if is_width_dominant else scale_factor
-            y_factor = scale_factor if is_width_dominant else 1.0
-
-            scaled_aligned_poly = affinity.scale(
-                aligned_poly, xfact=x_factor, yfact=y_factor, origin=centroid_coords
-            )
-            scaled_poly = affinity.rotate(
-                scaled_aligned_poly, -rotation_angle, origin=centroid_coords, use_radians=False
-            )
-
-            theta = np.radians(-rotation_angle)
-            rotation_matrix = np.array(
-                [[np.cos(theta), -np.sin(theta)], [np.sin(theta), np.cos(theta)]]
-            )
-            scale_axis_local = np.array([0.0, 1.0]) if is_width_dominant else np.array([1.0, 0.0])
-            scale_axis_vector = rotation_matrix @ scale_axis_local
-
-            if np.linalg.norm(scale_axis_vector) > 0:
-                minor_extent = height if is_width_dominant else width
-                direction_length = 0.5 * max(minor_extent, 1.0)
-                direction = scale_axis_vector / np.linalg.norm(scale_axis_vector)
-                arrow_points = np.vstack(
-                    [
-                        door_centroid - direction * direction_length,
-                        door_centroid + direction * direction_length,
-                    ]
-                )
-        elif not scale_short_axis:
-            scaled_poly = affinity.scale(
-                door_poly, xfact=scale_factor, yfact=scale_factor, origin=centroid_coords
-            )
-
-        # TEMP: visualization for debugging orthogonal scaling
-        if debug:
-            x, y = door_poly.exterior.xy
-            sx, sy = scaled_poly.exterior.xy
-
-            fig, ax = plt.subplots()
-            ax.plot(
-                x,
-                y,
-                color="#6699cc",
-                alpha=0.7,
-                linewidth=1,
-                solid_capstyle="round",
-                zorder=2,
-                label="original",
-            )
-            ax.plot(
-                sx,
-                sy,
-                color="#f44",
-                alpha=0.7,
-                linewidth=1,
-                solid_capstyle="round",
-                zorder=2,
-                label="scaled (orthogonal)" if scale_short_axis else "scaled (uniform)",
-            )
-
-            if arrow_points is not None:
-                ax.plot(
-                    arrow_points[:, 0],
-                    arrow_points[:, 1],
-                    color="#0f0",
-                    linewidth=1.5,
-                    label="scale axis",
-                )
-
-            ax.set_aspect("equal")
-            ax.legend()
-
-            debug_dir = Path(__file__).resolve().parents[1] / "importer" / "msd" / "image_save"
-            debug_dir.mkdir(parents=True, exist_ok=True)
-            debug_path = debug_dir / f"interior_door_{apt_id}_{door_idx}.png"
-
-            plt.savefig(debug_path, format="png", dpi=150)
-            plt.close(fig)
-
-            with Image.open(debug_path) as debug_image:
-                logger.debug(
-                    "Saved interior door scaling debug visualization to %s (size=%s, anisotropic=%s)",
-                    debug_path,
-                    debug_image.size,
-                    scale_short_axis,
-                )
-
-            logger.debug("Saved interior door debug visualization to %s", debug_path)
-
-        if scaled_poly.is_valid and not scaled_poly.is_empty:
-            expanded_boundary = list(scaled_poly.exterior.coords[:-1])
-        else:
-            expanded_boundary = door_boundary
-    except Exception as e:
-        logger.warning(f"Failed to scale door boundary: {e}")
-        expanded_boundary = door_boundary
-
-    # Create cutter mesh
+    # Create cutter mesh (Blender-specific)
     cutter_mesh = bpy.data.meshes.new(f"InteriorDoorCutter_{apt_id}_{door_idx}")
     cutter_obj = bpy.data.objects.new(f"InteriorDoorCutter_{apt_id}_{door_idx}", cutter_mesh)
     bpy.context.collection.objects.link(cutter_obj)

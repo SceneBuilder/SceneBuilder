@@ -21,6 +21,7 @@ import pandas as pd
 from msd.plot import plot_floor, set_figure
 from PIL import Image
 from shapely import wkt
+from shapely import affinity
 from shapely.geometry import Polygon
 
 from scene_builder.config import MSD_CSV_PATH
@@ -420,6 +421,147 @@ def classify_door_type(
         return "interior"
     else:
         return "exterior"
+
+
+def scale_boundary_for_cutout(
+    boundary: list,
+    scale_factor: float = 1.10,
+    scale_short_axis: bool = True,
+    debug: bool = False,
+    debug_prefix: str = "window",
+    debug_id: str = "",
+) -> list:
+    """
+    Scale a boundary polygon for cutout operations (windows, doors, etc.).
+    
+    Uses anisotropic scaling along the short axis (orthogonal to dominant direction)
+    for better cutout geometry. Pure geometry operation - no Blender dependencies.
+    
+    Args:
+        boundary: List of (x, y) tuples defining polygon
+        scale_factor: Factor to scale the boundary (default: 1.10)
+        scale_short_axis: If True, scale along axis orthogonal to dominant direction (default: True)
+        debug: If True, saves debug visualization (default: False)
+        debug_prefix: Prefix for debug filename (e.g., "window" or "door")
+        debug_id: ID to include in debug filename (e.g., apt_id_index)
+    
+    Returns:
+        List of (x, y) tuples of scaled boundary
+    """
+    try:
+        boundary_poly = Polygon(boundary)
+        rotation_angle = get_dominant_angle([boundary_poly], strategy="complex_sum")
+        centroid = boundary_poly.centroid
+        centroid_coords = (centroid.x, centroid.y)
+
+        aligned_poly = affinity.rotate(
+            boundary_poly, rotation_angle, origin=centroid_coords, use_radians=False
+        )
+        minx, miny, maxx, maxy = aligned_poly.bounds
+        width = maxx - minx
+        height = maxy - miny
+        is_width_dominant = width >= height
+
+        scaled_poly = boundary_poly
+        scale_axis_vector = np.array([0.0, 0.0])
+        arrow_points = None
+        boundary_centroid = np.array(centroid_coords)
+
+        if scale_short_axis and width > 0 and height > 0:
+            x_factor = 1.0 if is_width_dominant else scale_factor
+            y_factor = scale_factor if is_width_dominant else 1.0
+
+            scaled_aligned_poly = affinity.scale(
+                aligned_poly, xfact=x_factor, yfact=y_factor, origin=centroid_coords
+            )
+            scaled_poly = affinity.rotate(
+                scaled_aligned_poly, -rotation_angle, origin=centroid_coords, use_radians=False
+            )
+
+            theta = np.radians(-rotation_angle)
+            rotation_matrix = np.array(
+                [[np.cos(theta), -np.sin(theta)], [np.sin(theta), np.cos(theta)]]
+            )
+            scale_axis_local = np.array([0.0, 1.0]) if is_width_dominant else np.array([1.0, 0.0])
+            scale_axis_vector = rotation_matrix @ scale_axis_local
+
+            if np.linalg.norm(scale_axis_vector) > 0:
+                minor_extent = height if is_width_dominant else width
+                direction_length = 0.5 * max(minor_extent, 1.0)
+                direction = scale_axis_vector / np.linalg.norm(scale_axis_vector)
+                arrow_points = np.vstack(
+                    [
+                        boundary_centroid - direction * direction_length,
+                        boundary_centroid + direction * direction_length,
+                    ]
+                )
+        elif not scale_short_axis:
+            scaled_poly = affinity.scale(
+                boundary_poly, xfact=scale_factor, yfact=scale_factor, origin=centroid_coords
+            )
+
+        # TEMP: visualization for debugging orthogonal scaling
+        if debug:
+            x, y = boundary_poly.exterior.xy
+            sx, sy = scaled_poly.exterior.xy
+
+            fig, ax = plt.subplots()
+            ax.plot(
+                x,
+                y,
+                color="#6699cc",
+                alpha=0.7,
+                linewidth=1,
+                solid_capstyle="round",
+                zorder=2,
+                label="original",
+            )
+            ax.plot(
+                sx,
+                sy,
+                color="#f44",
+                alpha=0.7,
+                linewidth=1,
+                solid_capstyle="round",
+                zorder=2,
+                label="scaled (orthogonal)" if scale_short_axis else "scaled (uniform)",
+            )
+
+            if arrow_points is not None:
+                ax.plot(
+                    arrow_points[:, 0],
+                    arrow_points[:, 1],
+                    color="#0f0",
+                    linewidth=1.5,
+                    label="scale axis",
+                )
+
+            ax.set_aspect("equal")
+            ax.legend()
+
+            debug_dir = Path(__file__).resolve().parents[1] / "importer" / "msd" / "image_save"
+            debug_dir.mkdir(parents=True, exist_ok=True)
+            debug_filename = f"{debug_prefix}_{debug_id}.png" if debug_id else f"{debug_prefix}_debug.png"
+            debug_path = debug_dir / debug_filename
+
+            plt.savefig(debug_path, format="png", dpi=150)
+            plt.close(fig)
+
+            with Image.open(debug_path) as debug_image:
+                print(
+                    f"Saved {debug_prefix} scaling debug visualization to {debug_path} "
+                    f"(size={debug_image.size}, anisotropic={scale_short_axis})"
+                )
+
+        if scaled_poly.is_valid and not scaled_poly.is_empty:
+            expanded_boundary = list(scaled_poly.exterior.coords[:-1])
+        else:
+            expanded_boundary = boundary
+    except Exception as e:
+        print(f"Failed to scale boundary: {e}")
+        expanded_boundary = boundary
+
+    return expanded_boundary
 
 
 class MSDLoader:
