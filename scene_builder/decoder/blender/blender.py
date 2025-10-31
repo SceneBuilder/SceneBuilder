@@ -2103,6 +2103,7 @@ def create_room_walls(
     wall_thickness: float = 0.05,
     door_cutouts: bool = True,
     window_cutouts: bool = True,
+    render_doors: bool = False,
     window_height_bottom: float = 1.0,
     window_height_top: float = 2.2,
 ):
@@ -2112,6 +2113,9 @@ def create_room_walls(
         rooms: List of Room objects with boundary and category data
         wall_height: Height of walls in meters (default: 2.7m)
         wall_thickness: Thickness of walls in meters (default: 0.15m)
+        door_cutouts: Whether to create cutouts in walls for doors (default: True)
+        window_cutouts: Whether to create cutouts in walls for windows (default: True)
+        render_doors: Whether to create actual door objects (default: True)
 
     Returns:
         Number of walls created
@@ -2242,22 +2246,25 @@ def create_room_walls(
                     z_top=DEFAULT_DOOR_HEIGHT,
                 )
 
-                # Create the actual door object at this boundary
-                door_result = create_door_from_boundary(
-                    door_boundary=door_boundary,
-                    door_id=str(door_id),
-                    z_position=0.0,
-                    default_depth=0.1,
-                    door_height=DEFAULT_DOOR_HEIGHT,
-                    randomize_type=True,
-                    randomize_handle=True,
-                    randomize_material=True,
-                    randomize_color=False,
-                    paint_color=(1.0, 1.0, 1.0, 1.0),  # White door
-                )
+                # Create the actual door object at this boundary if rendering is enabled
+                if render_doors:
+                    door_result = create_door_from_boundary(
+                        door_boundary=door_boundary,
+                        door_id=str(door_id),
+                        z_position=0.0,
+                        default_depth=0.1,
+                        door_height=DEFAULT_DOOR_HEIGHT,
+                        randomize_type=True,
+                        randomize_handle=True,
+                        randomize_material=True,
+                        randomize_color=False,
+                        paint_color=(1.0, 1.0, 1.0, 1.0),  # White door
+                    )
 
-                if door_result:
-                    logger.debug(f"Successfully created door object: {door_result.get('object')}")
+                    if door_result:
+                        logger.debug(f"Successfully created door object: {door_result.get('object')}")
+                else:
+                    logger.debug(f"Skipping door object creation for door {door_id} (render_doors=False)")
 
         # logger.debug(f"Created wall for room {room.id} ({room.category})")
         walls_created += 1
