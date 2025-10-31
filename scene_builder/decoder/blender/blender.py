@@ -872,9 +872,12 @@ def _create_window_cutout(
     window_boundary: list,
     z_bottom: float,
     z_top: float,
-    scale_factor: float = 1.10,
+    scale_factor: float = 2.00,
     scale_short_axis: bool = True,
+    scale_long_axis: bool = True,
+    scale_long_factor: float = 0.99,
     debug=False,
+    keep_cutter_visible: bool = False,
 ):
     """Create and apply a window cutout to a wall object.
 
@@ -887,15 +890,20 @@ def _create_window_cutout(
         window_boundary: List of (x, y) tuples defining window polygon
         z_bottom: Bottom Z height of window cutout
         z_top: Top Z height of window cutout
-        scale_factor: Factor to scale the boundary (default: 1.10)
+        scale_factor: Factor to scale the shorter axis (default: 2.00)
         scale_short_axis: If True, scale along the axis orthogonal to the dominant direction (default: True)
+        scale_long_axis: If True, scale along the dominant (longer) direction (default: True)
+        scale_long_factor: Factor to scale the longer axis (default: 0.99)
         debug: If True, plots window geometry (original scaled, dominant axis) (default: False)
+        keep_cutter_visible: If True, keep the cutter object visible with red color for debugging (default: False)
     """
     # Scale the window boundary using geometry function (no Blender dependency)
     expanded_boundary = scale_boundary_for_cutout(
         boundary=window_boundary,
-        scale_factor=scale_factor,
+        scale_short_factor=scale_factor,
         scale_short_axis=scale_short_axis,
+        scale_long_axis=scale_long_axis,
+        scale_long_factor=scale_long_factor,
         debug=debug,
         debug_prefix="window",
         debug_id=f"{apt_id}_{window_idx}",
@@ -925,6 +933,16 @@ def _create_window_cutout(
         bm.to_mesh(cutter_mesh)
         cutter_mesh.update()
 
+        # If keeping cutter visible, apply a bright red material for visualization
+        if keep_cutter_visible:
+            cutter_material = _create_unlit_material(
+                f"WindowCutterMaterial_{apt_id}_{window_idx}",
+                (1.0, 0.0, 0.0, 0.5),  # Bright red with transparency
+            )
+            cutter_obj.data.materials.append(cutter_material)
+            # Make the cutter wireframe or semi-transparent for better visibility
+            cutter_obj.display_type = "WIRE" if hasattr(cutter_obj, "display_type") else "SOLID"
+
         # Apply boolean modifier
         bool_mod = wall_obj.modifiers.new(name=f"WindowCut_{window_idx}", type="BOOLEAN")
         bool_mod.operation = "DIFFERENCE"
@@ -933,8 +951,9 @@ def _create_window_cutout(
         bpy.context.view_layer.objects.active = wall_obj
         bpy.ops.object.modifier_apply(modifier=bool_mod.name)
 
-        # Clean up cutter object
-        bpy.data.objects.remove(cutter_obj, do_unlink=True)
+        # Clean up cutter object only if not keeping it visible
+        if not keep_cutter_visible:
+            bpy.data.objects.remove(cutter_obj, do_unlink=True)
     finally:
         bm.free()
 
@@ -946,9 +965,12 @@ def _create_interior_door_cutout(
     door_boundary: list,
     z_bottom: float = 0.0,
     z_top: float = 2.1,
-    scale_factor: float = 1.20,
+    scale_factor: float = 2.00,
     scale_short_axis: bool = True,
+    scale_long_axis: bool = True,
+    scale_long_factor: float = 0.99,
     debug=False,
+    keep_cutter_visible: bool = False,
 ):
     """Create and apply an interior door cutout to a wall object.
 
@@ -961,15 +983,20 @@ def _create_interior_door_cutout(
         door_boundary: List of (x, y) tuples defining door polygon
         z_bottom: Bottom Z height of door cutout (default: 0.0)
         z_top: Top Z height of door cutout (default: 2.1)
-        scale_factor: Factor to scale the boundary (default: 1.20)
+        scale_factor: Factor to scale the shorter axis (default: 2.00)
         scale_short_axis: If True, scale along the axis orthogonal to the dominant direction (default: True)
+        scale_long_axis: If True, scale along the dominant (longer) direction (default: True)
+        scale_long_factor: Factor to scale the longer axis (default: 0.99)
         debug: If True, plots door geometry (original scaled, dominant axis) (default: False)
+        keep_cutter_visible: If True, keep the cutter object visible with red color for debugging (default: False)
     """
     # Scale the door boundary using geometry function (no Blender dependency)
     expanded_boundary = scale_boundary_for_cutout(
         boundary=door_boundary,
-        scale_factor=scale_factor,
+        scale_short_factor=scale_factor,
         scale_short_axis=scale_short_axis,
+        scale_long_axis=scale_long_axis,
+        scale_long_factor=scale_long_factor,
         debug=debug,
         debug_prefix="interior_door",
         debug_id=f"{apt_id}_{door_idx}",
@@ -1002,6 +1029,16 @@ def _create_interior_door_cutout(
     finally:
         bm.free()
 
+    # If keeping cutter visible, apply a bright red material for visualization
+    if keep_cutter_visible:
+        cutter_material = _create_unlit_material(
+            f"DoorCutterMaterial_{apt_id}_{door_idx}",
+            (1.0, 0.0, 0.0, 0.5),  # Bright red with transparency
+        )
+        cutter_obj.data.materials.append(cutter_material)
+        # Make the cutter wireframe or semi-transparent for better visibility
+        cutter_obj.display_type = "WIRE" if hasattr(cutter_obj, "display_type") else "SOLID"
+
     # Apply boolean modifier
     bool_mod = wall_obj.modifiers.new(name=f"InteriorDoorCut_{door_idx}", type="BOOLEAN")
     bool_mod.operation = "DIFFERENCE"
@@ -1010,8 +1047,9 @@ def _create_interior_door_cutout(
     bpy.context.view_layer.objects.active = wall_obj
     bpy.ops.object.modifier_apply(modifier=bool_mod.name)
 
-    # Clean up cutter object
-    bpy.data.objects.remove(cutter_obj, do_unlink=True)
+    # Clean up cutter object only if not keeping it visible
+    if not keep_cutter_visible:
+        bpy.data.objects.remove(cutter_obj, do_unlink=True)
 
 
 def check_and_enable_door_addon() -> bool:
@@ -1928,6 +1966,7 @@ def create_room_walls(
     render_doors: bool = False,
     window_height_bottom: float = 1.0,
     window_height_top: float = 2.2,
+    keep_cutters_visible: bool = False,
 ):
     """Create walls for each room individually (excluding windows and exterior doors).
 
@@ -1938,6 +1977,9 @@ def create_room_walls(
         door_cutouts: Whether to create cutouts in walls for doors (default: True)
         window_cutouts: Whether to create cutouts in walls for windows (default: True)
         render_doors: Whether to create actual door objects (default: True)
+        window_height_bottom: Bottom height of window cutouts (default: 1.0m)
+        window_height_top: Top height of window cutouts (default: 2.2m)
+        keep_cutters_visible: If True, keep cutter objects visible for debugging (default: False)
 
     Returns:
         Number of walls created
@@ -2068,6 +2110,7 @@ def create_room_walls(
                     window_boundary=cutout_boundary,
                     z_bottom=window_height_bottom,
                     z_top=window_height_top,
+                    keep_cutter_visible=keep_cutters_visible,
                 )
 
         # Apply interior door cutouts if requested
@@ -2088,6 +2131,7 @@ def create_room_walls(
                     door_boundary=door_boundary,
                     z_bottom=0.0,
                     z_top=DEFAULT_DOOR_HEIGHT,
+                    keep_cutter_visible=keep_cutters_visible,
                 )
 
                 # Create the actual door object at this boundary if rendering is enabled

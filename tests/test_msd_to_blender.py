@@ -16,7 +16,7 @@ logger.remove()
 logger.add(sys.stderr, level="WARNING")
 
 
-def test_msd_to_blender(door_cutout=True, window_cutout=True, enable_doors=True, visualize_entities=True):
+def test_msd_to_blender(door_cutout=True, window_cutout=True, enable_doors=False, visualize_entities=False, keep_cutters_visible=True):
     # Install Door It! Interior addon if requested and available
     if enable_doors:
         addon_installed = install_door_it_addon()
@@ -113,7 +113,12 @@ def test_msd_to_blender(door_cutout=True, window_cutout=True, enable_doors=True,
         blender.parse_scene_definition(scene_data)
 
         # Create walls for each room (excluding windows and exterior doors)
-        walls_created = blender.create_room_walls(all_rooms, door_cutouts=door_cutout, window_cutouts=window_cutout)
+        walls_created = blender.create_room_walls(
+            all_rooms, 
+            door_cutouts=door_cutout, 
+            window_cutouts=window_cutout,
+            keep_cutters_visible=keep_cutters_visible
+        )
         if walls_created > 0:
             print(f"   ✓ Created {walls_created} room walls (excluding windows and exterior doors)")
 

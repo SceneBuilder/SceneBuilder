@@ -425,8 +425,10 @@ def classify_door_type(
 
 def scale_boundary_for_cutout(
     boundary: list,
-    scale_factor: float = 1.10,
+    scale_short_factor: float = 2.00,
     scale_short_axis: bool = True,
+    scale_long_axis: bool = True,
+    scale_long_factor: float = 0.99,
     debug: bool = False,
     debug_prefix: str = "window",
     debug_id: str = "",
@@ -435,12 +437,14 @@ def scale_boundary_for_cutout(
     Scale a boundary polygon for cutout operations (windows, doors, etc.).
     
     Uses anisotropic scaling along the short axis (orthogonal to dominant direction)
-    for better cutout geometry. Pure geometry operation - no Blender dependencies.
+    and/or longer axis for better cutout geometry. Pure geometry operation - no Blender dependencies.
     
     Args:
         boundary: List of (x, y) tuples defining polygon
-        scale_factor: Factor to scale the boundary (default: 1.10)
+        scale_short_factor: Factor to scale the shorter axis (default: 2.00)
         scale_short_axis: If True, scale along axis orthogonal to dominant direction (default: True)
+        scale_long_axis: If True, scale along the dominant (longer) direction (default: True)
+        scale_long_factor: Factor to scale the longer axis (default: 0.99)
         debug: If True, saves debug visualization (default: False)
         debug_prefix: Prefix for debug filename (e.g., "window" or "door")
         debug_id: ID to include in debug filename (e.g., apt_id_index)
@@ -468,8 +472,13 @@ def scale_boundary_for_cutout(
         boundary_centroid = np.array(centroid_coords)
 
         if scale_short_axis and width > 0 and height > 0:
-            x_factor = 1.0 if is_width_dominant else scale_factor
-            y_factor = scale_factor if is_width_dominant else 1.0
+            # Start with base factors
+            if is_width_dominant:
+                x_factor = scale_long_factor  # Width is longer - always scale it
+                y_factor = scale_short_factor  # Height is shorter
+            else:
+                x_factor = scale_short_factor  # Width is shorter
+                y_factor = scale_long_factor  # Height is longer - always scale it
 
             scaled_aligned_poly = affinity.scale(
                 aligned_poly, xfact=x_factor, yfact=y_factor, origin=centroid_coords
@@ -495,9 +504,25 @@ def scale_boundary_for_cutout(
                         boundary_centroid + direction * direction_length,
                     ]
                 )
-        elif not scale_short_axis:
+        elif scale_long_axis and width > 0 and height > 0:
+            # Only scale long axis, not short axis
+            if is_width_dominant:
+                x_factor = scale_long_factor  # Width is longer
+                y_factor = 1.0  # Height is shorter
+            else:
+                x_factor = 1.0  # Width is shorter
+                y_factor = scale_long_factor  # Height is longer
+
+            scaled_aligned_poly = affinity.scale(
+                aligned_poly, xfact=x_factor, yfact=y_factor, origin=centroid_coords
+            )
+            scaled_poly = affinity.rotate(
+                scaled_aligned_poly, -rotation_angle, origin=centroid_coords, use_radians=False
+            )
+        elif not scale_short_axis and not scale_long_axis:
+            # Uniform scaling if neither axis-specific scaling is requested
             scaled_poly = affinity.scale(
-                boundary_poly, xfact=scale_factor, yfact=scale_factor, origin=centroid_coords
+                boundary_poly, xfact=scale_short_factor, yfact=scale_short_factor, origin=centroid_coords
             )
 
         # TEMP: visualization for debugging orthogonal scaling
@@ -524,7 +549,12 @@ def scale_boundary_for_cutout(
                 linewidth=1,
                 solid_capstyle="round",
                 zorder=2,
-                label="scaled (orthogonal)" if scale_short_axis else "scaled (uniform)",
+                label=(
+                    "scaled (short + long axis)" if (scale_short_axis and scale_long_axis)
+                    else "scaled (short axis)" if scale_short_axis
+                    else "scaled (long axis)" if scale_long_axis
+                    else "scaled (uniform)"
+                ),
             )
 
             if arrow_points is not None:
