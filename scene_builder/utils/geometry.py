@@ -1,6 +1,7 @@
 """Geometry utility functions for scene building."""
 
 from pathlib import Path
+import math
 from typing import Iterable
 
 import matplotlib.pyplot as plt
@@ -22,6 +23,39 @@ def convert_to_listvec2(polygon: list[Vector2]):
     """Convert shapely.Polygon to list[Vector2]"""
     # Note: Shapely polygon.exterior.coords includes a duplicate closing point, which we don't need (?)
     return [Vector2(x=x, y=y) for x, y in list(polygon.exterior.coords)[:-1]]
+
+
+def get_longest_edge_angle(polygon: Polygon | list[Vector2]) -> float:
+    """
+    Calculate the angle (degrees) of the longest edge in a polygon.
+
+    Accepts a shapely Polygon or a list of Vector2 points.
+    Returns angle in degrees from X-axis (counterclockwise).
+    """
+    # Convert to coordinate list
+    if isinstance(polygon, Polygon):
+        coords = list(polygon.exterior.coords[:-1])  # Exclude duplicate last point
+    elif isinstance(polygon, list) and polygon and isinstance(polygon[0], Vector2):
+        coords = [(v.x, v.y) for v in polygon]
+    else:
+        raise TypeError("Expected shapely Polygon or list[Vector2]")
+
+    max_length = 0.0
+    angle = 0.0
+
+    for i in range(len(coords)):
+        p1 = coords[i]
+        p2 = coords[(i + 1) % len(coords)]
+
+        dx = p2[0] - p1[0]
+        dy = p2[1] - p1[1]
+        length = math.hypot(dx, dy)
+
+        if length > max_length:
+            max_length = length
+            angle = math.degrees(math.atan2(dy, dx))
+
+    return angle
 
 
 def boundary_to_geometry(boundary: Iterable[Vector2] | None) -> BaseGeometry | None:

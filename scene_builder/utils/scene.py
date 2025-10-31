@@ -6,8 +6,8 @@ import math
 from typing import Any
 
 from scene_builder.definition.scene import Scene, Vector2
-from scene_builder.importer.msd.loader import get_dominant_angle
 from scene_builder.utils.conversions import pydantic_to_dict
+from scene_builder.utils.floorplan import get_dominant_angle
 
 
 def recenter_scene(scene: Scene | dict[str, Any], rotate: bool = True) -> dict[str, Any]:

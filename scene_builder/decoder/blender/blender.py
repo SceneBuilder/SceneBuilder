@@ -27,12 +27,13 @@ from scene_builder.decoder.blender_materials import create_translucent_material
 from scene_builder.decoder.blender.controllers.interior_door import create_interior_door
 from scene_builder.definition.scene import Object, Room, Scene, Vector2
 from scene_builder.importer import objaverse_importer, test_asset_importer
-from scene_builder.importer.msd.loader import get_dominant_angle, get_longest_edge_angle
 from scene_builder.logging import logger
 from scene_builder.tools.material_applicator import texture_floor_mesh
 from scene_builder.utils.blender import SceneSwitcher
 from scene_builder.utils.conversions import pydantic_to_dict
 from scene_builder.utils.file import get_filename
+from scene_builder.utils.floorplan import get_dominant_angle
+from scene_builder.utils.geometry import get_longest_edge_angle
 
 HDRI_FILE_PATH = Path(
     f"{TEST_ASSET_DIR}/hdri/autumn_field_puresky_4k.exr"
