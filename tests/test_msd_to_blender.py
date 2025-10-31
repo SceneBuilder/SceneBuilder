@@ -11,6 +11,7 @@ from scene_builder.definition.scene import Scene
 from scene_builder.importer.msd.loader import MSDLoader
 from scene_builder.utils.blender import install_door_it_addon
 from scene_builder.utils.room import render_structure_links
+from scene_builder.utils.scene import recenter_scene
 
 
 OUTPUT_DIR = Path("test_output/msd_to_blender")
@@ -104,7 +105,7 @@ def test_msd_to_blender(
                 rooms=all_rooms,
             )
 
-            scene_data = blender.floorplan_to_origin(floor_scene, align_rotation=align_rotation)
+            scene_data = recenter_scene(floor_scene, rotate=align_rotation)
             rooms_dict = scene_data.get("rooms", [])
 
             if render_links:
@@ -145,9 +146,7 @@ def test_msd_to_blender(
             for apt_id, graph in apt_graphs:
                 apt_scene = loader.apt_graph_to_scene(graph)
 
-                scene_data = blender.floorplan_to_origin(
-                    apt_scene, align_rotation=align_rotation
-                )
+                scene_data = recenter_scene(apt_scene, rotate=align_rotation)
                 rooms_dict = scene_data.get("rooms", [])
 
                 if render_links:
