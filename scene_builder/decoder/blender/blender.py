@@ -1138,7 +1138,6 @@ def create_door_from_boundary(
     door_boundary: list,
     door_id: str,
     z_position: float = 0.0,
-    default_depth: float = 0.1,  # Default door thickness/depth
     **door_settings,
 ) -> Optional[Dict[str, object]]:
     """Create a Door It! Interior door object from a door boundary polygon.

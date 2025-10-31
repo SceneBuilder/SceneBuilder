@@ -10,6 +10,7 @@ import io
 import math
 import random
 import re
+from collections import defaultdict
 from pathlib import Path
 from typing import List, Optional
 
@@ -374,6 +375,53 @@ def normalize_floor_plan_orientation(
     return rooms, correction_angle
 
 
+def classify_door_type(
+    door_polygon: Polygon,
+    all_entity_polygons: list[Polygon],
+    proximity_threshold: float = 0.01,
+) -> str:
+    """
+    Classify a door as interior or exterior based on proximity to other entities.
+    
+    A door is interior if more than 1 entity is within the proximity threshold;
+    otherwise it's exterior (0 or 1 entity nearby).
+    
+    Args:
+        door_polygon: The door boundary as a shapely Polygon
+        all_entity_polygons: List of all other entity polygons (excluding doors)
+        proximity_threshold: Distance threshold in meters (default: 0.01m = 1cm)
+    
+    Returns:
+        "interior" if more than 1 entity is within threshold distance
+        "exterior" if 0 or 1 entity is within threshold distance
+    """
+    if not door_polygon or door_polygon.is_empty or not door_polygon.is_valid:
+        return "exterior"
+    
+    if not all_entity_polygons:
+        return "exterior"
+    
+    # Count entities within proximity threshold
+    nearby_count = 0
+    for entity_polygon in all_entity_polygons:
+        if not entity_polygon or entity_polygon.is_empty or not entity_polygon.is_valid:
+            continue
+        
+        try:
+            distance = door_polygon.distance(entity_polygon)
+            if distance <= proximity_threshold:
+                nearby_count += 1
+        except Exception:
+            # Skip if distance calculation fails
+            continue
+    
+    # Classify: more than 1 nearby entity = interior, otherwise exterior
+    if nearby_count > 1:
+        return "interior"
+    else:
+        return "exterior"
+
+
 class MSDLoader:
     def __init__(self, csv_path: Optional[str] = None):
         self.csv_path = Path(csv_path or MSD_CSV_PATH)
@@ -587,3 +635,212 @@ class MSDLoader:
             plt.savefig(output_path, bbox_inches="tight", dpi=150)
             plt.close(fig)
             return output_path
+
+    def visualize_building_entities(
+        self,
+        building_id: int,
+        floor_id: Optional[str] = None,
+        output_path: Optional[str] = None,
+    ) -> Optional[str]:
+        """
+        Visualize all entities from ENTITY_SUBTYPE_MAP for a building's floor plan.
+        Processes at the same scale as test_msd_to_blender.py - one floor at a time,
+        combining all apartments on each floor.
+
+        Args:
+            building_id: The building ID to visualize (e.g., 2144)
+            floor_id: If provided, visualize only this floor; otherwise visualize all floors
+            output_path: Path to save the image. If None, saves to default location
+
+        Returns:
+            Path to the saved image file, or None if no entities found
+
+        Example:
+            >>> loader = MSDLoader()
+            >>> loader.visualize_building_entities(2144, output_path='building_2144.png')
+        """
+        # Get all apartments in the building
+        apartments = self.get_apartments_in_building(building_id, floor_id)
+
+        # Group apartments by floor 
+        floors = defaultdict(list)
+        for apt_id in apartments:
+            graph = self.create_graph(apt_id)
+            if graph:
+                apt_floor_id = graph.graph.get("floor_id")
+                floors[apt_floor_id].append((apt_id, graph))
+
+        # Create color mapping for entity subtypes
+        entity_subtypes = list(ENTITY_SUBTYPE_MAP.keys())
+        num_subtypes = len(entity_subtypes)
+        # Use matplotlib colormap - handle both old and new API
+        try:
+            cmap = plt.colormaps["tab20"]
+        except (AttributeError, KeyError):
+            cmap = plt.cm.get_cmap("tab20")
+        subtype_colors = {
+            subtype: cmap(i / max(num_subtypes, 1)) for i, subtype in enumerate(entity_subtypes)
+        }
+
+        # Process each floor separately
+        for floor_id_key, apt_graphs in floors.items():
+            # First pass: collect all non-door entities
+            non_door_entities = []
+            door_entities = []
+
+            for apt_id, graph in apt_graphs:
+                for node_id, attrs in graph.nodes(data=True):
+                    entity_subtype = attrs.get("entity_subtype")
+                    geometry_data = attrs.get("geometry", [])
+
+                    # Filter by ENTITY_SUBTYPE_MAP
+                    if entity_subtype not in ENTITY_SUBTYPE_MAP:
+                        continue
+
+                    # Skip if no valid geometry
+                    if not geometry_data or len(geometry_data) < 3:
+                        continue
+
+                    # Create Polygon from geometry
+                    try:
+                        polygon = Polygon(geometry_data)
+                        if polygon.is_valid and not polygon.is_empty:
+                            entity_data = {
+                                "polygon": polygon,
+                                "entity_subtype": entity_subtype,
+                                "category": ENTITY_SUBTYPE_MAP[entity_subtype],
+                            }
+                            
+                            # Separate doors from other entities
+                            if entity_subtype == "DOOR":
+                                door_entities.append(entity_data)
+                            else:
+                                non_door_entities.append(entity_data)
+                    except Exception:
+                        continue
+
+            # Second pass: classify doors based on proximity to non-door entities
+            non_door_polygons = [e["polygon"] for e in non_door_entities]
+            entities_to_plot = non_door_entities.copy()
+
+            for door_entity in door_entities:
+                door_type = classify_door_type(door_entity["polygon"], non_door_polygons)
+                door_entity["door_type"] = door_type
+                door_entity["display_label"] = f"DOOR ({door_type})"
+                entities_to_plot.append(door_entity)
+
+            if not entities_to_plot:
+                print(f"No entities found for floor {floor_id_key}")
+                continue
+
+            # Create figure for this floor
+            fig, ax = plt.subplots(figsize=(12, 12))
+
+            # Define colors for interior and exterior doors
+            interior_door_color = (0.0, 0.8, 0.0, 0.8)  # Green for interior
+            exterior_door_color = (0.8, 0.0, 0.0, 0.8)  # Red for exterior
+
+            # Plot all entities
+            for entity in entities_to_plot:
+                polygon = entity["polygon"]
+                entity_subtype = entity["entity_subtype"]
+                
+                # Use special colors for doors based on classification
+                if entity_subtype == "DOOR":
+                    door_type = entity.get("door_type", "exterior")
+                    color = interior_door_color if door_type == "interior" else exterior_door_color
+                else:
+                    color = subtype_colors.get(entity_subtype, (0.5, 0.5, 0.5, 0.5))
+
+                x, y = polygon.exterior.xy
+                ax.fill(x, y, color=color, alpha=0.6, edgecolor="black", linewidth=0.5)
+
+            # Set up plot
+            ax.set_aspect("equal")
+            ax.set_title(
+                f"Building {building_id} - Floor {floor_id_key}\n"
+                f"{len(apt_graphs)} apartments, {len(entities_to_plot)} entities"
+            )
+            ax.grid(True, alpha=0.3)
+
+            # Create legend
+            legend_elements = []
+            
+            # Add non-door entities to legend
+            for subtype in entity_subtypes:
+                if subtype != "DOOR":
+                    if any(e["entity_subtype"] == subtype for e in entities_to_plot):
+                        legend_elements.append(
+                            plt.Rectangle(
+                                (0, 0),
+                                1,
+                                1,
+                                facecolor=subtype_colors.get(subtype, (0.5, 0.5, 0.5, 0.5)),
+                                label=f"{subtype} → {ENTITY_SUBTYPE_MAP[subtype]}",
+                            )
+                        )
+            
+            # Add door types separately (interior and exterior)
+            has_interior_door = any(
+                e.get("entity_subtype") == "DOOR" and e.get("door_type") == "interior"
+                for e in entities_to_plot
+            )
+            has_exterior_door = any(
+                e.get("entity_subtype") == "DOOR" and e.get("door_type") == "exterior"
+                for e in entities_to_plot
+            )
+            
+            if has_interior_door:
+                legend_elements.append(
+                    plt.Rectangle(
+                        (0, 0),
+                        1,
+                        1,
+                        facecolor=interior_door_color,
+                        label="DOOR (interior)",
+                    )
+                )
+            
+            if has_exterior_door:
+                legend_elements.append(
+                    plt.Rectangle(
+                        (0, 0),
+                        1,
+                        1,
+                        facecolor=exterior_door_color,
+                        label="DOOR (exterior)",
+                    )
+                )
+            
+            ax.legend(handles=legend_elements, loc="upper left", bbox_to_anchor=(1.02, 1), fontsize=8)
+
+            # Determine output path
+            if output_path:
+                # If multiple floors, append floor_id to filename
+                if len(floors) > 1:
+                    path_obj = Path(output_path)
+                    output_file = path_obj.parent / f"{path_obj.stem}_floor_{floor_id_key}{path_obj.suffix}"
+                else:
+                    output_file = Path(output_path)
+            else:
+                # Default output path
+                output_file = Path(f"building_{building_id}_floor_{floor_id_key}_entities.png")
+
+            # Save figure
+            output_file.parent.mkdir(parents=True, exist_ok=True)
+            plt.savefig(output_file, bbox_inches="tight", dpi=150)
+            plt.close(fig)
+
+            print(f"Saved visualization: {output_file} ({len(entities_to_plot)} entities)")
+
+        # Return the output path for the last floor processed (or first if multiple)
+        if output_path:
+            if len(floors) > 1:
+                last_floor_id = list(floors.keys())[-1]
+                path_obj = Path(output_path)
+                return str(path_obj.parent / f"{path_obj.stem}_floor_{last_floor_id}{path_obj.suffix}")
+            else:
+                return output_path
+        else:
+            last_floor_id = list(floors.keys())[-1]
+            return str(Path(f"building_{building_id}_floor_{last_floor_id}_entities.png"))

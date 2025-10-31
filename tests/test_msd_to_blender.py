@@ -16,7 +16,7 @@ logger.remove()
 logger.add(sys.stderr, level="WARNING")
 
 
-def test_msd_to_blender(door_cutout=True, window_cutout=True, enable_doors=True):
+def test_msd_to_blender(door_cutout=True, window_cutout=True, enable_doors=True, visualize_entities=True):
     # Install Door It! Interior addon if requested and available
     if enable_doors:
         addon_installed = install_door_it_addon()
@@ -39,6 +39,19 @@ def test_msd_to_blender(door_cutout=True, window_cutout=True, enable_doors=True)
     building_id = 2144
 
     print(f"Loading building {building_id}...\n")
+
+    # Visualize building entities if requested
+    if visualize_entities:
+        output_dir = Path(__file__).parent.parent / "test_output"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        viz_path = output_dir / f"building_{building_id}_entities.png"
+        print(f"Visualizing building entities...")
+        result = loader.visualize_building_entities(
+            building_id=building_id,
+            output_path=str(viz_path)
+        )
+        if result:
+            print(f"   ✓ Saved entity visualization: {result}\n")
 
     # Get all apartments and group by floor
     apartments = loader.get_apartments_in_building(building_id)
@@ -135,3 +148,4 @@ if __name__ == "__main__":
     # test_msd_to_blender(door_cutout=False)
     # test_msd_to_blender(window_cutout=False)
     # test_msd_to_blender(door_cutout=False, window_cutout=False)
+    # test_msd_to_blender(visualize_entities=True)  # Enable entity visualization
