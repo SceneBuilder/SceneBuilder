@@ -41,6 +41,21 @@ def recenter_room(room: Room) -> Room:
         )
         for obj in room.objects
     ]
+    if room.structure is None:
+        recentered.structure = None
+    else:
+        recentered.structure = [
+            s.model_copy(
+                update={
+                    "boundary": [
+                        Vector2(x=p.x - center.x, y=p.y - center.y) for p in (s.boundary or [])
+                    ]
+                    if s.boundary
+                    else None
+                }
+            )
+            for s in room.structure
+        ]
     recentered.extra_info = {"egocentric_proxy": True, "original_origin": center}
     return recentered
 
@@ -77,6 +92,21 @@ def restore_origin(room: Room) -> Room:
         )
         for obj in room.objects
     ]
+    if room.structure is None:
+        restored.structure = None
+    else:
+        restored.structure = [
+            s.model_copy(
+                update={
+                    "boundary": [
+                        Vector2(x=p.x + origin.x, y=p.y + origin.y) for p in (s.boundary or [])
+                    ]
+                    if s.boundary
+                    else None
+                }
+            )
+            for s in room.structure
+        ]
     restored.extra_info = None
     return restored
 
