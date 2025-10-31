@@ -26,7 +26,7 @@ from scene_builder.database.material import MaterialDatabase
 from scene_builder.decoder.blender.controllers.interior_door import create_interior_door
 from scene_builder.definition.scene import Object, Room, Scene, Vector2
 from scene_builder.importer import objaverse_importer, test_asset_importer
-from scene_builder.importer.msd.loader import get_dominant_angle, get_longest_edge_angle
+from scene_builder.importer.msd.loader import get_dominant_angle, get_longest_edge_angle, classify_door_type
 from scene_builder.logging import logger
 from scene_builder.tools.material_applicator import texture_floor_mesh
 from scene_builder.utils.blender import SceneSwitcher
@@ -2027,75 +2027,6 @@ def setup_post_processing(scene: bpy.types.Scene):
     nt.links.new(glare_node.outputs["Image"], composite_output.inputs["Image"])
 
 
-def is_interior_door(door_boundary: list, check_distance: float = 0.4) -> bool:
-    """
-    Check if door is interior (between two different rooms).
-
-    Args:
-        door_boundary: List of (x, y) tuples or Vector2 points defining the door polygon
-        check_distance: Distance in meters to check away from door centroid (default: 0.4m)
-
-    Returns:
-        True if interior door, False if exterior door
-    """
-    if not door_boundary:
-        return False
-
-    # Convert boundary to coords
-    coords = []
-    for point in door_boundary:
-        if isinstance(point, tuple):
-            coords.append(point)
-        elif hasattr(point, "x"):
-            coords.append((point.x, point.y))
-        else:
-            coords.append((point["x"], point["y"]))
-
-    centroid_x = sum(x for x, y in coords) / len(coords)
-    centroid_y = sum(y for x, y in coords) / len(coords)
-
-    # Check four directions for different floor meshes
-    check_positions = {
-        "left": (centroid_x - check_distance, centroid_y),
-        "right": (centroid_x + check_distance, centroid_y),
-        "down": (centroid_x, centroid_y - check_distance),
-        "up": (centroid_x, centroid_y + check_distance),
-    }
-
-    floors_by_direction = {}
-    for direction, (check_x, check_y) in check_positions.items():
-        for obj in bpy.context.scene.objects:
-            if obj.type != "MESH" or not obj.name.startswith("Floor_"):
-                continue
-
-            if obj.data.polygons:
-                bbox_x = [obj.matrix_world @ Vector(v.co) for v in obj.data.vertices]
-                x_coords = [v.x for v in bbox_x]
-                y_coords = [v.y for v in bbox_x]
-
-                if x_coords and y_coords:
-                    min_x, max_x = min(x_coords), max(x_coords)
-                    min_y, max_y = min(y_coords), max(y_coords)
-
-                    if min_x <= check_x <= max_x and min_y <= check_y <= max_y:
-                        floors_by_direction[direction] = obj.name
-                        break
-
-    # Check if DIFFERENT floors exist on opposite sides
-    has_different_lr = (
-        "left" in floors_by_direction
-        and "right" in floors_by_direction
-        and floors_by_direction["left"] != floors_by_direction["right"]
-    )
-    has_different_ud = (
-        "up" in floors_by_direction
-        and "down" in floors_by_direction
-        and floors_by_direction["up"] != floors_by_direction["down"]
-    )
-
-    return has_different_lr or has_different_ud
-
-
 def create_room_walls(
     rooms: list,
     wall_height: float = 2.7,
@@ -2128,6 +2059,18 @@ def create_room_walls(
     # Gather interior door polygons
     interior_door_polygons: list[tuple[str, list[tuple[float, float]]]] = []
 
+    # First, collect all non-door, non-window room boundaries as polygons for door classification
+    all_room_polygons = []
+    for room in rooms:
+        if room.category not in ["door", "window"] and room.boundary and len(room.boundary) >= 3:
+            try:
+                room_coords = [(p.x, p.y) for p in room.boundary]
+                room_polygon = Polygon(room_coords)
+                if room_polygon.is_valid and not room_polygon.is_empty:
+                    all_room_polygons.append(room_polygon)
+            except Exception:
+                continue
+
     for r in rooms:
         # Include windows
         if (
@@ -2145,7 +2088,17 @@ def create_room_walls(
             and len(r.boundary) >= 3
         ):
             door_boundary = [(p.x, p.y) for p in r.boundary]
-            if not is_interior_door(door_boundary):
+            try:
+                door_polygon = Polygon(door_boundary)
+                if door_polygon.is_valid and not door_polygon.is_empty:
+                    door_type = classify_door_type(door_polygon, all_room_polygons)
+                    is_interior = door_type == "interior"
+                else:
+                    is_interior = False
+            except Exception:
+                is_interior = False
+            
+            if not is_interior:
                 win_extdoor_cutout_polygons.append((r.id, door_boundary))
                 logger.debug(f"Door {r.id}: identified as exterior door")
             else:
