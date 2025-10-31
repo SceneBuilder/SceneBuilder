@@ -428,7 +428,7 @@ def scale_boundary_for_cutout(
     scale_short_factor: float = 2.00,
     scale_short_axis: bool = True,
     scale_long_axis: bool = True,
-    scale_long_factor: float = 0.99,
+    scale_long_factor: float = 0.98,
     debug: bool = False,
     debug_prefix: str = "window",
     debug_id: str = "",
