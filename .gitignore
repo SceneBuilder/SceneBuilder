@@ -1,5 +1,6 @@
 # Modified
 experiments/usna_floor_plan_images
+scene_builder/importer/msd
 test_output/
 
 *.glb
