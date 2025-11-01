@@ -8,7 +8,7 @@ from scene_builder.lint.context import (
     LintingOptions,
 )
 from scene_builder.lint.models import AABB, LintIssue, LintReport, LintSeverity
-from scene_builder.lint.linter import lint_room, lint_scene
+from scene_builder.lint.linter import format_lint_feedback, lint_room, lint_scene
 from scene_builder.lint.rules import LintRule
 
 __all__ = [
@@ -24,4 +24,5 @@ __all__ = [
     "AABB",
     "lint_room",
     "lint_scene",
+    "format_lint_feedback",
 ]
