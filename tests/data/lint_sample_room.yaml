@@ -1,0 +1,80 @@
+id: lint_room_yaml
+category: test
+boundary:
+  - x: 0.0
+    y: 0.0
+  - x: 4.0
+    y: 0.0
+  - x: 4.0
+    y: 4.0
+  - x: 0.0
+    y: 4.0
+objects:
+  - id: overlap_a
+    name: overlap_a
+    description: test object
+    source: objaverse
+    source_id: overlap_a
+    position:
+      x: 1.0
+      y: 1.0
+      z: 0.0
+    rotation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+    scale:
+      x: 1.0
+      y: 1.0
+      z: 1.0
+  - id: overlap_b
+    name: overlap_b
+    description: test object
+    source: objaverse
+    source_id: overlap_b
+    position:
+      x: 1.3
+      y: 1.0
+      z: 0.0
+    rotation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+    scale:
+      x: 1.0
+      y: 1.0
+      z: 1.0
+  - id: wall_intrude
+    name: wall_intrude
+    description: test object
+    source: objaverse
+    source_id: wall_intrude
+    position:
+      x: 3.8
+      y: 2.0
+      z: 0.0
+    rotation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+    scale:
+      x: 1.0
+      y: 1.0
+      z: 1.0
+  - id: sunken
+    name: sunken
+    description: test object
+    source: objaverse
+    source_id: sunken
+    position:
+      x: 2.0
+      y: 2.0
+      z: -0.2
+    rotation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+    scale:
+      x: 1.0
+      y: 1.0
+      z: 1.0
