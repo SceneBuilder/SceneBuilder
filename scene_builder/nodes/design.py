@@ -1,5 +1,4 @@
 from __future__ import annotations
-from collections import Counter
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -31,45 +30,11 @@ from scene_builder.workflow.agents import (
 # from scene_builder.workflow.states import PlacementState, RoomDesignState
 from scene_builder.workflow.states import CritiqueAction, PlacementState, RoomDesignState, MainState
 from scene_builder.workflow.toolsets import material_toolset, shopping_toolset
-from scene_builder.lint.linter import lint_room
-from scene_builder.lint.models import LintReport, LintSeverity
+from scene_builder.lint.linter import format_lint_feedback, lint_room
+from scene_builder.lint.models import LintReport
 
 console = Console()
 obj_db = ObjectDatabase()
-
-
-def _format_lint_feedback(report: LintReport) -> str:
-    """Convert a lint report into a concise, VLM-friendly summary."""
-
-    if not report.issues:
-        return "No automated lint issues detected."
-
-    counts = Counter(issue.severity for issue in report.issues)
-    count_fragments: list[str] = []
-    for severity in LintSeverity:
-        count = counts.get(severity, 0)
-        if count:
-            label = severity.value
-            if count != 1:
-                label += "s"
-            count_fragments.append(f"{count} {label}")
-
-    header = f"Automated lint detected {len(report.issues)} issue(s)"
-    if count_fragments:
-        header += " (" + ", ".join(count_fragments) + ")"
-    header += "."
-
-    lines = [header]
-    for issue in report.issues:
-        target = f" on object '{issue.object_id}'" if issue.object_id else ""
-        line = (
-            f"- [{issue.severity.value.upper()}] {issue.code}{target}: {issue.message}"
-        )
-        if issue.hint:
-            line += f" Hint: {issue.hint}"
-        lines.append(line)
-
-    return "\n".join(lines)
 
 
 class DesignLoopRouter(BaseNode[MainState]):
@@ -235,7 +200,7 @@ class RoomDesignNode(BaseNode[RoomDesignState]):
             blender.parse_room_definition(room, with_walls="translucent")
             lint_report = lint_room(ctx.state.room)
             ctx.state.last_lint_report = lint_report
-            lint_summary = _format_lint_feedback(lint_report)
+            lint_summary = format_lint_feedback(lint_report)
             if DEBUG:
                 print(f"[Lint] {lint_summary}")
             top_down_render = blender.visualize(scene=room.id, output_dir=output_dir, show_grid=True)
@@ -265,9 +230,7 @@ class RoomDesignNode(BaseNode[RoomDesignState]):
             if critique.result == "rejected":
                 feedback = critique.explanation
                 if lint_report.issues:
-                    feedback = (
-                        f"{feedback}\n\nAutomated lint analysis:\n{lint_summary}"
-                    )
+                    feedback = f"{feedback}\n\nAutomated lint analysis:\n{lint_summary}"
             elif critique.result == "approved":
                 break
             if generation_config.terminate_early:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Callable, Iterable
 
 from shapely.geometry import box
@@ -16,7 +17,7 @@ from scene_builder.lint.context import (
     LintableRoomData,
     LintingOptions,
 )
-from scene_builder.lint.models import AABB, LintReport
+from scene_builder.lint.models import AABB, LintReport, LintSeverity
 from scene_builder.lint.rules.base import LintRule
 
 
@@ -107,3 +108,35 @@ def lint_scene(
         )
         for room in rooms
     ]
+
+
+def format_lint_feedback(report: LintReport) -> str:
+    """Convert a lint report into a concise, VLM-friendly summary."""
+
+    if not report.issues:
+        return "No automated lint issues detected."
+
+    counts = Counter(issue.severity for issue in report.issues)
+    count_fragments: list[str] = []
+    for severity in LintSeverity:
+        count = counts.get(severity, 0)
+        if count:
+            label = severity.value
+            if count != 1:
+                label += "s"
+            count_fragments.append(f"{count} {label}")
+
+    header = f"Automated lint detected {len(report.issues)} issue(s)"
+    if count_fragments:
+        header += " (" + ", ".join(count_fragments) + ")"
+    header += "."
+
+    lines = [header]
+    for issue in report.issues:
+        target = f" on object '{issue.object_id}'" if issue.object_id else ""
+        line = f"- [{issue.severity.value.upper()}] {issue.code}{target}: {issue.message}"
+        if issue.hint:
+            line += f" Hint: {issue.hint}"
+        lines.append(line)
+
+    return "\n".join(lines)
