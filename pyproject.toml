@@ -23,6 +23,7 @@ dependencies = [
   "natsort",
   "pillow",
   "scipy",
+  "shapely",
   "typer",
 ]
 

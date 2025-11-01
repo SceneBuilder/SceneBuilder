@@ -12,10 +12,20 @@ from scene_builder.definition.scene import Vector2
 from scene_builder.logging import logger
 
 
-def convert_to_shapely(vertices: list[Vector2]):
-    """Convert list[Vector2] to shapely.Polygon"""
-    coords = [(v.x, v.y) for v in vertices]
+def convert_to_shapely(boundary: Iterable[Vector2]) -> Polygon:
+    """Build a valid Shapely polygon from an iterable of ``Vector2`` points."""
+
+    coords = [(vertex.x, vertex.y) for vertex in boundary]
+    if len(coords) < 3:
+        raise ValueError("A polygon requires at least three boundary vertices.")
+
     polygon = Polygon(coords)
+    if not polygon.is_valid:
+        polygon = polygon.buffer(0)
+
+    if polygon.is_empty or polygon.area <= 0.0:
+        raise ValueError("Boundary does not form a valid polygon with positive area.")
+
     return polygon
 
 
