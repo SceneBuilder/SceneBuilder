@@ -641,10 +641,10 @@ def _create_object(
 
     # Register the created object in tracker
     if object_id and blender_obj:
-            _scene_tracker.register_object(
-                obj_data,
-                blender_obj.name,
-            )
+        _scene_tracker.register_object(
+            obj_data,
+            blender_obj.name,
+        )
         logger.debug(f"Registered object in tracker: {object_name} (id: {object_id})")
 
 
