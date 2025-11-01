@@ -30,6 +30,8 @@ from scene_builder.workflow.agents import (
 # from scene_builder.workflow.states import PlacementState, RoomDesignState
 from scene_builder.workflow.states import CritiqueAction, PlacementState, RoomDesignState, MainState
 from scene_builder.workflow.toolsets import material_toolset, shopping_toolset
+from scene_builder.lint.linter import format_lint_feedback, lint_room
+from scene_builder.lint.models import LintReport
 
 console = Console()
 obj_db = ObjectDatabase()
@@ -192,21 +194,28 @@ class RoomDesignNode(BaseNode[RoomDesignState]):
                 output_type=list[Object],
             )
             ctx.state.room.objects = placement_response.output
-            
+
             # post-placement render
             # Rebuild room after placement with translucent walls for feedback
             blender.parse_room_definition(room, with_walls="translucent")
+            lint_report = lint_room(ctx.state.room)
+            ctx.state.last_lint_report = lint_report
+            lint_summary = format_lint_feedback(lint_report)
+            if DEBUG:
+                print(f"[Lint] {lint_summary}")
             top_down_render = blender.visualize(scene=room.id, output_dir=output_dir, show_grid=True)
             isometric_render = blender.visualize(
                 scene=room.id, output_dir=output_dir, view="isometric", show_grid=True
             )
             renders = transform_paths_to_binary([top_down_render, isometric_render])
+            lint_section = f"Automated lint analysis for the current placement:\n{lint_summary}"
 
             critique_user_prompt = (
                 "Updated renders:",
                 *renders,
+                lint_section,
                 "Do you approve of the previous placement result?",
-                "If so, please provide a rationale, and if not, please provide feedback for the PlacementAgent,", 
+                "If so, please provide a rationale, and if not, please provide feedback for the PlacementAgent,",
                 "so it can address the issues in the upcoming design step.",
             )
             critique_response = await room_design_agent.run(
@@ -220,6 +229,8 @@ class RoomDesignNode(BaseNode[RoomDesignState]):
                 print(f"{critique.explanation=}")
             if critique.result == "rejected":
                 feedback = critique.explanation
+                if lint_report.issues:
+                    feedback = f"{feedback}\n\nAutomated lint analysis:\n{lint_summary}"
             elif critique.result == "approved":
                 break
             if generation_config.terminate_early:

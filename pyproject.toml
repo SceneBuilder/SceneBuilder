@@ -23,6 +23,8 @@ dependencies = [
   "natsort",
   "pillow",
   "scipy",
+  "shapely",
+  "matplotlib",
   "typer",
 ]
 
