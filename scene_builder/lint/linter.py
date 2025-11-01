@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections import Counter
 from collections.abc import Callable, Iterable
 from itertools import cycle
@@ -159,7 +160,7 @@ def save_lint_visualization(
     *,
     size_provider: SizeProvider = blender_size_provider,
     figsize: tuple[float, float] = (6.0, 6.0),
-    dpi: int = 150,
+    dpi: int = 300,
 ) -> None:
     """Render a top-down view of lint data and save it to ``output_path``.
 
@@ -197,13 +198,26 @@ def save_lint_visualization(
             room_level_issues.append(issue)
             continue
 
-        issues_by_object.setdefault(issue.object_id, []).append(issue)
+        # Some issues (e.g., object_overlap) refer to multiple objects and encode
+        # their identifiers as a comma-separated string ("id_a,id_b"). For
+        # visualization, attribute the issue to every referenced object so each
+        # footprint gets outlined.
+        object_ids: list[str]
+        if "," in issue.object_id or ";" in issue.object_id or " " in issue.object_id:
+            parts = re.split(r"[;,\s]+", issue.object_id)
+            object_ids = [p for p in (s.strip() for s in parts) if p]
+        else:
+            object_ids = [issue.object_id]
+
+        for oid in object_ids:
+            issues_by_object.setdefault(oid, []).append(issue)
 
     # Assign colors per issue code so each lint type is visually distinct.
     color_cycle = cycle(plt.get_cmap("tab10").colors)
     code_colors: dict[str, str] = {}
 
-    fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
+    # Use constrained layout to make room for labels/legend when needed.
+    fig, ax = plt.subplots(figsize=figsize, dpi=dpi, constrained_layout=False)
 
     room_polygon = context.room.footprint
     room_x, room_y = room_polygon.exterior.xy
@@ -263,10 +277,16 @@ def save_lint_visualization(
                 )
 
     if issues_by_object:
+        handles = list(legend_handles.values())
+        labels = [h.get_label() for h in handles]
+        # Place the legend just outside the top-right of the axes so it
+        # never occludes the drawing area.
         ax.legend(
-            legend_handles.values(),
-            [handle.get_label() for handle in legend_handles.values()],
-            loc="upper right",
+            handles,
+            labels,
+            loc="upper left",
+            bbox_to_anchor=(1.02, 1.0),
+            borderaxespad=0.0,
             fontsize=8,
             frameon=True,
         )

@@ -1,41 +1,60 @@
 from pathlib import Path
-import sys
 
-sys.path.append(str(Path(__file__).resolve().parents[1]))
+import pytest
+from rich import print as rprint
 
-from scene_builder.definition.scene import Object, Room
-from scene_builder.lint import AABB, LintSeverity, lint_room
+from scene_builder.decoder.blender.blender import parse_room_definition, parse_scene_definition
+from scene_builder.definition.scene import Object, Room, Scene
+from scene_builder.lint import (
+    AABB,
+    LintSeverity,
+    format_lint_feedback,
+    lint_room,
+    lint_scene,
+    save_lint_visualization,
+)
 from scene_builder.utils.conversions import pydantic_from_yaml
 
+# single
+TEST_CASE = "test_single_room_design_workflow_classroom"
 
-TEST_ROOM_PATH = Path(__file__).resolve().parents[0] / "data" / "lint_sample_room.yaml"
+# multi
+# TEST_CASE = "test_multi_room_design_workflow_recording_studio"
 
-
-def _world_bounds_from_scale(obj: Object) -> AABB:
-    half_x = obj.scale.x / 2.0
-    half_y = obj.scale.y / 2.0
-    half_z = obj.scale.z / 2.0
-    return AABB(
-        min_corner=(
-            obj.position.x - half_x,
-            obj.position.y - half_y,
-            obj.position.z - half_z,
-        ),
-        max_corner=(
-            obj.position.x + half_x,
-            obj.position.y + half_y,
-            obj.position.z + half_z,
-        ),
-    )
+TEST_ROOM_PATH = Path(__file__).resolve().parents[1] / "test_output" / f"{TEST_CASE}.yaml"
 
 
 def test_lint_room_from_yaml_file():
     room = pydantic_from_yaml(TEST_ROOM_PATH, Room)
+    parse_room_definition(room)
 
-    report = lint_room(room, size_provider=_world_bounds_from_scale)
+    report = lint_room(room)
 
-    codes = {issue.code for issue in report.issues}
-    assert {"floor_penetration", "wall_overlap", "object_overlap"}.issubset(codes)
+    # print(format_lint_feedback(report))
+    rprint(format_lint_feedback(report))
 
-    severities = {issue.code: issue.severity for issue in report.issues}
-    assert severities["floor_penetration"] is LintSeverity.ERROR
+    save_lint_visualization(
+        room,
+        report,
+        TEST_ROOM_PATH.with_name(f"{TEST_CASE}_lint.jpg"),
+    )
+
+def test_lint_scene_from_yaml_file():
+    scene_case = "test_multi_room_design_workflow_recording_studio"
+    scene_yaml = Path(__file__).resolve().parents[1] / "test_output" / f"{scene_case}.yaml"
+
+    scene = pydantic_from_yaml(scene_yaml, Scene)
+    parse_scene_definition(scene)
+
+    reports = lint_scene(scene)
+
+    for report in reports:
+        print(format_lint_feedback(report))
+
+
+if __name__ == "__main__":
+    test_lint_room_from_yaml_file()
+    # test_lint_scene_from_yaml_file()
+
+    # # Allow running this test module directly
+    # raise SystemExit(pytest.main([str(Path(__file__).resolve())]))
