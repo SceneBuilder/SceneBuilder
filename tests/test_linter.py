@@ -1,7 +1,4 @@
 from pathlib import Path
-import sys
-
-sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 import pytest
 
@@ -149,3 +146,8 @@ def test_lint_room_respects_rule_selection():
 
     codes = {issue.code for issue in report.issues}
     assert codes == {"floor_penetration"}
+
+
+if __name__ == "__main__":
+    # Allow running this test module directly
+    raise SystemExit(pytest.main([str(Path(__file__).resolve())]))
