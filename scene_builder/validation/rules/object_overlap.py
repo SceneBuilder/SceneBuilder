@@ -1,4 +1,4 @@
-"""Rule that detects object-object overlaps on the floor plane."""
+"""Rule that detects object-object overlaps on the floor (XY) plane."""
 
 from __future__ import annotations
 
@@ -11,10 +11,10 @@ from scene_builder.validation.rules.base import LintRule
 
 
 class ObjectOverlapRule(LintRule):
-    """Detect object-object overlaps on the floor plane."""
+    """Detect object-object overlaps."""
 
     code = "object_overlap"
-    description = "Two objects overlap on the floor plane."
+    description = "Two objects overlap."
 
     def apply(self, context: LintContext, options: LintingOptions) -> Iterable[LintIssue]:
         issues: list[LintIssue] = []
@@ -25,7 +25,7 @@ class ObjectOverlapRule(LintRule):
 
             overlap_area = float(area)
             message = (
-                f"Objects {obj_a.id} and {obj_b.id} overlap on the floor plane."
+                f"Objects {obj_a.id} and {obj_b.id} overlap."
             )
             hint = (
                 f"Separate {obj_a.id} and {obj_b.id} laterally to remove the "

@@ -229,10 +229,10 @@ class ObjectDatabase:
                         extra_info={"tags": []},  # TEMP HACK
                     )
                 )
-            logger.debug(
-                f"ObjectDatabase.pack returning {len(results)} object blueprints: {[r.name for r in results]}"
-            )
-            return results
+            # logger.debug(
+            #     f"ObjectDatabase.pack returning {len(results)} object blueprints: {[r.name for r in results]}"
+            # )
+            # return results
 
         except requests.exceptions.RequestException as e:
             print(f"Request failed: {e}")

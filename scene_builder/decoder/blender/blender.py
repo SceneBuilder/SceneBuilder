@@ -25,7 +25,7 @@ from scene_builder.config import BLENDER_LOG_FILE, TEST_ASSET_DIR
 from scene_builder.database.material import MaterialDatabase
 from scene_builder.decoder.blender_materials import create_translucent_material
 from scene_builder.decoder.blender.controllers.interior_door import create_interior_door
-from scene_builder.definition.scene import Object, Room, Scene, Vector2
+from scene_builder.definition.scene import Object, Room, Scene, Vector2, find_shell
 from scene_builder.importer import objaverse_importer, test_asset_importer
 from scene_builder.logging import logger
 from scene_builder.tools.material_applicator import texture_floor_mesh
@@ -319,6 +319,19 @@ def parse_scene_definition(scene_data: dict[str, Any], with_walls: bool = False)
     if with_walls:
         try:
             create_room_walls(scene_data.get("rooms", []))
+
+            # Apply wall materials if specified in shells
+            for room_data in scene_data.get("rooms", []):
+                try:
+                    wall_shell = find_shell(room_data, "wall")
+                    if wall_shell and getattr(wall_shell, "material_id", None):
+                        room_id = room_data.get("id") if isinstance(room_data, dict) else getattr(room_data, "id", "unknown")
+                        apply_wall_material(
+                            material_id=wall_shell.material_id,
+                            wall_object_name=f"Wall_{room_id}",
+                        )
+                except Exception as mat_err:
+                    logger.warning(f"Failed to apply wall material: {mat_err}")
         except Exception as e:
             logger.warning(f"Failed to create walls: {e}")
 
@@ -360,6 +373,19 @@ def parse_room_definition(
                         isinstance(with_walls, str) and with_walls.lower() == "translucent"
                     )
                     create_room_walls([room_data], translucent=translucent)
+
+                    # Apply wall material if specified and walls are opaque
+                    if not translucent:
+                        try:
+                            wall_shell = find_shell(room_data, "wall")
+                            if wall_shell and getattr(wall_shell, "material_id", None):
+                                room_id = room_data.get("id") if isinstance(room_data, dict) else getattr(room_data, "id", "unknown")
+                                apply_wall_material(
+                                    material_id=wall_shell.material_id,
+                                    wall_object_name=f"Wall_{room_id}",
+                                )
+                        except Exception as mat_err:
+                            logger.warning(f"Failed to apply wall material: {mat_err}")
                 except Exception as e:
                     logger.warning(
                         f"Failed to create walls for room {room_data.get('id', 'unknown')}: {e}"
@@ -412,14 +438,14 @@ def _create_room(room_data: dict[str, Any]):
     logger.debug(f"Created floor: {floor_result['status']}")
 
     # Apply floor material
-    if room_data.get("floor"):
-        material_id = room_data["floor"]["material_id"]
+    floor = find_shell(room_data, "floor")
+    if floor and getattr(floor, "material_id", None):
         apply_floor_material(
-            material_id=material_id,
+            material_id=floor.material_id,
             floor_object_name=floor_result["object_name"],
             boundary=room_data["boundary"],
         )
-        logger.debug(f"Applied material {material_id} to floor")
+        logger.debug(f"Applied material {floor.material_id} to floor")
     # Create objects in the room
     for obj_data in room_data.get("objects", []):
         try:
@@ -3090,3 +3116,71 @@ def apply_floor_material(
         logger.debug(f"Failed to apply material to floor {floor_object_name}")
 
     return success
+
+
+def apply_wall_material(
+    material_id: str,
+    wall_object_name: str,
+    uv_scale: float = 1.0,
+) -> bool:
+    """
+    Apply a material to a wall object in Blender.
+
+    Mirrors apply_floor_material but targets the wall mesh ("Wall_<room_id>").
+    Performs a simple UV unwrap for reasonable tiling before applying.
+
+    Args:
+        material_id: Material UID from Graphics-DB
+        wall_object_name: Name of the wall object in Blender (e.g., "Wall_room-01")
+        uv_scale: UV scale for texture tiling
+
+    Returns:
+        True if successful, False otherwise
+    """
+
+    try:
+        # Ensure the target object exists
+        obj = bpy.data.objects.get(wall_object_name)
+        if not obj:
+            logger.debug(f"Wall object not found: {wall_object_name}")
+            return False
+
+        # Create or refresh UVs for the wall mesh to ensure sane tiling
+        try:
+            with suppress_blender_logs():
+                bpy.ops.object.select_all(action="DESELECT")
+                obj.select_set(True)
+                bpy.context.view_layer.objects.active = obj
+                bpy.ops.object.mode_set(mode="EDIT")
+                bpy.ops.mesh.select_all(action="SELECT")
+                # Smart project works well for vertical quads
+                bpy.ops.uv.smart_project(angle_limit=66.0, island_margin=0.001)
+                bpy.ops.object.mode_set(mode="OBJECT")
+        except Exception as uv_err:
+            logger.debug(f"UV unwrap failed for {wall_object_name}: {uv_err}")
+
+        # Resolve material texture via database
+        material_db = MaterialDatabase()
+        texture_path = material_db.download_texture(material_id)
+        if not texture_path:
+            logger.debug(f"Failed to download texture for wall material: {material_id}")
+            return False
+
+        # Reuse the generic texture applicator (works for any mesh)
+        material_name = f"Mat_{Path(texture_path).stem}_{wall_object_name}"
+        success = texture_floor_mesh(
+            floor_object_name=wall_object_name,
+            texture_path=texture_path,
+            material_name=material_name,
+            uv_scale=uv_scale,
+        )
+
+        if success:
+            logger.debug(f"Applied wall material {material_id} to {wall_object_name}")
+        else:
+            logger.debug(f"Failed to apply wall material to {wall_object_name}")
+
+        return success
+    except Exception as e:
+        logger.debug(f"Error applying wall material to {wall_object_name}: {e}")
+        return False
