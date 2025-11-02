@@ -14,6 +14,7 @@ from scene_builder.definition.scene import (
     Section,
     Scene,
 )
+from scene_builder.validation.models import LintReport
 from scene_builder.definition.plan import RoomPlan
 
 
@@ -74,6 +75,7 @@ class RoomDesignState(BaseModel):
     # TODO (yunho-c): make a decision on ^.
 
     extra_info: Any | None = None
+    last_lint_report: LintReport | None = None
 
 
 # class RoomDesignAction(BaseModel):

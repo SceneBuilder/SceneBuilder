@@ -83,7 +83,11 @@ class BlenderSceneTracker:
         # If it exists but positions/rotations don't match, it moved
         return not self.object_exists_unchanged(object_id, pos, rot)
 
-    def register_object(self, obj_data: dict, blender_name: str):
+    def register_object(
+        self,
+        obj_data: dict,
+        blender_name: str,
+    ):
         """Register a newly created object (overwrites if object moved)."""
         object_id = obj_data["id"]
         source_id = obj_data["source_id"]
@@ -113,6 +117,11 @@ class BlenderSceneTracker:
     def get_object_state(self, object_id: str) -> Optional[BlenderObjectState]:
         """Get current state for a specific object."""
         return self._objects.get(object_id)
+
+    def iter_states(self) -> tuple[BlenderObjectState, ...]:
+        """Return a snapshot tuple of all tracked object states."""
+
+        return tuple(self._objects.values())
 
     def get_cached_empty(self, source_id: str) -> Optional[Any]:
         """Get cached Empty parent object for a source_id if it exists.
@@ -149,6 +158,89 @@ class BlenderSceneTracker:
 
 # Global scene tracker instance
 _scene_tracker = BlenderSceneTracker()
+
+
+def iter_tracked_object_states() -> tuple[BlenderObjectState, ...]:
+    """Return tracked object states."""
+
+    return _scene_tracker.iter_states()
+
+
+def get_tracked_object_state(object_id: str) -> Optional[BlenderObjectState]:
+    """Return the tracked state for ``object_id`` if present."""
+
+    return _scene_tracker.get_object_state(object_id)
+
+
+def get_object_bounds(
+    object_id: str,
+) -> tuple[Tuple[float, float, float], Tuple[float, float, float]] | None:
+    """Compute world-space bounding box corners for a tracked object."""
+
+    state = _scene_tracker.get_object_state(object_id)
+    if state is None:
+        return None
+
+    blender_obj = bpy.data.objects.get(state.blender_name)
+    if blender_obj is None:
+        return None
+
+    return _compute_object_bounds(blender_obj)
+
+
+def _iter_mesh_descendants(root_obj):
+    """Yield mesh objects under the provided Blender object.
+
+    Assets often import as empties that parent several mesh nodes.  Walking the
+    hierarchy ensures the bounding-box query accounts for every mesh that makes
+    up the logical object instead of just the top-level container.
+    """
+
+    stack = [root_obj]
+    while stack:
+        current = stack.pop()
+        if current is None:
+            continue
+        if getattr(current, "type", None) == "MESH":
+            yield current
+        stack.extend(getattr(current, "children", []) or [])
+
+
+def _compute_object_bounds(
+    blender_obj,
+) -> tuple[Tuple[float, float, float], Tuple[float, float, float]] | None:
+    """Return world axis-aligned bounds for the provided object."""
+
+    mesh_children = list(_iter_mesh_descendants(blender_obj))
+    if not mesh_children:
+        return None
+
+    min_world = Vector((math.inf, math.inf, math.inf))
+    max_world = Vector((-math.inf, -math.inf, -math.inf))
+
+    for mesh_obj in mesh_children:
+        try:
+            matrix_world = mesh_obj.matrix_world
+            corners = getattr(mesh_obj, "bound_box", None)
+        except Exception:
+            continue
+
+        if not corners:
+            continue
+
+        for corner in corners:
+            world_corner = matrix_world @ Vector(corner)
+            min_world.x = min(min_world.x, world_corner.x)
+            min_world.y = min(min_world.y, world_corner.y)
+            min_world.z = min(min_world.z, world_corner.z)
+            max_world.x = max(max_world.x, world_corner.x)
+            max_world.y = max(max_world.y, world_corner.y)
+            max_world.z = max(max_world.z, world_corner.z)
+
+    return (
+        (float(min_world.x), float(min_world.y), float(min_world.z)),
+        (float(max_world.x), float(max_world.y), float(max_world.z)),
+    )
 
 
 @contextmanager
@@ -362,7 +454,10 @@ def _check_object_duplicate_status(obj_data: dict[str, Any]) -> str:
     return "proceed_new"
 
 
-def _create_object(obj_data: dict[str, Any], parent_location: str = "origin"):
+def _create_object(
+    obj_data: dict[str, Any],
+    parent_location: str = "origin",
+):
     """
     Creates a single object in the Blender scene.
     Raises an IOError if the object cannot be imported.
@@ -430,7 +525,10 @@ def _create_object(obj_data: dict[str, Any], parent_location: str = "origin"):
 
             # Register the created object in tracker
             if object_id and blender_obj:
-                _scene_tracker.register_object(obj_data, blender_obj.name)
+                _scene_tracker.register_object(
+                    obj_data,
+                    blender_obj.name,
+                )
                 logger.debug(f"Registered object in tracker: {object_name} (id: {object_id})")
 
             return
@@ -543,7 +641,10 @@ def _create_object(obj_data: dict[str, Any], parent_location: str = "origin"):
 
     # Register the created object in tracker
     if object_id and blender_obj:
-        _scene_tracker.register_object(obj_data, blender_obj.name)
+        _scene_tracker.register_object(
+            obj_data,
+            blender_obj.name,
+        )
         logger.debug(f"Registered object in tracker: {object_name} (id: {object_id})")
 
 
