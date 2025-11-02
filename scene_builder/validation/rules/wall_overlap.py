@@ -19,10 +19,7 @@ class WallOverlapRule(LintRule):
         polygon = context.room.footprint
 
         boundary_payload = (
-            [
-                {"x": vertex.x, "y": vertex.y}
-                for vertex in context.room.definition.boundary
-            ]
+            [{"x": vertex.x, "y": vertex.y} for vertex in context.room.definition.boundary]
             if context.room.definition.boundary
             else None
         )
@@ -35,13 +32,8 @@ class WallOverlapRule(LintRule):
             if inside and (clearance <= 0.0 or distance_to_boundary >= clearance):
                 continue
 
-            message = (
-                f"Object {lint_obj.id}'s footprint intersects the room boundary."
-            )
-            hint = (
-                f"Move {lint_obj.id} inward so its footprint sits at least "
-                f"{clearance:.3f} m inside the boundary."
-            )
+            message = f"Object {lint_obj.id}'s footprint intersects the room boundary by {distance_to_boundary:.3f} m."
+            hint = f"Move {lint_obj.id} inward by {(distance_to_boundary):.3f} m."
             min_x, min_y, max_x, max_y = lint_obj.footprint.bounds
             data: dict[str, object] = {
                 "footprint_bounds": (min_x, min_y, max_x, max_y),
@@ -59,4 +51,3 @@ class WallOverlapRule(LintRule):
                 hint=hint,
                 data=data,
             )
-
