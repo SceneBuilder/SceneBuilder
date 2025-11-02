@@ -17,6 +17,7 @@ from scene_builder.utils.pai import transform_paths_to_binary
 from scene_builder.workflow.prompts import (
     BUILDING_PLAN_AGENT_PROMPT,
     FLOOR_PLAN_AGENT_PROMPT,
+    ISSUE_RESOLUTION_AGENT_PROMPT,
     PLACEMENT_AGENT_PROMPT,
     ROOM_DESIGN_AGENT_PROMPT,
     SEQUENCING_AGENT_PROMPT,
@@ -115,6 +116,11 @@ room_design_agent = Agent(
     # output_type=RoomDesignResponse,  # ORIG
     # output_type=str,  # ALT
     # tools=[read_media_file],
+)
+
+issue_resolution_agent = Agent(
+    model,
+    system_prompt=ISSUE_RESOLUTION_AGENT_PROMPT,
 )
 
 # @room_design_agent.system_prompt
