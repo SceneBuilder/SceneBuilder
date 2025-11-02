@@ -1642,11 +1642,13 @@ def _configure_output_image(format: str, resolution: int):
 
 def _configure_render_settings(engine: str = None, samples: int = 256, enable_gpu: bool = False):
     """Selects a compatible render engine and configures render settings."""
-    try:
-        engine_prop = bpy.context.scene.render.bl_rna.properties["engine"]
-        available_engines = [item.identifier for item in engine_prop.enum_items]
-    except Exception:
-        available_engines = []
+
+    available_engines = ['BLENDER_EEVEE', 'BLENDER_WORKBENCH', 'CYCLES']
+    # try:
+    #     engine_prop = bpy.context.scene.render.bl_rna.properties["engine"]
+    #     available_engines = [item.identifier for item in engine_prop.enum_items]
+    # except Exception:
+    #     available_engines = []
 
     # Use specified engine if provided and available
     if engine and engine in available_engines:
@@ -1922,7 +1924,7 @@ def render_to_file(output_path: str | Path) -> Path:
         # NOTE: `bpy` seems to switch context between `_configure_render_settings()` call
         #       and render call, reverting the rendering engine back to Cycles.
         # print(f"{bpy.context.scene.render.engine=}")  # TEMP
-        bpy.context.scene.render.engine = "BLENDER_EEVEE_NEXT"  # TEMP HACK
+        # bpy.context.scene.render.engine = "BLENDER_EEVEE_NEXT"  # TEMP HACK
         bpy.ops.render.render(write_still=True)
 
     if output_path.exists():
@@ -2394,7 +2396,8 @@ def create_object_visualization(
 
     with SceneSwitcher(scene):
         with suppress_blender_logs():
-            _configure_render_settings()
+            # _configure_render_settings()  # OG
+            _configure_render_settings(engine="CYCLES")  # ALT
             _configure_output_image(format, resolution)
 
             if view == "top_down":
@@ -2570,7 +2573,10 @@ def setup_post_processing(
     # Enable object index pass if highlighting
     view_layer = bpy.context.view_layer
     view_layer.use_pass_object_index = highlight_pass_index is not None
+    view_layer.update()
 
+    # Ensure compositing is enabled
+    scene.render.use_compositing = True
     # Enable compositor and reset nodes
     scene.use_nodes = True
     tree = scene.node_tree
@@ -2580,6 +2586,15 @@ def setup_post_processing(
 
     # Base nodes
     rlayers = nodes.new("CompositorNodeRLayers")
+    # # Route RLayers to the active scene + view layer to ensure IndexOB is valid
+    # try:
+    #     rlayers.scene = scene
+    # except Exception:
+    #     pass
+    # try:
+    #     rlayers.layer = bpy.context.view_layer.name
+    # except Exception:
+    #     pass
     comp = nodes.new("CompositorNodeComposite")
 
     # Optional base glare on the full image
@@ -2598,6 +2613,11 @@ def setup_post_processing(
     if highlight_pass_index is not None:
         id_mask = nodes.new("CompositorNodeIDMask")
         id_mask.index = int(highlight_pass_index)
+        # Slightly cleaner edges
+        try:
+            id_mask.use_antialiasing = True
+        except Exception:
+            pass
 
         blur = nodes.new("CompositorNodeBlur")
         blur.filter_type = "GAUSS"
