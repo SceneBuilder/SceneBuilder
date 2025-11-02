@@ -300,8 +300,8 @@ def test_object_preview_rotation_grid():
     output_path = blender.create_object_visualization(
         view="isometric",
         resolution=512,
-        augmentations=["preview_rotation"],
-        # augmentations=["preview_rotation", "highlight", "show_id"],
+        # augmentations=["preview_rotation"],
+        augmentations=["preview_rotation", "highlight", "show_id"],
         target_objects=["preview_table"],
         output_dir=OUTPUT_DIR,
         scene="test_preview_rotation_room",
@@ -356,4 +356,4 @@ if __name__ == "__main__":
     # test_room_loading()
 
     test_object_visualization_with_highlight_and_label()
-    # test_object_preview_rotation_grid()
+    test_object_preview_rotation_grid()

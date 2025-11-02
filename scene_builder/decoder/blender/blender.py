@@ -34,6 +34,7 @@ from scene_builder.utils.conversions import pydantic_to_dict
 from scene_builder.utils.file import get_filename
 from scene_builder.utils.floorplan import get_dominant_angle
 from scene_builder.utils.geometry import get_longest_edge_angle
+from scene_builder.utils.image import compose_image_grid
 
 HDRI_FILE_PATH = Path(
     f"{TEST_ASSET_DIR}/hdri/autumn_field_puresky_4k.exr"
@@ -2359,40 +2360,6 @@ def _position_preview_camera(
         logger.warning("Direction constraint not found for preview camera")
 
 
-def _compose_image_grid(images: list[np.ndarray], output_path: Path, image_format: str):
-    if not images:
-        return
-
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    pil_images: list[Image.Image] = []
-    for array in images[:4]:
-        clipped = np.clip(array, 0.0, 1.0)
-        if clipped.shape[2] >= 4:
-            rgba = (clipped[:, :, :4] * 255).astype(np.uint8)
-            pil_images.append(Image.fromarray(rgba, mode="RGBA"))
-        else:
-            rgb = (clipped[:, :, :3] * 255).astype(np.uint8)
-            pil_images.append(Image.fromarray(rgb, mode="RGB"))
-
-    if not pil_images:
-        return
-
-    tile_width, tile_height = pil_images[0].size
-    grid_image = Image.new("RGBA", (tile_width * 2, tile_height * 2), (0, 0, 0, 0))
-
-    for index, image in enumerate(pil_images):
-        x_offset = (index % 2) * tile_width
-        y_offset = (index // 2) * tile_height
-        grid_image.paste(image, (x_offset, y_offset))
-
-    if image_format.lower() in {"jpg", "jpeg"}:
-        grid_image = grid_image.convert("RGB")
-
-    grid_image.save(output_path)
-
-
 def _render_preview_rotation(
     scene: bpy.types.Scene,
     augmentor: _ObjectAugmentor,
@@ -2431,7 +2398,7 @@ def _render_preview_rotation(
     scene.camera = original_camera
     augmentor.update_camera(original_camera)
 
-    _compose_image_grid([np.array(Image.open(path)) for path in saved_paths], output_path, image_format)
+    compose_image_grid([np.array(Image.open(path)) for path in saved_paths], output_path)
     logger.debug(f"Composed rotation preview render -> {output_path} (frames: {len(saved_paths)})")
 
     return output_path
