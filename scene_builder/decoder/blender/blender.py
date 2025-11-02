@@ -1834,13 +1834,46 @@ def _setup_isometric_camera(auto_zoom: bool = True, margin: float = 2.0):
     bpy.context.scene.camera = camera
 
 
+def _apply_camera_track(camera: bpy.types.Object, target: bpy.types.Object) -> None:
+    """Apply tracking constraints so the camera points at ``target`` while staying upright.
+
+    Adds two Locked Track constraints:
+    - TRACK_NEGATIVE_Z with LOCK_Y
+    - TRACK_NEGATIVE_Z with LOCK_X
+
+    This combination robustly preserves world-up (+Z) without roll while aiming at the target.
+    Any existing TRACK_TO/DAMPED_TRACK/LOCKED_TRACK constraints are removed first.
+    """
+    # Remove existing tracking constraints to avoid stacking
+    for c in list(camera.constraints):
+        if c.type in ("TRACK_TO", "DAMPED_TRACK", "LOCKED_TRACK"):
+            camera.constraints.remove(c)
+
+    def _add_locked(lock_axis: str):
+        con = camera.constraints.new(type="LOCKED_TRACK")
+        con.target = target
+        # Cameras in Blender look down -Z
+        con.track_axis = "TRACK_NEGATIVE_Z"
+        con.lock_axis = lock_axis
+        return con
+
+    # Apply two locked tracks for stability
+    _add_locked("LOCK_Y")
+    _add_locked("LOCK_X")
+
+
 def _setup_egocentric_camera(
     auto_zoom: bool = True,
     margin: float = 1.5,
     fallback_distance: float = 5.0,
     default_height: float = 1.6,
+    track_target: Optional[bpy.types.Object] = None,
 ):
-    """Sets up a perspective camera from a first-person viewpoint."""
+    """Sets up a perspective camera from a first-person viewpoint.
+
+    If ``track_target`` is provided, attaches a tracking constraint so the camera
+    continuously points at that object instead of computing orientation manually.
+    """
 
     for obj in bpy.context.scene.objects:
         if obj.type == "CAMERA":
@@ -1871,6 +1904,8 @@ def _setup_egocentric_camera(
     camera.data.type = "PERSP"
     camera.data.clip_start = 0.05
     camera.data.clip_end = 500.0
+    # Spawn with initial rotation: +X 90 degrees (XYZ Euler)
+    camera.rotation_euler = (math.radians(90.0), 0.0, 0.0)
 
     if auto_zoom:
         forward_distance = max(max(width, depth) * margin, 1.0)
@@ -1879,12 +1914,15 @@ def _setup_egocentric_camera(
         forward_distance = fallback_distance
         lens = 35.0
 
-    look_target = Vector((center_x, center_y + forward_distance, camera_height))
-    direction = look_target - Vector(camera.location)
-    if direction.length == 0:
-        direction = Vector((0.0, 1.0, 0.0))
-
-    camera.rotation_euler = direction.to_track_quat("Z", "Y").to_euler()
+    if track_target is not None:
+        _apply_camera_track(camera, track_target)
+    else:
+        # Manual look-at straight ahead along +Y at eye height
+        look_target = Vector((center_x, center_y + forward_distance, camera_height))
+        direction = look_target - Vector(camera.location)
+        if direction.length == 0:
+            direction = Vector((0.0, 1.0, 0.0))
+        camera.rotation_euler = direction.to_track_quat("Z", "Y").to_euler()
     camera.data.lens = lens
 
     bpy.context.scene.camera = camera
@@ -2395,6 +2433,10 @@ def create_object_visualization(
     )
 
     with SceneSwitcher(scene):
+        # Resolve targets early so egocentric camera can track them
+        augmentor = _ObjectAugmentor(target_objects, augmentations)
+        track_target_obj = augmentor._target_pairs[0][1] if (view == "egocentric" and augmentor.has_targets) else None
+
         with suppress_blender_logs():
             # _configure_render_settings()  # OG
             _configure_render_settings(engine="CYCLES")  # ALT
@@ -2405,7 +2447,7 @@ def create_object_visualization(
             elif view == "isometric":
                 _setup_isometric_camera()
             elif view == "egocentric":
-                _setup_egocentric_camera()
+                _setup_egocentric_camera(track_target=track_target_obj)
             else:
                 raise ValueError(
                     f"Unsupported view type: {view}. Must be 'top_down', 'isometric', or 'egocentric'."
@@ -2417,7 +2459,6 @@ def create_object_visualization(
                 _create_grid()
 
         scene_obj = bpy.context.scene
-        augmentor = _ObjectAugmentor(target_objects, augmentations)
         highlight_index = augmentor.prepare_highlight(bpy.context.view_layer)
 
         with suppress_blender_logs():
