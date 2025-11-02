@@ -6,8 +6,8 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterable
 from typing import ClassVar
 
-from scene_builder.lint.context import LintContext, LintingOptions
-from scene_builder.lint.models import LintIssue
+from scene_builder.validation.context import LintContext, LintingOptions
+from scene_builder.validation.models import LintIssue
 
 
 class LintRule(ABC):

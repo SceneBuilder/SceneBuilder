@@ -4,7 +4,7 @@ import sys
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from scene_builder.definition.scene import Object, Room, Scene, Vector2, Vector3
-from scene_builder.lint import (
+from scene_builder.validation import (
     AABB,
     LintSeverity,
     LintingOptions,

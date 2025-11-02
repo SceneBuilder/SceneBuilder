@@ -30,8 +30,8 @@ from scene_builder.workflow.agents import (
 # from scene_builder.workflow.states import PlacementState, RoomDesignState
 from scene_builder.workflow.states import CritiqueAction, PlacementState, RoomDesignState, MainState
 from scene_builder.workflow.toolsets import material_toolset, shopping_toolset
-from scene_builder.lint.linter import format_lint_feedback, lint_room
-from scene_builder.lint.models import LintReport
+from scene_builder.validation.linter import format_lint_feedback, lint_room
+from scene_builder.validation.models import LintReport
 
 console = Console()
 obj_db = ObjectDatabase()

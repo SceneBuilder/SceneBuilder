@@ -31,7 +31,7 @@ from scene_builder.workflow.states import (
 import os
 
 
-model = GoogleModel("gemini-2.5-pro")
+# model = GoogleModel("gemini-2.5-pro")
 # model = GoogleModel("gemini-2.5-flash")
 # model = OpenAIChatModel("gpt-5")
 # model = OpenAIChatModel("gpt-5-mini")
@@ -40,6 +40,10 @@ model = GoogleModel("gemini-2.5-pro")
 #     "x-ai/grok-4-fast:free",
 #     provider=OpenRouterProvider(api_key=os.getenv("OPENROUTER_API_KEY")),
 # )
+model = OpenAIChatModel(
+    "nvidia/nemotron-nano-12b-v2-vl:free",
+    provider=OpenRouterProvider(api_key=os.getenv("OPENROUTER_API_KEY")),
+)
 # vLLM server (OpenAI-compatible API)
 # model = OpenAIChatModel(
 #     "Qwen/Qwen2.5-VL-7B-Instruct-AWQ",

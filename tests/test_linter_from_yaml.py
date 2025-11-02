@@ -5,7 +5,7 @@ from rich import print as rprint
 
 from scene_builder.decoder.blender.blender import parse_room_definition, parse_scene_definition
 from scene_builder.definition.scene import Object, Room, Scene
-from scene_builder.lint import (
+from scene_builder.validation import (
     AABB,
     LintSeverity,
     format_lint_feedback,

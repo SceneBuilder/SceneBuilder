@@ -16,14 +16,14 @@ from scene_builder.decoder.blender.data_bridge import blender_size_provider
 from scene_builder.definition.scene import Object, Room, Scene
 from scene_builder.utils.geometry import convert_to_shapely
 
-from scene_builder.lint.context import (
+from scene_builder.validation.context import (
     LintContext,
     LintableObjectData,
     LintableRoomData,
     LintingOptions,
 )
-from scene_builder.lint.models import AABB, LintIssue, LintReport, LintSeverity
-from scene_builder.lint.rules.base import LintRule
+from scene_builder.validation.models import AABB, LintIssue, LintReport, LintSeverity
+from scene_builder.validation.rules.base import LintRule
 
 
 # Providers return world-space axis-aligned bounding boxes for objects.

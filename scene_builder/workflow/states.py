@@ -14,7 +14,7 @@ from scene_builder.definition.scene import (
     Section,
     Scene,
 )
-from scene_builder.lint.models import LintReport
+from scene_builder.validation.models import LintReport
 from scene_builder.definition.plan import RoomPlan
 
 

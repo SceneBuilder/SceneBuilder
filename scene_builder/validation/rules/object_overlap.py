@@ -5,9 +5,9 @@ from __future__ import annotations
 from collections.abc import Iterable
 from itertools import combinations
 
-from scene_builder.lint.context import LintContext, LintingOptions
-from scene_builder.lint.models import LintIssue, LintSeverity
-from scene_builder.lint.rules.base import LintRule
+from scene_builder.validation.context import LintContext, LintingOptions
+from scene_builder.validation.models import LintIssue, LintSeverity
+from scene_builder.validation.rules.base import LintRule
 
 
 class ObjectOverlapRule(LintRule):

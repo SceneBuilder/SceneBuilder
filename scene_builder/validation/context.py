@@ -9,10 +9,10 @@ from shapely.geometry import Polygon
 
 from scene_builder.definition.scene import Object, Room
 
-from scene_builder.lint.models import AABB
+from scene_builder.validation.models import AABB
 
 if TYPE_CHECKING:  # pragma: no cover - typing support only
-    from scene_builder.lint.rules.base import LintRule
+    from scene_builder.validation.rules.base import LintRule
 
 
 @dataclass(slots=True)
@@ -68,11 +68,11 @@ class LintContext:
     objects: list[LintableObjectData]
 
 
-from scene_builder.lint.rules.dominates_room import DominatesRoomRule
-from scene_builder.lint.rules.floor_origin import FloorOriginRule
-from scene_builder.lint.rules.floor_penetration import FloorPenetrationRule
-from scene_builder.lint.rules.object_overlap import ObjectOverlapRule
-from scene_builder.lint.rules.wall_overlap import WallOverlapRule
+from scene_builder.validation.rules.dominates_room import DominatesRoomRule
+from scene_builder.validation.rules.floor_origin import FloorOriginRule
+from scene_builder.validation.rules.floor_penetration import FloorPenetrationRule
+from scene_builder.validation.rules.object_overlap import ObjectOverlapRule
+from scene_builder.validation.rules.wall_overlap import WallOverlapRule
 
 
 DEFAULT_RULES: tuple["LintRule", ...] = (

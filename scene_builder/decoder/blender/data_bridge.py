@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from scene_builder.decoder.blender import blender
 from scene_builder.definition.scene import Object
-from scene_builder.lint.models import AABB
+from scene_builder.validation.models import AABB
 
 
 def _box_from_tuple(
