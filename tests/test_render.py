@@ -12,6 +12,9 @@ from scene_builder.nodes.placement import PlacementVisualFeedback
 from scene_builder.workflow.states import PlacementState
 
 
+OUTPUT_DIR = Path("test_output/render")
+
+
 def test_visual_feedback_renders_png():
     room = Room(
         id="test_room",
@@ -136,6 +139,36 @@ def test_isometric_render():
     assert output_path_final.exists()
 
 
+def test_egocentric_render():
+    """
+    Tests that an egocentric (first-person) view can be rendered.
+    """
+    room = Room(
+        id="test_egocentric_room",
+        category="bedroom",
+        boundary=[
+            Vector2(x=3, y=3),
+            Vector2(x=-3, y=3),
+            Vector2(x=-3, y=-3),
+            Vector2(x=3, y=-3),
+        ],
+        viz=[],
+        objects=[
+            Object.from_blueprint(
+                blueprint=search_test_asset("classroom_table"),
+                id="classroom_table_egocentric",
+                position=Vector3(x=0, y=0, z=0),
+                rotation=Vector3(x=0, y=0, z=0),
+                scale=Vector3(x=1, y=1, z=1),
+            )
+        ],
+    )
+    blender.parse_room_definition(room, clear=True)
+
+    output_path = blender.create_scene_visualization(view="egocentric", resolution=512)
+    assert output_path.exists()
+
+
 def test_grid_visualization():
     """
     Tests that grid visualization works correctly with both top_down and isometric views.
@@ -181,6 +214,99 @@ def test_grid_visualization():
     assert output_path_repeat.exists()
 
 
+def test_object_visualization_with_highlight_and_label():
+    """
+    Renders an object-focused view with highlight and ID label augmentations.
+    """
+    room = Room(
+        id="test_object_viz_room",
+        category="living_room",
+        boundary=[
+            Vector2(x=4, y=2),
+            Vector2(x=-4, y=2),
+            Vector2(x=-4, y=-2),
+            Vector2(x=4, y=-2),
+        ],
+        viz=[],
+        objects=[
+            Object.from_blueprint(
+                blueprint=search_test_asset("classroom_table"),
+                id="target_table",
+                position=Vector3(x=0.5, y=0.5, z=0),
+                rotation=Vector3(x=0, y=0, z=0),
+                scale=Vector3(x=1, y=1, z=1),
+            ),
+            Object.from_blueprint(
+                blueprint=search_test_asset("classroom_table"),
+                id="other_table",
+                position=Vector3(x=-0.5, y=-0.5, z=0),
+                rotation=Vector3(x=0, y=0, z=0),
+                scale=Vector3(x=1, y=1, z=1),
+            ),
+        ],
+    )
+    blender.parse_room_definition(room, clear=True)
+
+    output_path = blender.create_object_visualization(
+        view="isometric",
+        resolution=1024,
+        augmentations=["highlight", "show_id"],
+        target_objects=["target_table"],
+        output_dir=OUTPUT_DIR,
+        scene="test_object_viz_room",
+    )
+    assert output_path.exists()
+
+    output_path = blender.create_object_visualization(
+        view="egocentric",
+        resolution=1024,
+        augmentations=["highlight", "show_id"],
+        target_objects=["target_table"],
+        output_dir=OUTPUT_DIR,
+        scene="test_object_viz_room",
+    )
+    assert output_path.exists()
+
+    blender.save_scene(f"{OUTPUT_DIR}/object_label_and_highlight.blend")
+    print(f"✅ Saved Blender file to: {OUTPUT_DIR}/object_label_and_highlight.blend")
+
+
+def test_object_preview_rotation_grid():
+    """
+    Renders a 2x2 rotational preview grid for a targeted object.
+    """
+    room = Room(
+        id="test_preview_rotation_room",
+        category="office",
+        boundary=[
+            Vector2(x=3, y=3),
+            Vector2(x=-3, y=3),
+            Vector2(x=-3, y=-3),
+            Vector2(x=3, y=-3),
+        ],
+        viz=[],
+        objects=[
+            Object.from_blueprint(
+                blueprint=search_test_asset("classroom_table"),
+                id="preview_table",
+                position=Vector3(x=0, y=0, z=0),
+                rotation=Vector3(x=0, y=0, z=0),
+                scale=Vector3(x=1, y=1, z=1),
+            )
+        ],
+    )
+    blender.parse_room_definition(room, clear=True)
+
+    output_path = blender.create_object_visualization(
+        view="isometric",
+        resolution=512,
+        augmentations=["preview_rotation", "highlight", "show_id"],
+        target_objects=["preview_table"],
+        output_dir=OUTPUT_DIR,
+    )
+    assert output_path.exists()
+
+
 def test_room_loading(
     room_data_path: str = "test_output/test_room_design_workflow_garage.yaml",
 ):
@@ -218,8 +344,11 @@ def test_room_loading(
 
 
 if __name__ == "__main__":
-    test_visual_feedback_renders_png()
-    test_template_loading()
-    test_isometric_render()
-    test_grid_visualization()
-    test_room_loading()
+    # test_visual_feedback_renders_png()
+    # test_template_loading()
+    # test_isometric_render()
+    # test_grid_visualization()
+    # test_room_loading()
+
+    test_object_visualization_with_highlight_and_label()
+    # test_object_preview_rotation_grid()

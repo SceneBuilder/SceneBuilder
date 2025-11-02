@@ -42,6 +42,10 @@ HDRI_FILE_PATH = Path(
 BACKGROUND_COLOR = (0.02, 0.02, 0.02, 1.0)
 DEFAULT_DOOR_HEIGHT = 2.5
 
+OBJECT_PREVIEW_CAMERA_NAME = "ObjectPreviewCamera"
+OBJECT_LABEL_MATERIAL_NAME = "ObjectLabelMaterial"
+OBJECT_HIGHLIGHT_PASS_INDEX = 101
+
 
 @dataclass
 class BlenderObjectState:
@@ -1809,6 +1813,61 @@ def _setup_isometric_camera(auto_zoom: bool = True, margin: float = 2.0):
     bpy.context.scene.camera = camera
 
 
+def _setup_egocentric_camera(
+    auto_zoom: bool = True,
+    margin: float = 1.5,
+    fallback_distance: float = 5.0,
+    default_height: float = 1.6,
+):
+    """Sets up a perspective camera from a first-person viewpoint."""
+
+    for obj in bpy.context.scene.objects:
+        if obj.type == "CAMERA":
+            bpy.data.objects.remove(obj, do_unlink=True)
+
+    bounds = _calculate_scene_bounds()
+
+    if bounds:
+        min_x, max_x, min_y, max_y, min_z, max_z = bounds
+        center_x = (min_x + max_x) / 2
+        center_y = (min_y + max_y) / 2
+        center_z = (min_z + max_z) / 2
+        width = max_x - min_x
+        depth = max_y - min_y
+    else:
+        center_x = center_y = 0.0
+        min_z = 0.0
+        center_z = default_height
+        width = depth = 4.0
+
+    camera_height = max(center_z, min_z + default_height)
+
+    with suppress_blender_logs():
+        bpy.ops.object.camera_add(location=(center_x, center_y, camera_height))
+
+    camera = bpy.context.object
+    camera.name = "EgocentricCamera"
+    camera.data.type = "PERSP"
+    camera.data.clip_start = 0.05
+    camera.data.clip_end = 500.0
+
+    if auto_zoom:
+        forward_distance = max(max(width, depth) * margin, 1.0)
+        lens = max(18.0, min(45.0, (36.0 * margin) / max(max(width, depth), 1.0)))
+    else:
+        forward_distance = fallback_distance
+        lens = 35.0
+
+    look_target = Vector((center_x, center_y + forward_distance, camera_height))
+    direction = look_target - Vector(camera.location)
+    if direction.length == 0:
+        direction = Vector((0.0, 1.0, 0.0))
+
+    camera.rotation_euler = direction.to_track_quat("Z", "Y").to_euler()
+    camera.data.lens = lens
+
+    bpy.context.scene.camera = camera
+
 def _setup_lighting(energy: float = 0.2):
     """Sets up basic lighting for the scene."""
     if not any(obj.type == "LIGHT" for obj in bpy.context.scene.objects):
@@ -1895,7 +1954,7 @@ def create_scene_visualization(
         resolution: The resolution of the output image.
         format: The format of the output image.
         output_dir: The directory to save the output image to.
-        view: The view to render from. Can be 'top_down' or 'isometric'.
+        view: The view to render from. Can be 'top_down', 'isometric', or 'egocentric'.
         background_color: RGBA color for the background.
         show_grid: Whether to show a grid in the visualization.
 
@@ -1926,8 +1985,12 @@ def create_scene_visualization(
             _setup_top_down_camera()
         elif view == "isometric":
             _setup_isometric_camera()
+        elif view == "egocentric":
+            _setup_egocentric_camera()
         else:
-            raise ValueError(f"Unsupported view type: {view}. Must be 'top_down' or 'isometric'.")
+            raise ValueError(
+                f"Unsupported view type: {view}. Must be 'top_down', 'isometric', or 'egocentric'."
+            )
         _setup_lighting(energy=0.5)
 
         # Create grid if requested
@@ -1948,6 +2011,412 @@ def visualize(scene=None, **kwargs):
 
     with SceneSwitcher(scene):
         return create_scene_visualization(**kwargs)
+
+
+class _ObjectAugmentor:
+    """Applies temporary object augmentations for visualization renders."""
+
+    def __init__(self, target_ids: list[str], augmentations: set[str]):
+        self.target_ids = target_ids
+        self.augmentations = augmentations
+        self._target_pairs = self._resolve_targets()
+        self._original_pass_indices: dict[str, int] = {}
+        self._view_layer_state: bool | None = None
+        self._text_objects: list[bpy.types.Object] = []
+
+    @property
+    def has_targets(self) -> bool:
+        return bool(self._target_pairs)
+
+    def _resolve_targets(self) -> list[tuple[str, bpy.types.Object]]:
+        resolved: list[tuple[str, bpy.types.Object]] = []
+        seen: set[str] = set()
+        for object_id in self.target_ids:
+            state = _scene_tracker.get_object_state(object_id)
+            if not state:
+                continue
+            blender_obj = bpy.data.objects.get(state.blender_name)
+            if not blender_obj or blender_obj.name in seen:
+                continue
+            resolved.append((object_id, blender_obj))
+            seen.add(blender_obj.name)
+        return resolved
+
+    def prepare_highlight(self, view_layer: bpy.types.ViewLayer) -> int | None:
+        if "highlight" not in self.augmentations:
+            return None
+
+        mesh_objects: list[bpy.types.Object] = []
+        for _, obj in self._target_pairs:
+            mesh_objects.extend(_collect_mesh_descendants(obj))
+
+        if not mesh_objects:
+            return None
+
+        self._view_layer_state = view_layer.use_pass_object_index
+        view_layer.use_pass_object_index = True
+
+        for mesh in mesh_objects:
+            self._original_pass_indices[mesh.name] = mesh.pass_index
+            mesh.pass_index = OBJECT_HIGHLIGHT_PASS_INDEX
+
+        return OBJECT_HIGHLIGHT_PASS_INDEX
+
+    def create_labels(self, camera: bpy.types.Object | None):
+        if "show_id" not in self.augmentations or camera is None:
+            return
+
+        for object_id, blender_obj in self._target_pairs:
+            label_obj = _create_object_label(object_id, blender_obj, camera)
+            if label_obj:
+                self._text_objects.append(label_obj)
+
+    def update_camera(self, camera: bpy.types.Object | None):
+        if camera is None:
+            return
+
+        for label in self._text_objects:
+            for constraint in label.constraints:
+                if constraint.type == "TRACK_TO":
+                    constraint.target = camera
+
+    def get_bounds(self) -> tuple[Vector | None, float]:
+        mesh_objects: list[bpy.types.Object] = []
+        for _, obj in self._target_pairs:
+            mesh_objects.extend(_collect_mesh_descendants(obj))
+
+        if mesh_objects:
+            bounds = _calculate_bounds_for_objects(mesh_objects)
+            if bounds:
+                min_x, max_x, min_y, max_y, min_z, max_z = bounds
+                center = Vector(
+                    (
+                        (min_x + max_x) / 2,
+                        (min_y + max_y) / 2,
+                        (min_z + max_z) / 2,
+                    )
+                )
+                radius = max(max_x - min_x, max_y - min_y, max_z - min_z) / 2
+                return center, max(radius, 0.5)
+
+        if not self._target_pairs:
+            return None, 0.0
+
+        aggregate = Vector((0.0, 0.0, 0.0))
+        for _, obj in self._target_pairs:
+            aggregate += Vector(obj.matrix_world.translation)
+        center = aggregate / len(self._target_pairs)
+        return center, 1.0
+
+    def cleanup(self):
+        for name, original_index in self._original_pass_indices.items():
+            obj = bpy.data.objects.get(name)
+            if obj:
+                obj.pass_index = original_index
+
+        if self._view_layer_state is not None:
+            bpy.context.view_layer.use_pass_object_index = self._view_layer_state
+
+        for label in list(self._text_objects):
+            obj = bpy.data.objects.get(label.name)
+            if obj:
+                data = obj.data
+                bpy.data.objects.remove(obj, do_unlink=True)
+                if data and getattr(data, "users", 0) == 0:
+                    bpy.data.curves.remove(data)
+        self._text_objects.clear()
+
+
+def _collect_mesh_descendants(root: bpy.types.Object) -> list[bpy.types.Object]:
+    meshes: list[bpy.types.Object] = []
+
+    def _traverse(obj: bpy.types.Object):
+        if obj.type == "MESH":
+            meshes.append(obj)
+        for child in obj.children:
+            _traverse(child)
+
+    _traverse(root)
+    return meshes
+
+
+def _calculate_bounds_for_objects(
+    objects: list[bpy.types.Object],
+) -> tuple[float, float, float, float, float, float] | None:
+    if not objects:
+        return None
+
+    valid_objects = [obj for obj in objects if getattr(obj, "bound_box", None)]
+    if not valid_objects:
+        return None
+
+    first_obj = valid_objects[0]
+    bbox_corners = [first_obj.matrix_world @ Vector(corner) for corner in first_obj.bound_box]
+
+    min_x = min(v.x for v in bbox_corners)
+    max_x = max(v.x for v in bbox_corners)
+    min_y = min(v.y for v in bbox_corners)
+    max_y = max(v.y for v in bbox_corners)
+    min_z = min(v.z for v in bbox_corners)
+    max_z = max(v.z for v in bbox_corners)
+
+    for obj in valid_objects[1:]:
+        bbox_corners = [obj.matrix_world @ Vector(corner) for corner in obj.bound_box]
+        min_x = min(min_x, min(v.x for v in bbox_corners))
+        max_x = max(max_x, max(v.x for v in bbox_corners))
+        min_y = min(min_y, min(v.y for v in bbox_corners))
+        max_y = max(max_y, max(v.y for v in bbox_corners))
+        min_z = min(min_z, min(v.z for v in bbox_corners))
+        max_z = max(max_z, max(v.z for v in bbox_corners))
+
+    return (min_x, max_x, min_y, max_y, min_z, max_z)
+
+
+def _create_object_label(
+    object_id: str, blender_obj: bpy.types.Object, camera: bpy.types.Object
+) -> bpy.types.Object | None:
+    center, size = _object_center_and_size(blender_obj)
+    if center is None:
+        return None
+
+    text_curve = bpy.data.curves.new(name=f"ObjectLabelCurve_{object_id}", type="FONT")
+    text_curve.body = object_id
+    text_curve.align_x = "CENTER"
+    text_curve.align_y = "CENTER"
+    text_curve.size = max(size * 0.25, 0.35)
+
+    text_obj = bpy.data.objects.new(f"ObjectLabel_{object_id}", text_curve)
+    bpy.context.scene.collection.objects.link(text_obj)
+
+    offset_height = max(size * 0.6, 0.5)
+    text_obj.location = center + Vector((0.0, 0.0, offset_height))
+    text_obj.parent = blender_obj
+    text_obj.matrix_parent_inverse = blender_obj.matrix_world.inverted()
+    text_obj.show_in_front = True
+    text_obj.hide_select = True
+
+    material = _create_unlit_material(
+        f"{OBJECT_LABEL_MATERIAL_NAME}_{object_id}", (1.0, 1.0, 1.0, 1.0)
+    )
+    if text_obj.data.materials:
+        text_obj.data.materials[0] = material
+    else:
+        text_obj.data.materials.append(material)
+
+    constraint = text_obj.constraints.new(type="TRACK_TO")
+    constraint.target = camera
+    constraint.track_axis = "TRACK_Z"
+    constraint.up_axis = "UP_Y"
+
+    return text_obj
+
+
+def _object_center_and_size(
+    blender_obj: bpy.types.Object,
+) -> tuple[Vector | None, float]:
+    mesh_objects = _collect_mesh_descendants(blender_obj)
+    bounds = _calculate_bounds_for_objects(mesh_objects) if mesh_objects else None
+
+    if bounds:
+        min_x, max_x, min_y, max_y, min_z, max_z = bounds
+        center = Vector(
+            (
+                (min_x + max_x) / 2,
+                (min_y + max_y) / 2,
+                (min_z + max_z) / 2,
+            )
+        )
+        size = max(max_x - min_x, max_y - min_y, max_z - min_z)
+        return center, max(size, 1.0)
+
+    return Vector(blender_obj.matrix_world.translation), 1.0
+
+
+def _ensure_preview_camera(scene: bpy.types.Scene) -> bpy.types.Object:
+    camera = bpy.data.objects.get(OBJECT_PREVIEW_CAMERA_NAME)
+
+    if not camera or camera.type != "CAMERA":
+        if camera and camera.type != "CAMERA":
+            bpy.data.objects.remove(camera, do_unlink=True)
+        with suppress_blender_logs():
+            bpy.ops.object.camera_add(location=(0.0, 0.0, 0.0))
+        camera = bpy.context.object
+        camera.name = OBJECT_PREVIEW_CAMERA_NAME
+
+    if camera.name not in scene.collection.objects:
+        scene.collection.objects.link(camera)
+
+    camera.data.type = "PERSP"
+    camera.data.lens = 35
+    camera.data.clip_start = 0.05
+    camera.data.clip_end = 500.0
+
+    return camera
+
+
+def _position_preview_camera(
+    camera: bpy.types.Object, center: Vector, radius: float, angle_degrees: float
+):
+    distance = max(radius * 2.2, 2.0)
+    height = max(center.z + radius * 0.6, center.z + 0.5)
+    angle = math.radians(angle_degrees)
+
+    camera.location = Vector(
+        (
+            center.x + math.cos(angle) * distance,
+            center.y + math.sin(angle) * distance,
+            height,
+        )
+    )
+
+    direction = center - Vector(camera.location)
+    if direction.length == 0:
+        direction = Vector((0.0, 0.0, -1.0))
+
+    camera.rotation_euler = direction.to_track_quat("Z", "Y").to_euler()
+
+
+def _compose_image_grid(images: list[np.ndarray], output_path: Path, image_format: str):
+    if not images:
+        return
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    pil_images: list[Image.Image] = []
+    for array in images[:4]:
+        clipped = np.clip(array, 0.0, 1.0)
+        if clipped.shape[2] >= 4:
+            rgba = (clipped[:, :, :4] * 255).astype(np.uint8)
+            pil_images.append(Image.fromarray(rgba, mode="RGBA"))
+        else:
+            rgb = (clipped[:, :, :3] * 255).astype(np.uint8)
+            pil_images.append(Image.fromarray(rgb, mode="RGB"))
+
+    if not pil_images:
+        return
+
+    tile_width, tile_height = pil_images[0].size
+    grid_image = Image.new("RGBA", (tile_width * 2, tile_height * 2), (0, 0, 0, 0))
+
+    for index, image in enumerate(pil_images):
+        x_offset = (index % 2) * tile_width
+        y_offset = (index // 2) * tile_height
+        grid_image.paste(image, (x_offset, y_offset))
+
+    if image_format.lower() in {"jpg", "jpeg"}:
+        grid_image = grid_image.convert("RGB")
+
+    grid_image.save(output_path)
+
+
+def _render_preview_rotation(
+    scene: bpy.types.Scene,
+    augmentor: _ObjectAugmentor,
+    output_path: Path,
+    image_format: str,
+) -> Path | None:
+    center, radius = augmentor.get_bounds()
+    if center is None or radius <= 0:
+        return None
+
+    original_camera = scene.camera
+    preview_camera = _ensure_preview_camera(scene)
+
+    images: list[np.ndarray] = []
+
+    try:
+        scene.camera = preview_camera
+        augmentor.update_camera(preview_camera)
+
+        for angle in (0, 90, 180, 270):
+            _position_preview_camera(preview_camera, center, radius, angle)
+            images.append(np.copy(render_to_numpy()))
+
+    finally:
+        scene.camera = original_camera
+        augmentor.update_camera(original_camera)
+
+    if not images:
+        return None
+
+    _compose_image_grid(images, output_path, image_format)
+    return output_path
+
+
+def create_object_visualization(
+    resolution=1024,
+    format="jpg",
+    filename: str = None,
+    output_dir: str = None,
+    view: str = "top_down",
+    background_color: tuple[float, float, float, float] = BACKGROUND_COLOR,
+    show_grid: bool = False,
+    augmentations: list[str] | None = None,
+    target_objects: list[str] | None = None,
+    scene: str | None = None,
+) -> Path:
+    """Render the scene with object-focused augmentations."""
+
+    augmentations = set(augmentations or [])
+    target_objects = target_objects or []
+
+    if not filename:
+        filename = "object_render"
+
+    if output_dir is None:
+        output_dir = tempfile.gettempdir()
+
+    output_path = get_filename(
+        output_dir=output_dir,
+        base_name=f"{filename}_{view}",
+        extension=format.lower(),
+        strategy="increment",
+    )
+
+    with SceneSwitcher(scene):
+        with suppress_blender_logs():
+            _configure_render_settings()
+            _configure_output_image(format, resolution)
+
+            if view == "top_down":
+                _setup_top_down_camera()
+            elif view == "isometric":
+                _setup_isometric_camera()
+            elif view == "egocentric":
+                _setup_egocentric_camera()
+            else:
+                raise ValueError(
+                    f"Unsupported view type: {view}. Must be 'top_down', 'isometric', or 'egocentric'."
+                )
+
+            _setup_lighting(energy=0.5)
+
+            if show_grid:
+                _create_grid()
+
+        scene_obj = bpy.context.scene
+        augmentor = _ObjectAugmentor(target_objects, augmentations)
+        highlight_index = augmentor.prepare_highlight(bpy.context.view_layer)
+
+        with suppress_blender_logs():
+            setup_lighting_foundation(scene_obj, background_color=background_color)
+            setup_post_processing(scene_obj, highlight_pass_index=highlight_index)
+
+        augmentor.create_labels(scene_obj.camera)
+
+        render_result: Path | None = None
+
+        try:
+            if "preview_rotation" in augmentations and augmentor.has_targets:
+                preview_path = _render_preview_rotation(scene_obj, augmentor, output_path, format)
+                if preview_path:
+                    render_result = Path(preview_path)
+            if render_result is None:
+                render_result = render_to_file(output_path)
+        finally:
+            augmentor.cleanup()
+
+    return render_result
 
 
 def load_scene_from_yaml(filepath: str) -> dict[str, Any]:
@@ -2064,26 +2533,94 @@ def setup_lighting_foundation(
 #     fill_light.visible_shadow = False
 
 
-def setup_post_processing(scene: bpy.types.Scene):
-    """Configures color management and compositor nodes for the final look."""
+def setup_post_processing(
+    scene: bpy.types.Scene,
+    highlight_pass_index: int | None = None,
+    highlight_color: tuple[float, float, float, float] = (1.0, 0.65, 0.1, 1.0),
+    enable_glare: bool = True,
+):
+    """Configures color management and compositor nodes for the final look.
+
+    Uses an ID Mask + Blur + Subtract + Multiply + Glare chain for object highlights,
+    avoiding unsupported Dilate/Erode modes across Blender versions.
+    """
     print("Setting up post-processing...")
     scene.view_settings.view_transform = "AgX"
     scene.view_settings.look = "AgX - Medium High Contrast"
 
+    # Enable object index pass if highlighting
+    view_layer = bpy.context.view_layer
+    view_layer.use_pass_object_index = highlight_pass_index is not None
+
+    # Enable compositor and reset nodes
     scene.use_nodes = True
-    nt = scene.node_tree
-    nt.nodes.clear()
+    tree = scene.node_tree
+    nodes = tree.nodes
+    links = tree.links
+    nodes.clear()
 
-    render_layers = nt.nodes.new(type="CompositorNodeRLayers")
-    composite_output = nt.nodes.new(type="CompositorNodeComposite")
-    glare_node = nt.nodes.new(type="CompositorNodeGlare")
+    # Base nodes
+    rlayers = nodes.new("CompositorNodeRLayers")
+    comp = nodes.new("CompositorNodeComposite")
 
-    glare_node.glare_type = "FOG_GLOW"
-    glare_node.threshold = 1.5
-    glare_node.size = 4
+    # Optional base glare on the full image
+    base_socket = rlayers.outputs["Image"]
+    if enable_glare:
+        base_glare = nodes.new("CompositorNodeGlare")
+        base_glare.glare_type = "FOG_GLOW"
+        base_glare.threshold = 1.5
+        base_glare.size = 4
+        links.new(rlayers.outputs["Image"], base_glare.inputs["Image"])
+        base_socket = base_glare.outputs["Image"]
 
-    nt.links.new(render_layers.outputs["Image"], glare_node.inputs["Image"])
-    nt.links.new(glare_node.outputs["Image"], composite_output.inputs["Image"])
+    final_socket = base_socket
+
+    # Highlight chain if requested
+    if highlight_pass_index is not None:
+        id_mask = nodes.new("CompositorNodeIDMask")
+        id_mask.index = int(highlight_pass_index)
+
+        blur = nodes.new("CompositorNodeBlur")
+        blur.filter_type = "GAUSS"
+        blur.size_x = 25
+        blur.size_y = 25
+        blur.use_relative = False
+
+        sub = nodes.new("CompositorNodeMixRGB")
+        sub.blend_type = "SUBTRACT"
+        sub.inputs[0].default_value = 1.0
+
+        color_mix = nodes.new("CompositorNodeMixRGB")
+        color_mix.blend_type = "MULTIPLY"
+        color_mix.inputs[0].default_value = 1.0
+        # Tint with provided highlight color
+        color_mix.inputs[2].default_value = highlight_color
+
+        glow = nodes.new("CompositorNodeGlare")
+        glow.glare_type = "FOG_GLOW"
+        glow.quality = "HIGH"
+        glow.size = 9
+        glow.mix = 0.0
+
+        add_mix = nodes.new("CompositorNodeMixRGB")
+        add_mix.blend_type = "ADD"
+        add_mix.inputs[0].default_value = 1.0
+
+        # Wire up highlight chain
+        links.new(rlayers.outputs["IndexOB"], id_mask.inputs["ID value"])
+        links.new(id_mask.outputs["Alpha"], blur.inputs["Image"])
+        links.new(blur.outputs["Image"], sub.inputs[1])
+        links.new(id_mask.outputs["Alpha"], sub.inputs[2])
+        links.new(sub.outputs["Image"], color_mix.inputs[1])
+        links.new(color_mix.outputs["Image"], glow.inputs["Image"])
+
+        # Combine glow with base image
+        links.new(base_socket, add_mix.inputs[1])
+        links.new(glow.outputs["Image"], add_mix.inputs[2])
+        final_socket = add_mix.outputs["Image"]
+
+    # To Composite
+    links.new(final_socket, comp.inputs["Image"])
 
 
 # NOTE: temporarily, if interior door is not needed, let's delete this function later
