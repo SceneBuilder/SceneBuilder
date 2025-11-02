@@ -1977,13 +1977,17 @@ def render_to_numpy() -> np.ndarray:
     """
     Alternative: Render directly to NumPy array in memory (no file).
 
+    NOTE: This function does not seem to work with `bpy` in "standalone" mode (directly invoked from Python).
+          To save render, it seems necessary to save the render into the filesystem, and retrieve as file.
+
     Returns:
         NumPy array of rendered image data.
     """
     # Render to Blender's internal buffer
     with suppress_blender_logs():
-        bpy.ops.render.render()
+        bpy.ops.render.render(write_still=False)
 
+    # ORIG (doesn't work)
     # Get rendered image from Blender
     render_result = bpy.context.scene.render
     width = render_result.resolution_x
@@ -1994,6 +1998,24 @@ def render_to_numpy() -> np.ndarray:
 
     # Convert to NumPy array (RGBA format)
     image_array = np.array(pixels).reshape((height, width, 4))
+
+    # # ALT (doesn't work)
+    # # Access pixels from the Compositor Viewer node image
+    # # NOTE: This requires setting up a 'Viewer' terminal output node.
+    # viewer_img = bpy.data.images.get("Viewer Node")
+    # if viewer_img is None:
+    #     raise RuntimeError("Viewer Node image not found.")
+
+    # px = viewer_img.pixels[:]
+    # if not px:
+    #     raise RuntimeError("Viewer Node pixels are empty.")
+
+    # width = int(viewer_img.size[0])
+    # height = int(viewer_img.size[1])
+    # if width <= 0 or height <= 0:
+    #     raise RuntimeError("Viewer Node reported invalid size (0x0). Check compositor setup and render settings.")
+
+    # image_array = np.array(px).reshape((height, width, 4))
 
     return image_array
 
@@ -2341,6 +2363,7 @@ def _compose_image_grid(images: list[np.ndarray], output_path: Path, image_forma
     if not images:
         return
 
+    output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     pil_images: list[Image.Image] = []
@@ -2374,8 +2397,14 @@ def _render_preview_rotation(
     scene: bpy.types.Scene,
     augmentor: _ObjectAugmentor,
     output_path: Path,
-    image_format: str,
+    angles: list[float] = [0, 90, 180, 270],
+    image_format: str = "jpg",
 ) -> Path | None:
+    """Render four rotational previews to files using the final renderer.
+
+    Saves individual frames into './tmp' as '<stem>_rot_XXX.<ext>' and returns
+    the path of the last rendered frame.
+    """
     center, radius = augmentor.get_bounds()
     if center is None or radius <= 0:
         return None
@@ -2383,29 +2412,28 @@ def _render_preview_rotation(
     original_camera = scene.camera
     preview_camera = _ensure_preview_camera(scene)
 
-    images: list[np.ndarray] = []
+    saved_paths: list[Path] = []
 
-    try:
-        scene.camera = preview_camera
-        augmentor.update_camera(preview_camera)
+    scene.camera = preview_camera
+    augmentor.update_camera(preview_camera)
 
-        # Track the first target object if present for stable orientation
-        if augmentor.has_targets:
-            first_target = augmentor._target_pairs[0][1]
-            _apply_camera_track(preview_camera, first_target)
+    # Track the target object if exists
+    if augmentor.has_targets:
+        first_target = augmentor._target_pairs[0][1]
+        _apply_camera_track(preview_camera, first_target)
 
-        for angle in (0, 90, 180, 270):
-            _position_preview_camera(preview_camera, center, radius, angle)
-            images.append(np.copy(render_to_numpy()))
+    for angle in angles:
+        _position_preview_camera(preview_camera, center, radius, angle)
+        angle_path = f"{output_path}_rot_{angle:03d}.{image_format.lower()}"
+        saved_paths.append(render_to_file(angle_path))
 
-    finally:
-        scene.camera = original_camera
-        augmentor.update_camera(original_camera)
+    # Restore camera to original
+    scene.camera = original_camera
+    augmentor.update_camera(original_camera)
 
-    if not images:
-        return None
+    _compose_image_grid([np.array(Image.open(path)) for path in saved_paths], output_path, image_format)
+    logger.debug(f"Composed rotation preview render -> {output_path} (frames: {len(saved_paths)})")
 
-    _compose_image_grid(images, output_path, image_format)
     return output_path
 
 
@@ -2478,7 +2506,7 @@ def create_object_visualization(
 
         try:
             if "preview_rotation" in augmentations and augmentor.has_targets:
-                preview_path = _render_preview_rotation(scene_obj, augmentor, output_path, format)
+                preview_path = _render_preview_rotation(scene_obj, augmentor, output_path, image_format=format)
                 if preview_path:
                     render_result = Path(preview_path)
             if render_result is None:
@@ -2708,6 +2736,15 @@ def setup_post_processing(
 
     # To Composite
     links.new(final_socket, comp.inputs["Image"])
+
+    # Also feed a Viewer node so pixel data can be read reliably
+    try:
+        viewer = nodes.new("CompositorNodeViewer")
+        # Use same final image (post effects/highlights) for Viewer output
+        links.new(final_socket, viewer.inputs["Image"])
+    except Exception:
+        # If nodes cannot be created (unlikely), continue without viewer
+        pass
 
 
 # NOTE: temporarily, if interior door is not needed, let's delete this function later
