@@ -501,18 +501,43 @@ def _create_object(
         if cached_empty:
             logger.debug(f"Reusing cached model for source_id: {source_id}")
 
-            # Create new Empty parent with linked duplicate children
+            # Duplicate the entire cached hierarchy via selection, linking mesh data
             with suppress_blender_logs():
-                bpy.ops.object.empty_add(type="PLAIN_AXES", location=(0, 0, 0))
-            blender_obj = bpy.context.active_object
-            blender_obj.name = object_name
+                # Deselect everything
+                bpy.ops.object.select_all(action="DESELECT")
 
-            # Create linked duplicates of all children
-            for child in cached_empty.children:
-                new_child = child.copy()
-                new_child.data = child.data  # Share mesh data (linked duplicate)
-                bpy.context.collection.objects.link(new_child)
-                new_child.parent = blender_obj
+                # Select the cached root and all descendants
+                stack = [cached_empty]
+                while stack:
+                    cur = stack.pop()
+                    try:
+                        cur.select_set(True)
+                    except Exception:
+                        pass
+                    stack.extend(getattr(cur, "children", []) or [])
+
+                # Ensure the root is active for duplication
+                bpy.context.view_layer.objects.active = cached_empty
+
+                # Snapshot objects before duplication to identify new ones
+                pre_objs = set(bpy.data.objects)
+
+                # Perform a linked duplicate so meshes share data
+                bpy.ops.object.duplicate(linked=True)
+
+            # Identify duplicated objects and pick the duplicated root
+            post_objs = set(bpy.data.objects)
+            new_objs = list(post_objs - pre_objs)
+            if not new_objs:
+                raise RuntimeError("Linked duplication produced no new objects.")
+
+            dup_roots = [o for o in new_objs if (o.parent is None) or (o.parent not in new_objs)]
+            if not dup_roots:
+                # Fallback: use any new object; hierarchy may be flat
+                dup_roots = [new_objs[0]]
+
+            blender_obj = dup_roots[0]
+            blender_obj.name = object_name
 
             # Skip to transformation section
             # (Set position, rotation, and scale)
