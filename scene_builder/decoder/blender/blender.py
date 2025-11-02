@@ -1927,6 +1927,7 @@ def _setup_egocentric_camera(
 
     bpy.context.scene.camera = camera
 
+
 def _setup_lighting(energy: float = 0.2):
     """Sets up basic lighting for the scene."""
     if not any(obj.type == "LIGHT" for obj in bpy.context.scene.objects):
@@ -2301,6 +2302,8 @@ def _ensure_preview_camera(scene: bpy.types.Scene) -> bpy.types.Object:
             bpy.ops.object.camera_add(location=(0.0, 0.0, 0.0))
         camera = bpy.context.object
         camera.name = OBJECT_PREVIEW_CAMERA_NAME
+        # Spawn with initial rotation: +X 90 degrees (XYZ Euler)
+        camera.rotation_euler = (math.radians(90.0), 0.0, 0.0)
 
     if camera.name not in scene.collection.objects:
         scene.collection.objects.link(camera)
@@ -2328,11 +2331,10 @@ def _position_preview_camera(
         )
     )
 
-    direction = center - Vector(camera.location)
-    if direction.length == 0:
-        direction = Vector((0.0, 0.0, -1.0))
-
-    camera.rotation_euler = direction.to_track_quat("Z", "Y").to_euler()
+    # NOTE: direction handling is offloaded to `_apply_camera_track()`.
+    # If no tracking constraints exist, raise a warning
+    if not any(c.type == "LOCKED_TRACK" for c in getattr(camera, "constraints", [])):
+        logger.warning("Direction constraint not found for preview camera")
 
 
 def _compose_image_grid(images: list[np.ndarray], output_path: Path, image_format: str):
@@ -2386,6 +2388,11 @@ def _render_preview_rotation(
     try:
         scene.camera = preview_camera
         augmentor.update_camera(preview_camera)
+
+        # Track the first target object if present for stable orientation
+        if augmentor.has_targets:
+            first_target = augmentor._target_pairs[0][1]
+            _apply_camera_track(preview_camera, first_target)
 
         for angle in (0, 90, 180, 270):
             _position_preview_camera(preview_camera, center, radius, angle)

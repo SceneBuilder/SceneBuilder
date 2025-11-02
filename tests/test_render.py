@@ -300,11 +300,16 @@ def test_object_preview_rotation_grid():
     output_path = blender.create_object_visualization(
         view="isometric",
         resolution=512,
-        augmentations=["preview_rotation", "highlight", "show_id"],
+        augmentations=["preview_rotation"],
+        # augmentations=["preview_rotation", "highlight", "show_id"],
         target_objects=["preview_table"],
         output_dir=OUTPUT_DIR,
+        scene="test_preview_rotation_room",
     )
     assert output_path.exists()
+
+    blender.save_scene(f"{OUTPUT_DIR}/object_rotation_grid.blend")
+    print(f"✅ Saved Blender file to: {OUTPUT_DIR}/object_rotation_grid.blend")
 
 
 def test_room_loading(
