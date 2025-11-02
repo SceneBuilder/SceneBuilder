@@ -506,18 +506,12 @@ def _create_object(
                 # Deselect everything
                 bpy.ops.object.select_all(action="DESELECT")
 
-                # Select the cached root and all descendants
-                stack = [cached_empty]
-                while stack:
-                    cur = stack.pop()
-                    try:
-                        cur.select_set(True)
-                    except Exception:
-                        pass
-                    stack.extend(getattr(cur, "children", []) or [])
-
-                # Ensure the root is active for duplication
+                # Ensure the root is selected and active
+                cached_empty.select_set(True)
                 bpy.context.view_layer.objects.active = cached_empty
+
+                # Select all descendants (recursive) using Blender operator
+                bpy.ops.object.select_grouped(type="CHILDREN_RECURSIVE", extend=True)
 
                 # Snapshot objects before duplication to identify new ones
                 pre_objs = set(bpy.data.objects)
