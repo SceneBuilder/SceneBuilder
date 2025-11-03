@@ -96,27 +96,37 @@ MAX_AUTO_RESOLUTION_ATTEMPTS = 3
 
 
 def _compute_issue_id(issue) -> str:
+    """Create a stable hash identifier for a lint issue."""
+
     base = f"{issue.code}|{issue.object_id or 'room'}|{issue.message}"
     return hashlib.md5(base.encode("utf-8")).hexdigest()
 
 
 def _issue_tracker(state: RoomDesignState) -> dict[str, object]:
+    """Return the mutable tracker stored in the room design state's extra info."""
+
     return state.extra_info.setdefault(
         ISSUE_TRACKER_KEY, {"tickets": {}, "actions": []}
     )
 
 
 def _as_ticket(value: object) -> LintIssueTicket:
+    """Coerce raw tracker data into a `LintIssueTicket` instance."""
+
     return value if isinstance(value, LintIssueTicket) else LintIssueTicket(**value)
 
 
 def _as_action(value: object) -> LintActionTaken:
+    """Coerce raw tracker data into a `LintActionTaken` instance."""
+
     return value if isinstance(value, LintActionTaken) else LintActionTaken(**value)
 
 
 def _sync_issue_tracker(
     state: RoomDesignState, lint_report: LintReport
 ) -> tuple[dict[str, object], dict[str, LintIssueTicket]]:
+    """Update the tracker with the latest lint report and return normalized stores."""
+
     tracker = _issue_tracker(state)
     tickets = {
         issue_id: _as_ticket(raw)
@@ -158,6 +168,8 @@ def _append_action(
     summary: str,
     rationale: str,
 ) -> None:
+    """Log an action taken for a ticket and persist it to the tracker."""
+
     action = LintActionTaken(
         issue_id=ticket.issue_id,
         object_id=ticket.object_id,
@@ -169,6 +181,8 @@ def _append_action(
 
 
 def _consume_issue_feedback(state: RoomDesignState) -> str:
+    """Compile any new actions or open issues into a message for the next agent."""
+
     tracker = state.extra_info.get(ISSUE_TRACKER_KEY)
     if not tracker:
         return ""
@@ -556,6 +570,8 @@ class RoomDesignNode(BaseNode[RoomDesignState]):
         tickets_store: dict[str, LintIssueTicket],
         issue_lookup: dict[str, LintIssue],
     ) -> bool:
+        """Attempt resolution for each open ticket and report if the room changed."""
+
         modified = False
         for issue_id, ticket in tickets_store.items():
             if ticket.status != "open":
@@ -577,6 +593,8 @@ class RoomDesignNode(BaseNode[RoomDesignState]):
         ticket: LintIssueTicket,
         issue: LintIssue,
     ) -> bool:
+        """Invoke the resolution agent for a single ticket and apply any edits."""
+
         ticket.retries += 1
         object_state_json = None
         if ticket.object_id:
@@ -647,6 +665,8 @@ class RoomDesignNode(BaseNode[RoomDesignState]):
         critique_text: str,
         lint_summary: str,
     ) -> str:
+        """Assemble critique, lint, and ticket updates into the next feedback block."""
+
         sections = []
         if critique_text:
             sections.append(critique_text)
