@@ -10,13 +10,13 @@ from loguru import logger
 
 from scene_builder.decoder.blender import blender
 from scene_builder.importer.msd.loader import MSDLoader
-from scene_builder.utils.blender import install_door_it_addon
+from scene_builder.utils.blender import install_door_it_addon, install_window_it_addon
 
 logger.remove()
 logger.add(sys.stderr, level="WARNING")
 
 
-def test_msd_to_blender(door_cutout=True, window_cutout=True, enable_doors=False, visualize_entities=False, keep_cutters_visible=True):
+def test_msd_to_blender(door_cutout=True, window_cutout=True, enable_doors=True, enable_windows=True, render_doors=False, render_windows=False, visualize_entities=False, keep_cutters_visible=True):
     # Install Door It! Interior addon if requested and available
     if enable_doors:
         addon_installed = install_door_it_addon()
@@ -24,6 +24,14 @@ def test_msd_to_blender(door_cutout=True, window_cutout=True, enable_doors=False
             print("✓✓✓ Door It! Interior addon enabled - doors will be created")
         else:
             print("✗✗✗ Door It! Interior addon not available - only cutouts will be created")
+    
+    # Install Window It! addon if requested and available
+    if enable_windows:
+        window_addon_installed = install_window_it_addon()
+        if window_addon_installed:
+            print("✓✓✓ Window It! addon enabled - windows will be created")
+        else:
+            print("✗✗✗ Window It! addon not available - only cutouts will be created")
     
     loader = MSDLoader()
 
@@ -117,6 +125,8 @@ def test_msd_to_blender(door_cutout=True, window_cutout=True, enable_doors=False
             all_rooms, 
             door_cutouts=door_cutout, 
             window_cutouts=window_cutout,
+            render_doors=render_doors,
+            render_windows=render_windows,
             keep_cutters_visible=keep_cutters_visible
         )
         if walls_created > 0:
@@ -149,8 +159,10 @@ def test_msd_to_blender(door_cutout=True, window_cutout=True, enable_doors=False
 
 
 if __name__ == "__main__":
-    test_msd_to_blender()
+    # Test with window rendering enabled
+    test_msd_to_blender(render_windows=True)
     # test_msd_to_blender(door_cutout=False)
     # test_msd_to_blender(window_cutout=False)
     # test_msd_to_blender(door_cutout=False, window_cutout=False)
+    # test_msd_to_blender(render_doors=True, render_windows=True)  # Enable both doors and windows
     # test_msd_to_blender(visualize_entities=True)  # Enable entity visualization

@@ -374,29 +374,29 @@ def create_interior_door(
 
     empty_name = f"DoorIt_Controller_{name}_Arrow"
 
-    # Step 1: Calculate bottom-center of the door using bounding box
+    #  Calculate bottom-center of the door using bounding box
     bbox = [door_object.matrix_world @ Vector(corner) for corner in door_object.bound_box]
     min_z = min(v.z for v in bbox)
     avg_x = sum(v.x for v in bbox) / len(bbox)
     avg_y = sum(v.y for v in bbox) / len(bbox)
     empty_initial_location = (avg_x, avg_y, min_z)
 
-    # Step 2: Create empty at door's bottom-center
+    #  Create empty at door's bottom-center
     bpy.ops.object.empty_add(type='ARROWS', location=empty_initial_location)
     empty_obj = bpy.context.active_object
     empty_obj.name = empty_name
     empty_obj.empty_display_size = 1.5
 
-    # Step 3: Parent the door to the empty
+    #  Parent the door to the empty
     door_object.select_set(True)
     empty_obj.select_set(True)
     bpy.context.view_layer.objects.active = empty_obj
     bpy.ops.object.parent_set(type='OBJECT', keep_transform=True)
 
-    # Step 4: Move empty to door_boundary centroid (door moves with it due to parenting)
+    #  Move empty to door_boundary centroid (door moves with it due to parenting)
     empty_obj.location = location_vec
 
-    # Step 5: Apply rotation to empty
+    #  Apply rotation to empty
     rotation_z = math.radians(rotation_angle)
     empty_obj.rotation_euler.z = rotation_z
     bpy.context.view_layer.update()

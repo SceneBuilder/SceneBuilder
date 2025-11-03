@@ -24,6 +24,7 @@ from shapely.ops import unary_union
 from scene_builder.config import BLENDER_LOG_FILE, TEST_ASSET_DIR
 from scene_builder.database.material import MaterialDatabase
 from scene_builder.decoder.blender.controllers.interior_door import create_interior_door
+from scene_builder.decoder.blender.controllers.window import create_window
 from scene_builder.definition.scene import Object, Room, Scene, Vector2
 from scene_builder.importer import objaverse_importer, test_asset_importer
 from scene_builder.importer.msd.loader import get_dominant_angle, get_longest_edge_angle, classify_door_type, scale_boundary_for_cutout
@@ -39,6 +40,7 @@ HDRI_FILE_PATH = Path(
 
 BACKGROUND_COLOR = (0.02, 0.02, 0.02, 1.0)
 DEFAULT_DOOR_HEIGHT = 2.5
+DEFAULT_WINDOW_HEIGHT = 1.2
 
 
 @dataclass
@@ -1146,6 +1148,91 @@ def create_door_from_boundary(
     return result
 
 
+def create_window_from_boundary(
+    window_boundary: list,
+    window_id: str,
+    z_position: float = 0.0,
+    window_height_bottom: float = 1.0,
+    window_height_top: float = 2.2,
+    **window_settings,
+) -> Optional[Dict[str, object]]:
+    """Create a Window object from a window boundary polygon.
+
+    Args:
+        window_boundary: List of (x, y) tuples defining window polygon
+        window_id: Unique identifier for the window
+        z_position: Z-height to place the window (default: 0.0 for floor level)
+        window_height_bottom: Bottom height of window (default: 1.0m)
+        window_height_top: Top height of window (default: 2.2m)
+        **window_settings: Additional settings to pass to create_window
+
+    Returns:
+        Dictionary with creation summary, or None if failed
+    """
+
+    # Create polygon and get basic properties
+    window_poly = Polygon(window_boundary)
+    centroid = window_poly.centroid
+    centroid_coords = (centroid.x, centroid.y)
+
+    rotation_angle = get_longest_edge_angle(window_poly)
+
+    # Rotate polygon to axis-aligned orientation
+    aligned_poly = affinity.rotate(
+        window_poly, rotation_angle, origin=centroid_coords, use_radians=False
+    )
+
+    # Get axis-aligned dimensions
+    minx, miny, maxx, maxy = aligned_poly.bounds
+    width = maxx - minx
+    height = maxy - miny
+
+    # Determine which is longer axis (width is the horizontal opening dimension)
+    is_width_dominant = width >= height
+
+    # For windows, we use the dimensions directly (no clearance needed like doors)
+    if is_width_dominant:
+        window_width = width
+        window_depth = height  # Depth is the shorter dimension (thickness into wall)
+    else:
+        window_width = height
+        window_depth = width  # Depth is the shorter dimension (thickness into wall)
+
+    # Calculate window vertical height from top and bottom heights
+    window_height_value = window_height_top - window_height_bottom
+
+    # Calculate location (centroid at specified z level, typically window_height_bottom)
+    location = (centroid.x, centroid.y, z_position)
+
+    logger.debug(
+        f"Window {window_id}: dimensions x={window_depth:.3f}m (depth), "
+        f"y={window_width:.3f}m (width), z={window_height_value:.3f}m (height), "
+        f"rotation={-rotation_angle:.1f}°"
+    )
+
+    result = create_window(
+        name=f"Window_{window_id}",
+        location=location,
+        rotation_angle=rotation_angle + 90,
+        width=window_width,
+        height=window_height_value,
+        depth=window_depth,
+        **window_settings,
+    )
+
+    # Log window creation
+    if result.get("created") or result.get("linked"):
+        window_obj = bpy.data.objects.get(result["object"])
+        controller_name = result.get("controller")
+
+        if window_obj and controller_name:
+            logger.debug(
+                f"Created window '{window_obj.name}' at {location} with rotation {-rotation_angle:.1f}° via empty controller '{controller_name}'"
+            )
+
+    return result
+
+
 def _calculate_bounds(
     vertices_2d: list[tuple[float, float]],
 ) -> dict[str, float | bool | int]:
@@ -1964,6 +2051,7 @@ def create_room_walls(
     door_cutouts: bool = True,
     window_cutouts: bool = True,
     render_doors: bool = False,
+    render_windows: bool = False,
     window_height_bottom: float = 1.0,
     window_height_top: float = 2.2,
     keep_cutters_visible: bool = False,
@@ -1976,7 +2064,8 @@ def create_room_walls(
         wall_thickness: Thickness of walls in meters (default: 0.15m)
         door_cutouts: Whether to create cutouts in walls for doors (default: True)
         window_cutouts: Whether to create cutouts in walls for windows (default: True)
-        render_doors: Whether to create actual door objects (default: True)
+        render_doors: Whether to create actual door objects (default: False)
+        render_windows: Whether to create actual window objects (default: False)
         window_height_bottom: Bottom height of window cutouts (default: 1.0m)
         window_height_top: Top height of window cutouts (default: 2.2m)
         keep_cutters_visible: If True, keep cutter objects visible for debugging (default: False)
@@ -2130,6 +2219,25 @@ def create_room_walls(
                                 z_top=window_height_top,
                                 keep_cutter_visible=keep_cutters_visible,
                             )
+
+                            # Create the actual window object at this boundary if rendering is enabled
+                            if render_windows:
+                                window_result = create_window_from_boundary(
+                                    window_boundary=cutout_boundary,
+                                    window_id=str(cutout_id),
+                                    z_position=window_height_bottom,
+                                    window_height_bottom=window_height_bottom,
+                                    window_height_top=window_height_top,
+                                    randomize_type=True,
+                                    randomize_material=True,
+                                    randomize_colour=False,
+                                    colour=(0.8, 0.9, 1.0, 1.0),  # Light blue window
+                                )
+
+                                if window_result:
+                                    logger.debug(f"Successfully created window object: {window_result.get('object')}")
+                            else:
+                                logger.debug(f"Skipping window object creation for window {cutout_id} (render_windows=False)")
                     except Exception:
                         # Skip this cutout if polygon creation fails
                         continue
@@ -2144,6 +2252,23 @@ def create_room_walls(
                         z_top=window_height_top,
                         keep_cutter_visible=keep_cutters_visible,
                     )
+
+                    # Create the actual window object at this boundary if rendering is enabled
+                    if render_windows:
+                        window_result = create_window_from_boundary(
+                            window_boundary=cutout_boundary,
+                            window_id=str(cutout_id),
+                            z_position=window_height_bottom,
+                            window_height_bottom=window_height_bottom,
+                            window_height_top=window_height_top,
+                            randomize_type=True,
+                            randomize_material=True,
+                            randomize_colour=False,
+                            colour=(0.8, 0.9, 1.0, 1.0),  # Light blue window
+                        )
+
+                        if window_result:
+                            logger.debug(f"Successfully created window object: {window_result.get('object')}")
 
         # Apply interior door cutouts if requested
         if door_cutouts and interior_door_polygons:
