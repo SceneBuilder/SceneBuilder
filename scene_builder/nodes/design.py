@@ -1,4 +1,5 @@
 from __future__ import annotations
+import hashlib
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -22,13 +23,20 @@ from scene_builder.nodes.placement import (
 from scene_builder.utils.pai import transform_paths_to_binary
 from scene_builder.utils.pydantic import save_yaml
 from scene_builder.workflow.agents import (
+    issue_resolution_agent,
     room_design_agent,
     sequencing_agent,
     shopping_agent,
 )
 # from scene_builder.workflow.graphs import placement_graph # hopefully no circular import... -> BRUH.
 # from scene_builder.workflow.states import PlacementState, RoomDesignState
-from scene_builder.workflow.states import CritiqueAction, PlacementState, RoomDesignState, MainState
+from scene_builder.workflow.states import (
+    CritiqueAction,
+    MainState,
+    PlacementState,
+    RoomDesignState,
+)
+from scene_builder.validation.models import LintActionTaken, LintIssueTicket
 from scene_builder.workflow.toolsets import material_toolset, shopping_toolset
 from scene_builder.validation.linter import (
     format_lint_feedback,
@@ -36,7 +44,7 @@ from scene_builder.validation.linter import (
     save_lint_visualization,
 )
 from scene_builder.validation.context import LintingOptions
-from scene_builder.validation.models import LintReport
+from scene_builder.validation.models import LintIssue, LintReport
 
 # Params
 LINT_OPTIONS = LintingOptions(enabled_rules={"floor_penetration", "wall_overlap"})
@@ -73,6 +81,148 @@ class MaterialAction(BaseModel):
 class MaterialSelection(BaseModel):
     material_id: str
     rationale: str
+
+
+class ObjectAdjustment(BaseModel):
+    id: str | None = None
+    position: Vector3 | None = None
+    rotation: Vector3 | None = None
+    scale: Vector3 | None = None
+    remove: bool = False
+
+
+class IssueResolutionOutput(BaseModel):
+    resolved: bool = False
+    action_taken: str
+    rationale: str
+    object_id: str | None = None
+    adjustment: ObjectAdjustment | None = None
+
+
+ISSUE_TRACKER_KEY = "lint_issue_tracker"
+MAX_AUTO_RESOLUTION_ATTEMPTS = 3
+
+
+def _compute_issue_id(issue) -> str:
+    """Create a stable hash identifier for a lint issue."""
+
+    base = f"{issue.code}|{issue.object_id or 'room'}|{issue.message}"
+    return hashlib.md5(base.encode("utf-8")).hexdigest()
+
+
+def _issue_tracker(state: RoomDesignState) -> dict[str, object]:
+    """Return the mutable tracker stored in the room design state's extra info."""
+
+    return state.extra_info.setdefault(
+        ISSUE_TRACKER_KEY, {"tickets": {}, "actions": []}
+    )
+
+
+def _as_ticket(value: object) -> LintIssueTicket:
+    """Coerce raw tracker data into a `LintIssueTicket` instance."""
+
+    return value if isinstance(value, LintIssueTicket) else LintIssueTicket(**value)
+
+
+def _as_action(value: object) -> LintActionTaken:
+    """Coerce raw tracker data into a `LintActionTaken` instance."""
+
+    return value if isinstance(value, LintActionTaken) else LintActionTaken(**value)
+
+
+def _sync_issue_tracker(
+    state: RoomDesignState, lint_report: LintReport
+) -> tuple[dict[str, object], dict[str, LintIssueTicket]]:
+    """Update the tracker with the latest lint report and return normalized stores."""
+
+    tracker = _issue_tracker(state)
+    tickets = {
+        issue_id: _as_ticket(raw)
+        for issue_id, raw in tracker.get("tickets", {}).items()
+    }
+    seen: set[str] = set()
+    for issue in lint_report.issues:
+        issue_id = _compute_issue_id(issue)
+        seen.add(issue_id)
+        ticket = tickets.get(issue_id)
+        if ticket is None:
+            ticket = LintIssueTicket(
+                issue_id=issue_id,
+                object_id=issue.object_id,
+                code=issue.code,
+                message=issue.message,
+                hint=issue.hint,
+            )
+            tickets[issue_id] = ticket
+        else:
+            ticket.status = "open"
+            ticket.object_id = issue.object_id
+            ticket.code = issue.code
+            ticket.message = issue.message
+            ticket.hint = issue.hint
+    for issue_id, ticket in tickets.items():
+        if issue_id not in seen:
+            ticket.status = "resolved"
+    tracker["tickets"] = tickets
+    tracker["actions"] = [
+        _as_action(raw) for raw in tracker.get("actions", [])
+    ]
+    return tracker, tickets
+
+
+def _append_action(
+    tracker: dict[str, object],
+    ticket: LintIssueTicket,
+    summary: str,
+    rationale: str,
+) -> None:
+    """Log an action taken for a ticket and persist it to the tracker."""
+
+    action = LintActionTaken(
+        issue_id=ticket.issue_id,
+        object_id=ticket.object_id,
+        summary=summary,
+        rationale=rationale,
+    )
+    tracker.setdefault("actions", []).append(action)
+    ticket.actions.append(summary)
+
+
+def _consume_issue_feedback(state: RoomDesignState) -> str:
+    """Compile any new actions or open issues into a message for the next agent."""
+
+    tracker = state.extra_info.get(ISSUE_TRACKER_KEY)
+    if not tracker:
+        return ""
+    tracker["tickets"] = {
+        issue_id: _as_ticket(raw)
+        for issue_id, raw in tracker.get("tickets", {}).items()
+    }
+    tracker["actions"] = [
+        _as_action(raw) for raw in tracker.get("actions", [])
+    ]
+    new_actions = [action for action in tracker["actions"] if not action.delivered]
+    lines: list[str] = []
+    if new_actions:
+        lines.append("Actions taken since last turn:")
+        for action in new_actions:
+            lines.append(
+                f"- [{action.issue_id}] {action.summary} (rationale: {action.rationale})"
+            )
+            action.delivered = True
+    open_tickets = [
+        ticket
+        for ticket in tracker["tickets"].values()
+        if ticket.status == "open"
+    ]
+    if open_tickets:
+        lines.append("Outstanding lint issues:")
+        for ticket in open_tickets:
+            target = ticket.object_id or "room"
+            lines.append(
+                f"- ({ticket.code}) {target}: {ticket.message} (retries: {ticket.retries})"
+            )
+    return "\n".join(lines)
 
 
 class RoomDesignNode(BaseNode[RoomDesignState]):
@@ -257,6 +407,22 @@ class RoomDesignNode(BaseNode[RoomDesignState]):
             blender.parse_room_definition(room, with_walls="translucent")
             lint_report = lint_room(ctx.state.room, options=LINT_OPTIONS)
             ctx.state.last_lint_report = lint_report
+            tracker, tickets_store = _sync_issue_tracker(ctx.state, lint_report)
+            issue_lookup = {
+                _compute_issue_id(issue): issue for issue in lint_report.issues
+            }
+            while await self._resolve_open_tickets(
+                ctx,
+                tracker,
+                tickets_store,
+                issue_lookup,
+            ):
+                lint_report = lint_room(ctx.state.room)
+                ctx.state.last_lint_report = lint_report
+                tracker, tickets_store = _sync_issue_tracker(ctx.state, lint_report)
+                issue_lookup = {
+                    _compute_issue_id(issue): issue for issue in lint_report.issues
+                }
             lint_summary = format_lint_feedback(lint_report)
             lint_viz_path = f"{output_dir}/lint_viz_{placement_run_count}.png"
             save_lint_visualization(
@@ -291,9 +457,7 @@ class RoomDesignNode(BaseNode[RoomDesignState]):
                 print(f"{critique.result=}")
                 print(f"{critique.explanation=}")
             if critique.result == "rejected":
-                feedback = critique.explanation
-                if lint_report.issues:
-                    feedback = f"{feedback}\n\nAutomated lint analysis:\n{lint_summary}"
+                feedback = self._compose_feedback(ctx, critique.explanation, lint_summary)
             elif critique.result == "approved":
                 break
             if generation_config.terminate_early:
@@ -412,6 +576,120 @@ class RoomDesignNode(BaseNode[RoomDesignState]):
         # )
 
         # # PROBLEM(?): placement_graph runs for extended periods and places multiple objects.
+
+    async def _resolve_open_tickets(
+        self,
+        ctx: GraphRunContext[RoomDesignState],
+        tracker: dict[str, object],
+        tickets_store: dict[str, LintIssueTicket],
+        issue_lookup: dict[str, LintIssue],
+    ) -> bool:
+        """Attempt resolution for each open ticket and report if the room changed."""
+
+        modified = False
+        for issue_id, ticket in tickets_store.items():
+            if ticket.status != "open":
+                continue
+            if ticket.retries >= MAX_AUTO_RESOLUTION_ATTEMPTS:
+                continue
+            issue = issue_lookup.get(issue_id)
+            if issue is None:
+                continue
+            resolved = await self._resolve_ticket(ctx, tracker, ticket, issue)
+            if resolved:
+                modified = True
+        return modified
+
+    async def _resolve_ticket(
+        self,
+        ctx: GraphRunContext[RoomDesignState],
+        tracker: dict[str, object],
+        ticket: LintIssueTicket,
+        issue: LintIssue,
+    ) -> bool:
+        """Invoke the resolution agent for a single ticket and apply any edits."""
+
+        ticket.retries += 1
+        object_state_json = None
+        if ticket.object_id:
+            target = next(
+                obj for obj in ctx.state.room.objects if obj.id == ticket.object_id
+            )
+            object_state_json = target.model_dump_json(indent=2)
+        prompt_parts = [
+            "Resolve the following lint issue in the 3D room design.",
+            f"Room id: {ctx.state.room.id}",
+            f"Issue code: {issue.code}",
+            f"Issue message: {issue.message}",
+        ]
+        if issue.hint:
+            prompt_parts.append(f"Hint: {issue.hint}")
+        prompt_parts.append(f"Attempts so far: {ticket.retries - 1}")
+        if object_state_json:
+            prompt_parts.append("Current object state:")
+            prompt_parts.append(f"```json\n{object_state_json}\n```")
+        else:
+            prompt_parts.append("The issue applies to the overall room context.")
+        if ticket.actions:
+            prompt_parts.append("Recent actions:")
+            prompt_parts.extend(f"- {action}" for action in ticket.actions[-3:])
+        prompt_parts.extend(
+            [
+                "Respond with JSON that matches the IssueResolutionOutput schema:",
+                '{"resolved": bool, "action_taken": str, "rationale": str,',
+                ' "object_id": str | null, "adjustment": {',
+                '   "id": str | null, "position": Vector3 | null,',
+                '   "rotation": Vector3 | null, "scale": Vector3 | null,',
+                '   "remove": bool',
+                " }}",
+            ]
+        )
+        response = await issue_resolution_agent.run(
+            tuple(prompt_parts),
+            output_type=IssueResolutionOutput,
+        )
+        result = response.output
+        if result.object_id:
+            ticket.object_id = result.object_id
+        adjustment = result.adjustment
+        if adjustment is not None:
+            target_id = adjustment.id or ticket.object_id
+            if adjustment.remove:
+                ctx.state.room.objects = [
+                    obj for obj in ctx.state.room.objects if obj.id != target_id
+                ]
+            else:
+                obj = next(
+                    item for item in ctx.state.room.objects if item.id == target_id
+                )
+                if adjustment.position is not None:
+                    obj.position = adjustment.position
+                if adjustment.rotation is not None:
+                    obj.rotation = adjustment.rotation
+                if adjustment.scale is not None:
+                    obj.scale = adjustment.scale
+        if result.resolved:
+            ticket.status = "resolved"
+        _append_action(tracker, ticket, result.action_taken, result.rationale)
+        return bool(adjustment) or result.resolved
+
+    def _compose_feedback(
+        self,
+        ctx: GraphRunContext[RoomDesignState],
+        critique_text: str,
+        lint_summary: str,
+    ) -> str:
+        """Assemble critique, lint, and ticket updates into the next feedback block."""
+
+        sections = []
+        if critique_text:
+            sections.append(critique_text)
+        if lint_summary:
+            sections.append(f"Automated lint analysis:\n{lint_summary}")
+        issue_feedback = _consume_issue_feedback(ctx.state)
+        if issue_feedback:
+            sections.append(issue_feedback)
+        return "\n\n".join(section for section in sections if section)
 
         # placement_subgraph_response = await placement_graph.run(
         #     PlacementNode(), state=placement_state

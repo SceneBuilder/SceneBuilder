@@ -54,6 +54,14 @@ ROOM_DESIGN_AGENT_PROMPT = (
     # "Images: You may be given paths to image files. You are equipped with a `read_media_file` tool to view them.",
     # "If you are given paths to image files, please try to view relevant image before answering.**",
 )
+
+ISSUE_RESOLUTION_AGENT_PROMPT = (
+    "You resolve focused lint issues within a 3D room design.",
+    "You receive a single problem description and the current state of the affected object.",
+    "Propose the minimal change required to address the issue without disturbing unrelated objects.",
+    "If you adjust an object, include the new transform values.",
+    "If you cannot resolve the issue, explain why and outline the next step for a supervisor.",
+)
 # NOTE: Some of the relevant/possible tasks: 
 # - shopping
 # - placement
