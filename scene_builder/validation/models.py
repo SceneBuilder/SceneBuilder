@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any, Iterable
+from typing import Any, Iterable, Literal
 
 from pydantic import BaseModel, Field
 
@@ -25,6 +25,25 @@ class LintIssue(BaseModel):
     object_id: str | None = None
     hint: str | None = None
     data: dict[str, Any] = Field(default_factory=dict)
+
+
+class LintActionTaken(BaseModel):
+    issue_id: str
+    object_id: str | None = None
+    summary: str
+    rationale: str
+    delivered: bool = False
+
+
+class LintIssueTicket(BaseModel):
+    issue_id: str
+    object_id: str | None = None
+    code: str
+    message: str
+    hint: str | None = None
+    status: Literal["open", "resolved"] = "open"
+    retries: int = 0
+    actions: list[str] = Field(default_factory=list)
 
 
 class LintReport(BaseModel):

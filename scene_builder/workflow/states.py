@@ -92,20 +92,3 @@ class RoomUpdateState(BaseModel):
     updated_room: Room
 
 
-class LintActionTaken(BaseModel):
-    issue_id: str
-    object_id: str | None = None
-    summary: str
-    rationale: str
-    delivered: bool = False
-
-
-class LintIssueTicket(BaseModel):
-    issue_id: str
-    object_id: str | None = None
-    code: str
-    message: str
-    hint: str | None = None
-    status: Literal["open", "resolved"] = "open"
-    retries: int = 0
-    actions: list[str] = Field(default_factory=list)

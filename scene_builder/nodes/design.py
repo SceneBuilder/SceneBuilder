@@ -32,12 +32,11 @@ from scene_builder.workflow.agents import (
 # from scene_builder.workflow.states import PlacementState, RoomDesignState
 from scene_builder.workflow.states import (
     CritiqueAction,
-    LintActionTaken,
-    LintIssueTicket,
     MainState,
     PlacementState,
     RoomDesignState,
 )
+from scene_builder.validation.models import LintActionTaken, LintIssueTicket
 from scene_builder.workflow.toolsets import material_toolset, shopping_toolset
 from scene_builder.validation.linter import format_lint_feedback, lint_room
 from scene_builder.validation.models import LintIssue, LintReport
@@ -94,13 +93,6 @@ class IssueResolutionOutput(BaseModel):
 
 ISSUE_TRACKER_KEY = "lint_issue_tracker"
 MAX_AUTO_RESOLUTION_ATTEMPTS = 3
-MAX_ACTION_LOG_ENTRIES = 20
-
-
-def _ensure_extra_info(state: RoomDesignState) -> dict[str, object]:
-    if state.extra_info is None or not isinstance(state.extra_info, dict):
-        state.extra_info = {}
-    return state.extra_info
 
 
 def _compute_issue_id(issue) -> str:
@@ -108,56 +100,56 @@ def _compute_issue_id(issue) -> str:
     return hashlib.md5(base.encode("utf-8")).hexdigest()
 
 
-def _coerce_ticket_store(raw: dict[str, object]) -> dict[str, LintIssueTicket]:
-    tickets: dict[str, LintIssueTicket] = {}
-    for issue_id, ticket in raw.items():
-        if isinstance(ticket, LintIssueTicket):
-            tickets[issue_id] = ticket
-        else:
-            tickets[issue_id] = LintIssueTicket(**ticket)
-    return tickets
+def _issue_tracker(state: RoomDesignState) -> dict[str, object]:
+    return state.extra_info.setdefault(
+        ISSUE_TRACKER_KEY, {"tickets": {}, "actions": []}
+    )
 
 
-def _coerce_action_log(raw: list[object]) -> list[LintActionTaken]:
-    entries: list[LintActionTaken] = []
-    for entry in raw:
-        if isinstance(entry, LintActionTaken):
-            entries.append(entry)
-        else:
-            entries.append(LintActionTaken(**entry))
-    return entries
+def _as_ticket(value: object) -> LintIssueTicket:
+    return value if isinstance(value, LintIssueTicket) else LintIssueTicket(**value)
 
 
-def _sync_issue_tracker(state: RoomDesignState, lint_report: LintReport) -> tuple[dict[str, object], dict[str, LintIssueTicket]]:
-    extra = _ensure_extra_info(state)
-    tracker = extra.setdefault(ISSUE_TRACKER_KEY, {})
-    tickets_store = _coerce_ticket_store(tracker.get("tickets", {}))
+def _as_action(value: object) -> LintActionTaken:
+    return value if isinstance(value, LintActionTaken) else LintActionTaken(**value)
+
+
+def _sync_issue_tracker(
+    state: RoomDesignState, lint_report: LintReport
+) -> tuple[dict[str, object], dict[str, LintIssueTicket]]:
+    tracker = _issue_tracker(state)
+    tickets = {
+        issue_id: _as_ticket(raw)
+        for issue_id, raw in tracker.get("tickets", {}).items()
+    }
     seen: set[str] = set()
     for issue in lint_report.issues:
         issue_id = _compute_issue_id(issue)
         seen.add(issue_id)
-        ticket = tickets_store.get(issue_id)
+        ticket = tickets.get(issue_id)
         if ticket is None:
-            tickets_store[issue_id] = LintIssueTicket(
+            ticket = LintIssueTicket(
                 issue_id=issue_id,
                 object_id=issue.object_id,
                 code=issue.code,
                 message=issue.message,
                 hint=issue.hint,
             )
+            tickets[issue_id] = ticket
         else:
             ticket.status = "open"
-            ticket.message = issue.message
+            ticket.object_id = issue.object_id
             ticket.code = issue.code
-            if issue.object_id is not None:
-                ticket.object_id = issue.object_id
+            ticket.message = issue.message
             ticket.hint = issue.hint
-    for issue_id, ticket in tickets_store.items():
-        if issue_id not in seen and ticket.status != "resolved":
+    for issue_id, ticket in tickets.items():
+        if issue_id not in seen:
             ticket.status = "resolved"
-    tracker["tickets"] = tickets_store
-    tracker["action_log"] = _coerce_action_log(tracker.get("action_log", []))
-    return tracker, tickets_store
+    tracker["tickets"] = tickets
+    tracker["actions"] = [
+        _as_action(raw) for raw in tracker.get("actions", [])
+    ]
+    return tracker, tickets
 
 
 def _append_action(
@@ -166,38 +158,41 @@ def _append_action(
     summary: str,
     rationale: str,
 ) -> None:
-    action_entry = LintActionTaken(
+    action = LintActionTaken(
         issue_id=ticket.issue_id,
         object_id=ticket.object_id,
         summary=summary,
         rationale=rationale,
     )
+    tracker.setdefault("actions", []).append(action)
     ticket.actions.append(summary)
-    action_log = tracker.setdefault("action_log", [])
-    if not isinstance(action_log, list):
-        action_log = tracker["action_log"] = []
-    action_log.append(action_entry)
-    if len(action_log) > MAX_ACTION_LOG_ENTRIES:
-        del action_log[: len(action_log) - MAX_ACTION_LOG_ENTRIES]
 
 
 def _consume_issue_feedback(state: RoomDesignState) -> str:
-    extra = _ensure_extra_info(state)
-    tracker = extra.get(ISSUE_TRACKER_KEY)
+    tracker = state.extra_info.get(ISSUE_TRACKER_KEY)
     if not tracker:
         return ""
-    tickets_store = _coerce_ticket_store(tracker.get("tickets", {}))
-    action_log = _coerce_action_log(tracker.get("action_log", []))
-    new_actions = [entry for entry in action_log if not entry.delivered]
+    tracker["tickets"] = {
+        issue_id: _as_ticket(raw)
+        for issue_id, raw in tracker.get("tickets", {}).items()
+    }
+    tracker["actions"] = [
+        _as_action(raw) for raw in tracker.get("actions", [])
+    ]
+    new_actions = [action for action in tracker["actions"] if not action.delivered]
     lines: list[str] = []
     if new_actions:
         lines.append("Actions taken since last turn:")
-        for entry in new_actions:
+        for action in new_actions:
             lines.append(
-                f"- [{entry.issue_id}] {entry.summary} (rationale: {entry.rationale})"
+                f"- [{action.issue_id}] {action.summary} (rationale: {action.rationale})"
             )
-            entry.delivered = True
-    open_tickets = [ticket for ticket in tickets_store.values() if ticket.status == "open"]
+            action.delivered = True
+    open_tickets = [
+        ticket
+        for ticket in tracker["tickets"].values()
+        if ticket.status == "open"
+    ]
     if open_tickets:
         lines.append("Outstanding lint issues:")
         for ticket in open_tickets:
@@ -205,9 +200,9 @@ def _consume_issue_feedback(state: RoomDesignState) -> str:
             lines.append(
                 f"- ({ticket.code}) {target}: {ticket.message} (retries: {ticket.retries})"
             )
-    tracker["tickets"] = tickets_store
-    tracker["action_log"] = action_log
     return "\n".join(lines)
+
+
 class RoomDesignNode(BaseNode[RoomDesignState]):
     async def run(
         self, ctx: GraphRunContext[RoomDesignState]
@@ -583,24 +578,12 @@ class RoomDesignNode(BaseNode[RoomDesignState]):
         issue: LintIssue,
     ) -> bool:
         ticket.retries += 1
-        target_object = None
+        object_state_json = None
         if ticket.object_id:
-            target_object = next(
-                (obj for obj in ctx.state.room.objects if obj.id == ticket.object_id),
-                None,
+            target = next(
+                obj for obj in ctx.state.room.objects if obj.id == ticket.object_id
             )
-        if ticket.object_id and target_object is None:
-            summary = (
-                f"Object '{ticket.object_id}' referenced by lint issue was not found."
-            )
-            rationale = "Escalate to supervisor for manual follow-up."
-            _append_action(tracker, ticket, summary, rationale)
-            ticket.retries = MAX_AUTO_RESOLUTION_ATTEMPTS
-            return False
-
-        object_state_json = (
-            target_object.model_dump_json(indent=2) if target_object else None
-        )
+            object_state_json = target.model_dump_json(indent=2)
         prompt_parts = [
             "Resolve the following lint issue in the 3D room design.",
             f"Room id: {ctx.state.room.id}",
@@ -627,7 +610,6 @@ class RoomDesignNode(BaseNode[RoomDesignState]):
                 '   "rotation": Vector3 | null, "scale": Vector3 | null,',
                 '   "remove": bool',
                 " }}",
-                "Only modify the specified object and keep other placements intact.",
             ]
         )
         response = await issue_resolution_agent.run(
@@ -635,57 +617,29 @@ class RoomDesignNode(BaseNode[RoomDesignState]):
             output_type=IssueResolutionOutput,
         )
         result = response.output
-        if result.object_id is not None:
+        if result.object_id:
             ticket.object_id = result.object_id
-        summary = result.action_taken
-        rationale = result.rationale
         adjustment = result.adjustment
-        room_changed = False
-        success = True
         if adjustment is not None:
-            target_id = adjustment.id or result.object_id or ticket.object_id
-            if target_id is None:
-                success = False
-                summary = (
-                    "Issue resolution agent did not specify which object to adjust."
-                )
+            target_id = adjustment.id or ticket.object_id
+            if adjustment.remove:
+                ctx.state.room.objects = [
+                    obj for obj in ctx.state.room.objects if obj.id != target_id
+                ]
             else:
-                if adjustment.remove:
-                    before = len(ctx.state.room.objects)
-                    ctx.state.room.objects = [
-                        obj for obj in ctx.state.room.objects if obj.id != target_id
-                    ]
-                    if len(ctx.state.room.objects) != before:
-                        room_changed = True
-                    else:
-                        success = False
-                        summary = (
-                            f"Requested removal of '{target_id}', but the object was not present."
-                        )
-                else:
-                    obj = next(
-                        (item for item in ctx.state.room.objects if item.id == target_id),
-                        None,
-                    )
-                    if obj is None:
-                        success = False
-                        summary = (
-                            f"Could not apply adjustment because object '{target_id}' was not found."
-                        )
-                    else:
-                        if adjustment.position is not None:
-                            obj.position = adjustment.position
-                            room_changed = True
-                        if adjustment.rotation is not None:
-                            obj.rotation = adjustment.rotation
-                            room_changed = True
-                        if adjustment.scale is not None:
-                            obj.scale = adjustment.scale
-                            room_changed = True
-        if result.resolved and success:
+                obj = next(
+                    item for item in ctx.state.room.objects if item.id == target_id
+                )
+                if adjustment.position is not None:
+                    obj.position = adjustment.position
+                if adjustment.rotation is not None:
+                    obj.rotation = adjustment.rotation
+                if adjustment.scale is not None:
+                    obj.scale = adjustment.scale
+        if result.resolved:
             ticket.status = "resolved"
-        _append_action(tracker, ticket, summary, rationale)
-        return room_changed or (result.resolved and success)
+        _append_action(tracker, ticket, result.action_taken, result.rationale)
+        return bool(adjustment) or result.resolved
 
     def _compose_feedback(
         self,
