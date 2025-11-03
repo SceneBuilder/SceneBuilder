@@ -38,8 +38,16 @@ from scene_builder.workflow.states import (
 )
 from scene_builder.validation.models import LintActionTaken, LintIssueTicket
 from scene_builder.workflow.toolsets import material_toolset, shopping_toolset
-from scene_builder.validation.linter import format_lint_feedback, lint_room
+from scene_builder.validation.linter import (
+    format_lint_feedback,
+    lint_room,
+    save_lint_visualization,
+)
+from scene_builder.validation.context import LintingOptions
 from scene_builder.validation.models import LintIssue, LintReport
+
+# Params
+LINT_OPTIONS = LintingOptions(enabled_rules={"floor_penetration", "wall_overlap"})
 
 console = Console()
 obj_db = ObjectDatabase()
@@ -397,7 +405,7 @@ class RoomDesignNode(BaseNode[RoomDesignState]):
             # post-placement render
             # Rebuild room after placement with translucent walls for feedback
             blender.parse_room_definition(room, with_walls="translucent")
-            lint_report = lint_room(ctx.state.room)
+            lint_report = lint_room(ctx.state.room, options=LINT_OPTIONS)
             ctx.state.last_lint_report = lint_report
             tracker, tickets_store = _sync_issue_tracker(ctx.state, lint_report)
             issue_lookup = {
@@ -416,13 +424,19 @@ class RoomDesignNode(BaseNode[RoomDesignState]):
                     _compute_issue_id(issue): issue for issue in lint_report.issues
                 }
             lint_summary = format_lint_feedback(lint_report)
+            lint_viz_path = f"{output_dir}/lint_viz_{placement_run_count}.png"
+            save_lint_visualization(
+                room=ctx.state.room, report=lint_report, output_path=lint_viz_path
+            )
             if DEBUG:
                 print(f"[Lint] {lint_summary}")
             top_down_render = blender.visualize(scene=room.id, output_dir=output_dir, show_grid=True)
             isometric_render = blender.visualize(
                 scene=room.id, output_dir=output_dir, view="isometric", show_grid=True
             )
-            renders = transform_paths_to_binary([top_down_render, isometric_render])
+            renders = transform_paths_to_binary(
+                [top_down_render, isometric_render, lint_viz_path]
+            )
             lint_section = f"Automated lint analysis for the current placement:\n{lint_summary}"
 
             critique_user_prompt = (
