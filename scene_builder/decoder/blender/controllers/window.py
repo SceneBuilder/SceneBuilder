@@ -274,15 +274,16 @@ def apply_window_settings(
     controller = WindowController(obj=obj, modifier_name=modifier_name)
     results: Dict[str, object] = {"object": controller.object.name}
 
-    if width is not None:
-        results["width"] = controller.set_width(width)
-    if height is not None:
-        results["height"] = controller.set_height(height)
-
     if window_type is not None:
         results["type"] = controller.set_type(window_type)
     elif randomize_type:
         results["type"] = controller.randomize_type()
+
+    # Now set width and height (width calculation depends on window type)
+    if width is not None:
+        results["width"] = controller.set_width(width)
+    if height is not None:
+        results["height"] = controller.set_height(height)
 
     if open_1 is not None:
         results["open_1"] = controller.set_open_1(open_1)
