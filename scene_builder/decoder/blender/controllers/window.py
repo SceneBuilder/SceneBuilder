@@ -41,6 +41,23 @@ def _view3d_context_override() -> Dict[str, object]:
     raise RuntimeError("Could not find a VIEW_3D area to override the context for the Window operator.")
 
 
+# Window type base actual widths: actual_width = base_actual + (input_width - BASE_INPUT_WIDTH) * WIDTH_SCALE_FACTOR
+# Based on empirical measurements where input Width = 0.410 corresponds to these base actual widths
+# Linear relationship: actual width increases by 0.09m when input width increases by 0.1m
+WINDOW_WIDTH_BASE = {
+    1: 0.585,  # base actual width when input = 0.410
+    2: 0.585,  # base actual width when input = 0.410
+    3: 0.585,  # base actual width when input = 0.410
+    4: 0.585,  # base actual width when input = 0.410
+    5: 0.755,  # base actual width when input = 0.410
+    6: 0.809,  # base actual width when input = 0.410
+    7: 0.935,  # base actual width when input = 0.410
+    8: 0.935,  # base actual width when input = 0.410
+}
+BASE_INPUT_WIDTH = 0.410  # The input width corresponding to base actual widths
+WIDTH_SCALE_FACTOR = 0.9  # Slope: actual_width change / input_width change (0.09m / 0.1m)
+
+
 class WindowController:
     """Convenience wrapper for adjusting Window Geometry Nodes parameters."""
 
@@ -72,6 +89,19 @@ class WindowController:
                 return item
 
         raise KeyError(f"Socket labeled '{label}' not found on modifier '{self.modifier.name}'.")
+
+    def _get_window_type(self) -> int:
+        """Get the current window type from the modifier.
+        
+        Returns:
+            The window type as an integer (1-8).
+            
+        Raises:
+            KeyError: If the Type socket is not found.
+        """
+        item = self._get_interface_item("Type")
+        window_type = int(self.modifier[item.identifier])
+        return window_type
 
     def _set_numeric(self, label: str, value: float) -> float:
         item = self._get_interface_item(label)
@@ -121,12 +151,55 @@ class WindowController:
         return choice
 
     def set_width(self, value: float) -> float:
-        """Set the window width socket in meters. Returns the applied value (clamped if needed)."""
-        return self._set_numeric("Width", value)
+        """Set the window width socket in meters (true world width). Returns the applied value.
+        
+        The GeometryNodes "Width" input has a linear relationship with actual width:
+        actual_width = base_actual + (input_width - BASE_INPUT_WIDTH) * WIDTH_SCALE_FACTOR
+        
+        Each window type has a different base actual width but the same scale factor (0.9).
+        This method reverses the formula to calculate the required input width.
+        
+        Args:
+            value: Desired actual window width in meters.
+            
+        Returns:
+            The applied Width input value (after corrections).
+            
+        Raises:
+            ValueError: If window type is invalid or not found in WINDOW_WIDTH_BASE.
+        """
+        # Get current window type
+        window_type = self._get_window_type()
+        
+        # Look up base actual width for this window type
+        if window_type not in WINDOW_WIDTH_BASE:
+            raise ValueError(
+                f"Invalid window type: {window_type}. Valid types are 1-8."
+            )
+        
+        base_actual = WINDOW_WIDTH_BASE[window_type]
+        
+        # Formula: actual_width = base_actual + (input_width - BASE_INPUT_WIDTH) * WIDTH_SCALE_FACTOR
+        # Solving for input_width:
+        # input_width = BASE_INPUT_WIDTH + (actual_width - base_actual) / WIDTH_SCALE_FACTOR
+        # where value = actual_width (desired actual width)
+        input_width = BASE_INPUT_WIDTH + (value - base_actual) / WIDTH_SCALE_FACTOR
+        
+        if input_width < 0.1:
+            input_width = 0.1  # safety clamp
+
+        applied = self._set_numeric("Width", input_width)
+        return applied
 
     def set_height(self, value: float) -> float:
-        """Set the window height socket in meters. Returns the applied value."""
-        return self._set_numeric("Height", value)
+        """Set the window height socket in meters (true world height). Returns the applied value."""
+        # Convert from real height to GeometryNodes internal height
+        # Empirical offset: Window It addon adds approximately 0.2m to the height parameter
+        corrected_value = value - 0.2  # empirical offset
+        if corrected_value < 0.1:
+            corrected_value = 0.1  # safety clamp
+        applied = self._set_numeric("Height", corrected_value)
+        return applied
 
     def set_type(self, value: int) -> int:
         """Set the style/type index. Returns the applied integer value."""

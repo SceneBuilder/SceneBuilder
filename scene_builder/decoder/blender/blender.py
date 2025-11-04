@@ -40,7 +40,8 @@ HDRI_FILE_PATH = Path(
 
 BACKGROUND_COLOR = (0.02, 0.02, 0.02, 1.0)
 DEFAULT_DOOR_HEIGHT = 2.5
-DEFAULT_WINDOW_HEIGHT = 1.2
+DEFAULT_WINDOW_HEIGHT_BOTTOM = 1.0
+DEFAULT_WINDOW_HEIGHT_TOP = 2.5  
 
 
 @dataclass
@@ -1152,8 +1153,8 @@ def create_window_from_boundary(
     window_boundary: list,
     window_id: str,
     z_position: float = 0.0,
-    window_height_bottom: float = 1.0,
-    window_height_top: float = 2.2,
+    window_height_bottom: float = DEFAULT_WINDOW_HEIGHT_BOTTOM,
+    window_height_top: float = DEFAULT_WINDOW_HEIGHT_TOP,
     **window_settings,
 ) -> Optional[Dict[str, object]]:
     """Create a Window object from a window boundary polygon.
@@ -1162,8 +1163,8 @@ def create_window_from_boundary(
         window_boundary: List of (x, y) tuples defining window polygon
         window_id: Unique identifier for the window
         z_position: Z-height to place the window (default: 0.0 for floor level)
-        window_height_bottom: Bottom height of window (default: 1.0m)
-        window_height_top: Top height of window (default: 2.2m)
+        window_height_bottom: Bottom height of window (default: DEFAULT_WINDOW_HEIGHT_BOTTOM)
+        window_height_top: Top height of window (default: DEFAULT_WINDOW_HEIGHT_TOP)
         **window_settings: Additional settings to pass to create_window
 
     Returns:
@@ -2052,8 +2053,8 @@ def create_room_walls(
     window_cutouts: bool = True,
     render_doors: bool = False,
     render_windows: bool = False,
-    window_height_bottom: float = 1.0,
-    window_height_top: float = 2.2,
+    window_height_bottom: float = DEFAULT_WINDOW_HEIGHT_BOTTOM,
+    window_height_top: float = DEFAULT_WINDOW_HEIGHT_TOP,
     keep_cutters_visible: bool = False,
 ):
     """Create walls for each room individually (excluding windows and exterior doors).
@@ -2066,8 +2067,8 @@ def create_room_walls(
         window_cutouts: Whether to create cutouts in walls for windows (default: True)
         render_doors: Whether to create actual door objects (default: False)
         render_windows: Whether to create actual window objects (default: False)
-        window_height_bottom: Bottom height of window cutouts (default: 1.0m)
-        window_height_top: Top height of window cutouts (default: 2.2m)
+        window_height_bottom: Bottom height of window cutouts (default: DEFAULT_WINDOW_HEIGHT_BOTTOM)
+        window_height_top: Top height of window cutouts (default: DEFAULT_WINDOW_HEIGHT_TOP)
         keep_cutters_visible: If True, keep cutter objects visible for debugging (default: False)
 
     Returns:
