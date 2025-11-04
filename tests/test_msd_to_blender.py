@@ -160,7 +160,8 @@ def test_msd_to_blender(door_cutout=True, window_cutout=True, enable_doors=True,
 
 if __name__ == "__main__":
     # Test with window rendering enabled
-    test_msd_to_blender(render_windows=True)
+    test_msd_to_blender(door_cutout=False, window_cutout=True, enable_doors=False, enable_windows=True, render_doors=False, render_windows=True, visualize_entities=False, keep_cutters_visible=True)
+    # test_msd_to_blender(render_windows=True)
     # test_msd_to_blender(door_cutout=False)
     # test_msd_to_blender(window_cutout=False)
     # test_msd_to_blender(door_cutout=False, window_cutout=False)

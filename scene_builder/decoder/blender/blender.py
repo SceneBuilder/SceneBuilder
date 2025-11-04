@@ -41,7 +41,8 @@ HDRI_FILE_PATH = Path(
 BACKGROUND_COLOR = (0.02, 0.02, 0.02, 1.0)
 DEFAULT_DOOR_HEIGHT = 2.5
 DEFAULT_WINDOW_HEIGHT_BOTTOM = 1.0
-DEFAULT_WINDOW_HEIGHT_TOP = 2.5  
+DEFAULT_WINDOW_HEIGHT_TOP = 2.5
+DEFAULT_WINDOW_DEPTH = 0.05  # Window thickness into wall (meters)  
 
 
 @dataclass
@@ -867,6 +868,139 @@ def get_apartment_outline(rooms: list) -> list:
 
     return outline
 
+# NOTE: TODO later some go to @gemetry.py or call from @geometry.py
+def _get_world_bounds_2d(obj) -> Tuple[Vector, Vector]:
+    """Get 2D bounding box (X/Y only) of an object in world space.
+    
+    Args:
+        obj: Blender object
+        
+    Returns:
+        Tuple of (min_corner, max_corner) as Vector objects with x, y components
+    """
+    corners = [obj.matrix_world @ Vector(corner) for corner in obj.bound_box]
+    min_corner = Vector((
+        min(v.x for v in corners),
+        min(v.y for v in corners),
+    ))
+    max_corner = Vector((
+        max(v.x for v in corners),
+        max(v.y for v in corners),
+    ))
+    return min_corner, max_corner
+
+
+def _distance_to_box_2d(point: Vector, min_corner: Vector, max_corner: Vector) -> float:
+    """Return the shortest 2D distance from a point to an axis-aligned bounding box.
+    
+    Args:
+        point: 2D or 3D point (only x, y components used)
+        min_corner: Minimum corner of bounding box (x, y)
+        max_corner: Maximum corner of bounding box (x, y)
+        
+    Returns:
+        Distance in meters
+    """
+    dx = max(min_corner.x - point.x, 0, point.x - max_corner.x)
+    dy = max(min_corner.y - point.y, 0, point.y - max_corner.y)
+    return math.sqrt(dx*dx + dy*dy)
+
+
+def _get_object_volume(obj) -> float:
+    """Calculate object volume from dimensions.
+    
+    Args:
+        obj: Blender object
+        
+    Returns:
+        Volume in cubic meters
+    """
+    d = obj.dimensions
+    return d.x * d.y * d.z
+
+
+def _push_window_to_wall(window_obj, search_radius: float = 0.5) -> bool:
+    """Push a window to the nearest wall face by moving its empty controller.
+    
+    Searches for the biggest nearby mesh object (wall) within search_radius and
+    moves the window's empty controller to align with the nearest wall face.
+    
+    Args:
+        window_obj: The window Blender object
+        search_radius: Search radius in meters (default: 0.5m)
+        
+    Returns:
+        True if successfully pushed to wall, False otherwise
+    """
+    if window_obj is None:
+        logger.warning("Cannot push window to wall: window object is None")
+        return False
+    
+    # Find the window's empty controller (parent object)
+    controller_obj = window_obj.parent
+    if controller_obj is None:
+        logger.warning(f"Cannot push window '{window_obj.name}' to wall: no parent controller found")
+        return False
+    
+    # Get window's world origin position
+    window_origin = window_obj.matrix_world.translation
+    
+    # Find biggest nearby mesh object (wall)
+    biggest_wall = None
+    max_volume = 0.0
+    
+    for obj in bpy.data.objects:
+        if obj.type == 'MESH' and obj.name != window_obj.name:
+            min_c, max_c = _get_world_bounds_2d(obj)
+            dist = _distance_to_box_2d(window_origin, min_c, max_c)
+            
+            if dist <= search_radius:
+                vol = _get_object_volume(obj)
+                if vol > max_volume:
+                    max_volume = vol
+                    biggest_wall = obj
+    
+    if not biggest_wall:
+        logger.debug(
+            f"No nearby wall found within {search_radius}m of window '{window_obj.name}'. "
+            f"Window remains at original position."
+        )
+        return False
+    
+    # Find nearest X/Y side of the wall
+    min_corner_wall, max_corner_wall = _get_world_bounds_2d(biggest_wall)
+    
+    distances = {
+        "X+": abs(window_origin.x - max_corner_wall.x),
+        "X-": abs(window_origin.x - min_corner_wall.x),
+        "Y+": abs(window_origin.y - max_corner_wall.y),
+        "Y-": abs(window_origin.y - min_corner_wall.y),
+    }
+    
+    nearest_side = min(distances, key=distances.get)
+    
+    # Move empty controller to align with nearest wall face (keep Z same)
+    target_loc = controller_obj.location.copy()
+    if nearest_side == "X+":
+        target_loc.x = max_corner_wall.x
+    elif nearest_side == "X-":
+        target_loc.x = min_corner_wall.x
+    elif nearest_side == "Y+":
+        target_loc.y = max_corner_wall.y
+    elif nearest_side == "Y-":
+        target_loc.y = min_corner_wall.y
+    # Z coordinate remains unchanged
+    
+    controller_obj.location = target_loc
+    bpy.context.view_layer.update()
+    
+    logger.debug(
+        f"Pushed window '{window_obj.name}' to {nearest_side} face of wall '{biggest_wall.name}'. "
+        f"Controller moved to {target_loc}"
+    )
+    
+    return True
+
 
 def _create_window_cutout(
     wall_obj,
@@ -1194,10 +1328,11 @@ def create_window_from_boundary(
     # For windows, we use the dimensions directly (no clearance needed like doors)
     if is_width_dominant:
         window_width = width
-        window_depth = height  # Depth is the shorter dimension (thickness into wall)
     else:
         window_width = height
-        window_depth = width  # Depth is the shorter dimension (thickness into wall)
+    
+    # Set fixed window depth (thickness into wall)
+    window_depth = DEFAULT_WINDOW_DEPTH
 
     # Calculate window vertical height from top and bottom heights
     window_height_value = window_height_top - window_height_bottom
@@ -1221,7 +1356,7 @@ def create_window_from_boundary(
         **window_settings,
     )
 
-    # Log window creation
+    # Log window creation and push to wall
     if result.get("created") or result.get("linked"):
         window_obj = bpy.data.objects.get(result["object"])
         controller_name = result.get("controller")
@@ -1230,6 +1365,9 @@ def create_window_from_boundary(
             logger.debug(
                 f"Created window '{window_obj.name}' at {location} with rotation {-rotation_angle:.1f}° via empty controller '{controller_name}'"
             )
+            
+            # Push window to nearest wall
+            _push_window_to_wall(window_obj, search_radius=0.5)
 
     return result
 

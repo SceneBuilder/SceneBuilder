@@ -499,8 +499,8 @@ def create_window(
 if __name__ == "__main__":
     # Example usage: tweak values here and run the script from Blender's text editor.
     SETTINGS = {
-        "width": 1.2,              # meters
-        "height": 1.5,             # meters
+        "width": 1.0,              # meters default when not provided
+        "height": 1.0,             # meters default when not provided
         "window_type": None,       # Set to an int to force a style, or keep None to randomize
         "randomize_type": True,    # Ignored when 'window_type' is provided
         "open_1": None,            # First opening amount; None to leave unchanged
