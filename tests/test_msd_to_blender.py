@@ -17,33 +17,13 @@ logger.add(sys.stderr, level="WARNING")
 
 
 def test_msd_to_blender(door_cutout=True, window_cutout=True, enable_doors=True, enable_windows=True, render_doors=False, render_windows=False, visualize_entities=False, keep_cutters_visible=True):
-    # Install Door It! Interior addon if requested and available
     if enable_doors:
-        addon_installed = install_door_it_addon()
-        if addon_installed:
-            print("✓✓✓ Door It! Interior addon enabled - doors will be created")
-        else:
-            print("✗✗✗ Door It! Interior addon not available - only cutouts will be created")
-    
-    # Install Window It! addon if requested and available
+        install_door_it_addon()
     if enable_windows:
-        window_addon_installed = install_window_it_addon()
-        if window_addon_installed:
-            print("✓✓✓ Window It! addon enabled - windows will be created")
-        else:
-            print("✗✗✗ Window It! addon not available - only cutouts will be created")
+        install_window_it_addon()
     
     loader = MSDLoader()
 
-    # building_id = loader.get_random_building()
-
-    # if not building_id:
-    #     print("No buildings found in dataset")
-    #     return
-
-    # print(f"Loading random building {building_id}...\n")
-
-    # Fixed building ID for debugging
     building_id = 2144
 
     print(f"Loading building {building_id}...\n")
@@ -55,8 +35,7 @@ def test_msd_to_blender(door_cutout=True, window_cutout=True, enable_doors=True,
         viz_path = output_dir / f"building_{building_id}_entities.png"
         print(f"Visualizing building entities...")
         result = loader.visualize_building_entities(
-            building_id=building_id,
-            output_path=str(viz_path)
+            building_id=building_id, output_path=str(viz_path)
         )
         if result:
             print(f"   ✓ Saved entity visualization: {result}\n")
@@ -111,39 +90,29 @@ def test_msd_to_blender(door_cutout=True, window_cutout=True, enable_doors=True,
             ],
         }
 
-        # Align floor plan 
+        # Align floor plan
         scene_data = blender.floorplan_to_origin(
-            scene_data, 
-            rooms_by_apartment=apartment_rooms,
-            align_rotation=True
+            scene_data, rooms_by_apartment=apartment_rooms, align_rotation=True
         )
 
         blender.parse_scene_definition(scene_data)
 
         # Create walls for each room (excluding windows and exterior doors)
         walls_created = blender.create_room_walls(
-            all_rooms, 
-            door_cutouts=door_cutout, 
+            all_rooms,
+            door_cutouts=door_cutout,
             window_cutouts=window_cutout,
             render_doors=render_doors,
             render_windows=render_windows,
-            keep_cutters_visible=keep_cutters_visible
+            keep_cutters_visible=keep_cutters_visible,
         )
         if walls_created > 0:
             print(f"   ✓ Created {walls_created} room walls (excluding windows and exterior doors)")
 
-        # # Detect and mark interior doors
-        # interior_door_count = 0
-        # for room in all_rooms:
-        #     if room.category == "door":
-        #         door_boundary = [(p.x, p.y) for p in room.boundary]
-        #         if blender.mark_interior_door(door_boundary, room.id):
-        #             interior_door_count += 1
-        
-        # if interior_door_count > 0:
-        #     print(f"   ✓ Marked {interior_door_count} interior doors with yellow cubes")
-
-        output_file = output_dir / f"msd_building_{building_id}_floor_{floor_id}_{door_cutout=}_{window_cutout=}.blend"
+        output_file = (
+            output_dir
+            / f"msd_building_{building_id}_floor_{floor_id}_{door_cutout=}_{window_cutout=}.blend"
+        )
         blender.save_scene(str(output_file))
         print(f"   ✓ Saved: {output_file.name}")
 
@@ -160,7 +129,16 @@ def test_msd_to_blender(door_cutout=True, window_cutout=True, enable_doors=True,
 
 if __name__ == "__main__":
     # Test with window rendering enabled
-    test_msd_to_blender(door_cutout=False, window_cutout=True, enable_doors=False, enable_windows=True, render_doors=False, render_windows=True, visualize_entities=False, keep_cutters_visible=True)
+    test_msd_to_blender(
+        door_cutout=False,
+        window_cutout=True,
+        enable_doors=False,
+        enable_windows=True,
+        render_doors=False,
+        render_windows=True,
+        visualize_entities=False,
+        keep_cutters_visible=True,
+    )
     # test_msd_to_blender(render_windows=True)
     # test_msd_to_blender(door_cutout=False)
     # test_msd_to_blender(window_cutout=False)
