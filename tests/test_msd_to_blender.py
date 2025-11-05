@@ -230,13 +230,13 @@ if __name__ == "__main__":
         building_id=2144,
         floor_id=None,
         align_rotation=True,
-        render_links=True,
+        render_links=False,
         enable_doors=True,
         enable_windows=True,
         render_doors=False,
         render_windows=False,
         visualize_entities=False,
-        keep_cutters_visible=False,
+        keep_cutters_visible=True,
     )
     # Uncomment to test other configurations:
     # test_msd_to_blender(render_windows=True)
