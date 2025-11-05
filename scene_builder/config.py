@@ -43,5 +43,6 @@ class GenerationConfig(BaseModel):
 MSD_CSV_PATH = Path(__file__).parent / "importer" / "msd" / "data" / "mds_V2_5.372k.csv"
 # door zip adding.
 DOOR_ADDON_ZIP_PATH = Path(__file__).parent.parent / "external" / "Door It! Interior 4.0,4.1.zip" 
+WINDOW_ADDON_ZIP_PATH = Path(__file__).parent.parent / "external" / "Window It! 4.0,4.1.zip"
 
 generation_config = GenerationConfig()

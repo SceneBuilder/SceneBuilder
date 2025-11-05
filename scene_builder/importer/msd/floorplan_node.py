@@ -11,7 +11,7 @@ from pydantic_graph import BaseNode, GraphRunContext
 from rich.console import Console
 
 from scene_builder.workflow.states import MainState
-from scene_builder.msd_integration.loader import MSDLoader
+from scene_builder.importer.msd.loader import MSDLoader
 from scene_builder.nodes.planning import DesignLoopEntry
 
 console = Console()

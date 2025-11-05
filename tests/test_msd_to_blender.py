@@ -9,7 +9,7 @@ from typing import Optional
 from scene_builder.decoder.blender import blender
 from scene_builder.definition.scene import Scene
 from scene_builder.importer.msd.loader import MSDLoader
-from scene_builder.utils.blender import install_door_it_addon
+from scene_builder.utils.blender import install_door_it_addon, install_window_it_addon
 from scene_builder.utils.room import render_structure_links
 from scene_builder.utils.scene import recenter_scene
 
@@ -17,13 +17,20 @@ from scene_builder.utils.scene import recenter_scene
 OUTPUT_DIR = Path("test_output/msd_to_blender")
 
 
-def _enable_addons(enable_doors=True):
+def _enable_addons(enable_doors=True, enable_windows=True):
+    """Enable Blender addons for doors and windows."""
     if enable_doors:
         addon_installed = install_door_it_addon()
         if addon_installed:
             print("✅ Door It! Interior addon enabled - doors will be created")
         else:
             print("⛔️ Door It! Interior addon not available - only cutouts will be created")
+    if enable_windows:
+        addon_installed = install_window_it_addon()
+        if addon_installed:
+            print("✅ Window It! addon enabled - windows will be created")
+        else:
+            print("⛔️ Window It! addon not available - only cutouts will be created")
 
 
 def _collect_building_floors(
@@ -71,16 +78,34 @@ def test_msd_to_blender(
     floor_id: Optional[str] = None,
     align_rotation: bool = True,
     render_links: bool = False,
+    enable_doors: bool = True,
+    enable_windows: bool = True,
+    render_doors: bool = False,
+    render_windows: bool = False,
+    visualize_entities: bool = False,
+    keep_cutters_visible: bool = False,
 ):
     loader = MSDLoader()
 
     if enable_addons:
-        _enable_addons(enable_doors=True)
+        _enable_addons(enable_doors=enable_doors, enable_windows=enable_windows)
 
     # Load the specified or a random building from MSD
     if building_id is None:
         building_id = loader.get_random_building()
     print(f"Loading building {building_id}...\n")
+
+    # Visualize building entities if requested
+    if visualize_entities:
+        output_dir = Path(__file__).parent.parent / "test_output"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        viz_path = output_dir / f"building_{building_id}_entities.png"
+        print("Visualizing building entities...")
+        result = loader.visualize_building_entities(
+            building_id=building_id, output_path=str(viz_path)
+        )
+        if result:
+            print(f"   ✓ Saved entity visualization: {result}\n")
 
     # Get apartments for each floor
     floors = _collect_building_floors(loader, building_id, floor_filter=floor_id)
@@ -118,7 +143,12 @@ def test_msd_to_blender(
             walls_created_total = 0
             for room in rooms_dict:
                 walls_created_total += blender.create_room_walls(
-                    [room], door_cutouts=door_cutout, window_cutouts=window_cutout
+                    [room],
+                    door_cutouts=door_cutout,
+                    window_cutouts=window_cutout,
+                    render_doors=render_doors,
+                    render_windows=render_windows,
+                    keep_cutters_visible=keep_cutters_visible,
                 )
             if walls_created_total > 0:
                 print(f"   ✓ Created {walls_created_total} room walls for floor {floor_id}")
@@ -158,7 +188,12 @@ def test_msd_to_blender(
 
                 blender.parse_scene_definition(scene_data)
                 walls_created = blender.create_room_walls(
-                    rooms_dict, door_cutouts=door_cutout, window_cutouts=window_cutout
+                    rooms_dict,
+                    door_cutouts=door_cutout,
+                    window_cutouts=window_cutout,
+                    render_doors=render_doors,
+                    render_windows=render_windows,
+                    keep_cutters_visible=keep_cutters_visible,
                 )
                 if walls_created > 0:
                     print(f"   ✓ Created {walls_created} room walls for {apt_id}")
@@ -186,6 +221,7 @@ def test_msd_to_blender(
 if __name__ == "__main__":
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
+    # Example: Test with window rendering enabled
     test_msd_to_blender(
         enable_addons=True,
         door_cutout=True,
@@ -195,4 +231,17 @@ if __name__ == "__main__":
         floor_id=None,
         align_rotation=True,
         render_links=True,
+        enable_doors=True,
+        enable_windows=True,
+        render_doors=False,
+        render_windows=False,
+        visualize_entities=False,
+        keep_cutters_visible=False,
     )
+    # Uncomment to test other configurations:
+    # test_msd_to_blender(render_windows=True)
+    # test_msd_to_blender(door_cutout=False)
+    # test_msd_to_blender(window_cutout=False)
+    # test_msd_to_blender(door_cutout=False, window_cutout=False)
+    # test_msd_to_blender(render_doors=True, render_windows=True)  # Enable both doors and windows
+    # test_msd_to_blender(visualize_entities=True)  # Enable entity visualization
