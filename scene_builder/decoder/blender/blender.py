@@ -495,10 +495,38 @@ def _check_object_duplicate_status(obj_data: dict[str, Any]) -> str:
     return "proceed_new"
 
 
-def _create_object(
-    obj_data: dict[str, Any],
-    parent_location: str = "origin",
-):
+def _check_object_duplicate_status(obj_data: dict[str, Any]) -> str:
+    """
+    Check if object already exists and determine what action to take.
+
+    Args:
+        obj_data: Dictionary containing object data
+
+    Returns:
+        String indicating status: "skip_unchanged", "recreate_moved", or "proceed_new"
+    """
+    object_id = obj_data.get("id")
+    object_name = obj_data.get("name", "Unnamed Object")
+    pos = obj_data.get("position", {"x": 0, "y": 0, "z": 0})
+    rot = obj_data.get("rotation", {"x": 0, "y": 0, "z": 0})
+
+    if not object_id:
+        return "proceed_new"
+
+    if _scene_tracker.object_exists_unchanged(object_id, pos, rot):
+        logger.debug(
+            f"Skipping duplicate object: {object_name} (id: {object_id}) - unchanged at {pos}"
+        )
+        return "skip_unchanged"
+
+    if _scene_tracker.object_exists_but_moved(object_id, pos, rot):
+        logger.debug(f"Object {object_name} (id: {object_id}) has moved - will recreate at {pos}")
+        return "recreate_moved"
+
+    return "proceed_new"
+
+
+def _create_object(obj_data: dict[str, Any], parent_location: str = "origin"):
     """
     Creates a single object in the Blender scene.
     Raises an IOError if the object cannot be imported.
@@ -947,51 +975,47 @@ def get_apartment_outline(rooms: list) -> list:
 # NOTE: TODO later some go to @gemetry.py or call from @geometry.py
 def _get_world_bounds_2d(obj) -> Tuple[Vector, Vector]:
     """Get 2D bounding box (X/Y only) of an object in world space.
-
+    
     Args:
         obj: Blender object
-
+        
     Returns:
         Tuple of (min_corner, max_corner) as Vector objects with x, y components
     """
     corners = [obj.matrix_world @ Vector(corner) for corner in obj.bound_box]
-    min_corner = Vector(
-        (
-            min(v.x for v in corners),
-            min(v.y for v in corners),
-        )
-    )
-    max_corner = Vector(
-        (
-            max(v.x for v in corners),
-            max(v.y for v in corners),
-        )
-    )
+    min_corner = Vector((
+        min(v.x for v in corners),
+        min(v.y for v in corners),
+    ))
+    max_corner = Vector((
+        max(v.x for v in corners),
+        max(v.y for v in corners),
+    ))
     return min_corner, max_corner
 
 
 def _distance_to_box_2d(point: Vector, min_corner: Vector, max_corner: Vector) -> float:
     """Return the shortest 2D distance from a point to an axis-aligned bounding box.
-
+    
     Args:
         point: 2D or 3D point (only x, y components used)
         min_corner: Minimum corner of bounding box (x, y)
         max_corner: Maximum corner of bounding box (x, y)
-
+        
     Returns:
         Distance in meters
     """
     dx = max(min_corner.x - point.x, 0, point.x - max_corner.x)
     dy = max(min_corner.y - point.y, 0, point.y - max_corner.y)
-    return math.sqrt(dx * dx + dy * dy)
+    return math.sqrt(dx*dx + dy*dy)
 
 
 def _get_object_volume(obj) -> float:
     """Calculate object volume from dimensions.
-
+    
     Args:
         obj: Blender object
-
+        
     Returns:
         Volume in cubic meters
     """
@@ -999,83 +1023,86 @@ def _get_object_volume(obj) -> float:
     return d.x * d.y * d.z
 
 
-def _push_window_to_wall(
-    window_obj, window_boundary: list[tuple[float, float]], search_radius: float = 0.5
-) -> bool:
+def _push_window_to_wall(window_obj, search_radius: float = 0.5) -> bool:
     """Push a window to the nearest wall face by moving its empty controller.
-
-    Searches for the biggest nearby mesh object (wall) within search_radius
-    and moves the window's empty controller to align with the nearest wall face.
+    
+    Searches for the biggest nearby mesh object (wall) within search_radius and
+    moves the window's empty controller to align with the nearest wall face.
+    
     Args:
         window_obj: The window Blender object
-        window_boundary: List of (x, y) tuples defining the window polygon boundary
         search_radius: Search radius in meters (default: 0.5m)
-
+        
     Returns:
         True if successfully pushed to wall, False otherwise
     """
+    if window_obj is None:
+        logger.warning("Cannot push window to wall: window object is None")
+        return False
+    
     # Find the window's empty controller (parent object)
     controller_obj = window_obj.parent
-
-    # Calculate window boundary centroid (X,Y only)
-    boundary_vec2 = [Vector2(x=x, y=y) for x, y in window_boundary]
-    centroid = polygon_centroid(boundary_vec2)
-    boundary_origin = Vector(
-        (centroid.x, centroid.y, 0.0)
-    )  # Use boundary centroid, Z=0 for 2D calculations
-
+    if controller_obj is None:
+        logger.warning(f"Cannot push window '{window_obj.name}' to wall: no parent controller found")
+        return False
+    
+    # Get window's world origin position
+    window_origin = window_obj.matrix_world.translation
+    
     # Find biggest nearby mesh object (wall)
     biggest_wall = None
     max_volume = 0.0
-
+    
     for obj in bpy.data.objects:
-        if obj.type == "MESH" and obj.name != window_obj.name:
+        if obj.type == 'MESH' and obj.name != window_obj.name:
             min_c, max_c = _get_world_bounds_2d(obj)
-            dist = _distance_to_box_2d(boundary_origin, min_c, max_c)
-
+            dist = _distance_to_box_2d(window_origin, min_c, max_c)
+            
             if dist <= search_radius:
                 vol = _get_object_volume(obj)
                 if vol > max_volume:
                     max_volume = vol
                     biggest_wall = obj
-
-    # Find nearest X/Y side of the wall using boundary centroid
+    
+    if not biggest_wall:
+        logger.debug(
+            f"No nearby wall found within {search_radius}m of window '{window_obj.name}'. "
+            f"Window remains at original position."
+        )
+        return False
+    
+    # Find nearest X/Y side of the wall
     min_corner_wall, max_corner_wall = _get_world_bounds_2d(biggest_wall)
-
+    
     distances = {
-        "X+": abs(boundary_origin.x - max_corner_wall.x),
-        "X-": abs(boundary_origin.x - min_corner_wall.x),
-        "Y+": abs(boundary_origin.y - max_corner_wall.y),
-        "Y-": abs(boundary_origin.y - min_corner_wall.y),
+        "X+": abs(window_origin.x - max_corner_wall.x),
+        "X-": abs(window_origin.x - min_corner_wall.x),
+        "Y+": abs(window_origin.y - max_corner_wall.y),
+        "Y-": abs(window_origin.y - min_corner_wall.y),
     }
-
+    
     nearest_side = min(distances, key=distances.get)
-
-    # Calculate where boundary centroid should be pushed to (X,Y only)
-    pushed_centroid = Vector((boundary_origin.x, boundary_origin.y, 0.0))
-    if nearest_side == "X+":
-        pushed_centroid.x = max_corner_wall.x
-    elif nearest_side == "X-":
-        pushed_centroid.x = min_corner_wall.x
-    elif nearest_side == "Y+":
-        pushed_centroid.y = max_corner_wall.y
-    elif nearest_side == "Y-":
-        pushed_centroid.y = min_corner_wall.y
-
-    # Move empty controller to pushed boundary centroid position (X,Y), preserve controller's original Z
+    
+    # Move empty controller to align with nearest wall face (keep Z same)
     target_loc = controller_obj.location.copy()
-    target_loc.x = pushed_centroid.x
-    target_loc.y = pushed_centroid.y
-    # Z coordinate remains unchanged (preserve controller's original Z)
-
+    if nearest_side == "X+":
+        target_loc.x = max_corner_wall.x
+    elif nearest_side == "X-":
+        target_loc.x = min_corner_wall.x
+    elif nearest_side == "Y+":
+        target_loc.y = max_corner_wall.y
+    elif nearest_side == "Y-":
+        target_loc.y = min_corner_wall.y
+    # Z coordinate remains unchanged
+    
     controller_obj.location = target_loc
     bpy.context.view_layer.update()
-
+    
     logger.debug(
         f"Pushed window '{window_obj.name}' to {nearest_side} face of wall '{biggest_wall.name}'. "
         f"Controller moved to {target_loc}"
     )
-
+    
     return True
 
 
@@ -1443,8 +1470,8 @@ def create_window_from_boundary(
                 f"Created window '{window_obj.name}' at {location} with rotation {-rotation_angle:.1f}° via empty controller '{controller_name}'"
             )
 
-            # Push window to nearest wall using boundary centroid
-            _push_window_to_wall(window_obj, window_boundary, search_radius=0.5)
+            # Push window to nearest wall
+            _push_window_to_wall(window_obj, search_radius=0.5)
 
     return result
 
@@ -2906,117 +2933,6 @@ def _door_boundary_to_coords(door_boundary: list) -> list[tuple[float, float]]:
     return coords
 
 
-def is_interior_door(door_boundary: list, check_distance: float = 0.4) -> bool:
-    """
-    Check if door is interior (between two different rooms).
-
-    Args:
-        door_boundary: List of (x, y) tuples or Vector2 points defining the door polygon
-        check_distance: Distance in meters to check away from door centroid (default: 0.4m)
-
-    Returns:
-        True if interior door, False if exterior door
-    """
-    coords = _door_boundary_to_coords(door_boundary)
-    if not coords:
-        return False
-
-    centroid_x = sum(x for x, _ in coords) / len(coords)
-    centroid_y = sum(y for _, y in coords) / len(coords)
-
-    check_positions = {
-        "left": (centroid_x - check_distance, centroid_y),
-        "right": (centroid_x + check_distance, centroid_y),
-        "down": (centroid_x, centroid_y - check_distance),
-        "up": (centroid_x, centroid_y + check_distance),
-    }
-
-    floors_by_direction = {}
-    for direction, (check_x, check_y) in check_positions.items():
-        for obj in bpy.context.scene.objects:
-            if obj.type != "MESH" or not obj.name.startswith("Floor_"):
-                continue
-
-            if obj.data.polygons:
-                bbox_x = [obj.matrix_world @ Vector(v.co) for v in obj.data.vertices]
-                x_coords = [v.x for v in bbox_x]
-                y_coords = [v.y for v in bbox_x]
-
-                if x_coords and y_coords:
-                    min_x, max_x = min(x_coords), max(x_coords)
-                    min_y, max_y = min(y_coords), max(y_coords)
-
-                    if min_x <= check_x <= max_x and min_y <= check_y <= max_y:
-                        floors_by_direction[direction] = obj.name
-                        break
-
-    has_different_lr = (
-        "left" in floors_by_direction
-        and "right" in floors_by_direction
-        and floors_by_direction["left"] != floors_by_direction["right"]
-    )
-    has_different_ud = (
-        "up" in floors_by_direction
-        and "down" in floors_by_direction
-        and floors_by_direction["up"] != floors_by_direction["down"]
-    )
-
-    return has_different_lr or has_different_ud
-
-
-def mark_interior_door(
-    door_boundary: list, door_id: str, check_distance: float = 0.4, height: float = 2.0
-) -> bool:
-    """
-    Check if a door is interior and, if so, mark it with a yellow cube.
-
-    Args:
-        door_boundary: List of (x, y) tuples or Vector2 points defining the door polygon
-        door_id: Identifier for the door (for naming)
-        check_distance: Distance in meters to check away from door centroid (default: 0.4m)
-        height: Height of the marker cube in meters (default: 2.0m)
-
-    Returns:
-        True if interior door was marked, False otherwise
-    """
-    coords = _door_boundary_to_coords(door_boundary)
-    if not coords:
-        return False
-
-    if not is_interior_door(door_boundary, check_distance=check_distance):
-        return False
-
-    centroid_x = sum(x for x, _ in coords) / len(coords)
-    centroid_y = sum(y for _, y in coords) / len(coords)
-
-    x_coords = [x for x, _ in coords]
-    y_coords = [y for _, y in coords]
-    width = max(x_coords) - min(x_coords)
-    depth = max(y_coords) - min(y_coords)
-    marker_size = min(width, depth, 0.2)
-    if marker_size <= 0:
-        marker_size = 0.1
-
-    with suppress_blender_logs():
-        bpy.ops.mesh.primitive_cube_add(
-            size=marker_size, location=(centroid_x, centroid_y, height / 2)
-        )
-
-    marker = bpy.context.active_object
-    marker.name = f"DoorMarker_{door_id}"
-    marker.scale.z = height / marker_size
-
-    yellow_mat = _create_unlit_material(f"DoorMarker_Material_{door_id}", (1.0, 0.9, 0.0, 1.0))
-
-    if marker.data.materials:
-        marker.data.materials[0] = yellow_mat
-    else:
-        marker.data.materials.append(yellow_mat)
-
-    logger.debug(f"Marked interior door {door_id} at ({centroid_x:.2f}, {centroid_y:.2f})")
-    return True
-
-
 def create_room_walls(
     rooms: list[Room],
     wall_height: float = 2.7,
@@ -3257,10 +3173,9 @@ def create_room_walls(
         except Exception:
             room_polygon = None
 
-        # Apply window cutouts if requested (windows and exterior doors)
-        all_window_cutouts = window_cutout_polygons + exterior_door_cutout_polygons
-        if window_cutouts and all_window_cutouts:
-            for idx, (cutout_id, cutout_boundary) in enumerate(all_window_cutouts):
+        # Apply window cutouts if requested (only for windows, not exterior doors)
+        if window_cutouts and window_cutout_polygons:
+            for idx, (cutout_id, cutout_boundary) in enumerate(window_cutout_polygons):
                 if not cutout_boundary:
                     continue
 
@@ -3331,6 +3246,64 @@ def create_room_walls(
                                 f"Successfully created window object: {window_result.get('object')}"
                             )
 
+        # Apply exterior door cutouts if requested (exterior doors use window cutouts)
+        if window_cutouts and exterior_door_cutout_polygons:
+            # Reuse room_polygon created above
+            for idx, (door_id, door_boundary) in enumerate(exterior_door_cutout_polygons):
+                if not door_boundary:
+                    continue
+
+                # Only apply window cutout if it intersects with this room's boundary
+                if room_polygon:
+                    try:
+                        door_polygon = Polygon(door_boundary)
+                        # Check if door intersects with room or is very close (within 0.1m)
+                        if door_polygon.is_valid and (
+                            door_polygon.intersects(room_polygon)
+                            or room_polygon.distance(door_polygon) < 0.1
+                        ):
+                            # Create the cutout in the wall (exterior doors use window cutout)
+                            _create_window_cutout(
+                                wall_obj=obj,
+                                apt_id=str(door_id),
+                                window_idx=idx,
+                                window_boundary=door_boundary,
+                                z_bottom=window_height_bottom,
+                                z_top=window_height_top,
+                                keep_cutter_visible=keep_cutters_visible,
+                            )
+
+                            # Create the actual door object at this boundary if rendering is enabled
+                            if render_doors:
+                                door_result = create_door_from_boundary(
+                                    door_boundary=door_boundary,
+                                    door_id=str(door_id),
+                                    z_position=0.0,
+                                    default_depth=0.1,
+                                    door_height=DEFAULT_DOOR_HEIGHT,
+                                    randomize_type=True,
+                                    randomize_handle=True,
+                                    randomize_material=True,
+                                    randomize_color=False,
+                                    paint_color=(1.0, 1.0, 1.0, 1.0),  # White door
+                                )
+
+                    except Exception:
+                        # Skip this door if polygon creation fails
+                        continue
+                else:
+                    # Fallback: apply cutout if room polygon couldn't be created
+                    _create_window_cutout(
+                        wall_obj=obj,
+                        apt_id=str(door_id),
+                        window_idx=idx,
+                        window_boundary=door_boundary,
+                        z_bottom=window_height_bottom,
+                        z_top=window_height_top,
+                        keep_cutter_visible=keep_cutters_visible,
+                    )
+
+        # Apply interior door cutouts if requested
         if door_cutouts and interior_door_polygons:
             # Reuse room_polygon created above for window cutouts
             for idx, (door_id, door_boundary) in enumerate(interior_door_polygons):
