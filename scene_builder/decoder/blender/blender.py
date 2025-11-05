@@ -5,7 +5,7 @@ import tempfile
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple, Union
 
 import bpy
 import bmesh
@@ -23,9 +23,10 @@ from shapely.ops import unary_union
 
 from scene_builder.config import BLENDER_LOG_FILE, TEST_ASSET_DIR
 from scene_builder.database.material import MaterialDatabase
+from scene_builder.decoder.blender_materials import create_translucent_material
 from scene_builder.decoder.blender.controllers.interior_door import create_interior_door
 from scene_builder.decoder.blender.controllers.window import create_window
-from scene_builder.definition.scene import Object, Room, Scene, Vector2
+from scene_builder.definition.scene import Object, Room, Scene, Vector2, find_shell
 from scene_builder.importer import objaverse_importer, test_asset_importer
 from scene_builder.importer.msd.loader import (
     get_dominant_angle,
@@ -38,7 +39,9 @@ from scene_builder.tools.material_applicator import texture_floor_mesh
 from scene_builder.utils.blender import SceneSwitcher
 from scene_builder.utils.conversions import pydantic_to_dict
 from scene_builder.utils.file import get_filename
-from scene_builder.utils.geometry import polygon_centroid
+from scene_builder.utils.floorplan import get_dominant_angle
+from scene_builder.utils.geometry import get_longest_edge_angle, polygon_centroid
+from scene_builder.utils.image import compose_image_grid
 
 HDRI_FILE_PATH = Path(
     f"{TEST_ASSET_DIR}/hdri/autumn_field_puresky_4k.exr"
@@ -49,6 +52,10 @@ DEFAULT_DOOR_HEIGHT = 2.5
 DEFAULT_WINDOW_HEIGHT_BOTTOM = 1.0
 DEFAULT_WINDOW_HEIGHT_TOP = 2.5
 DEFAULT_WINDOW_DEPTH = 0.05  # Window thickness into wall (meters)
+
+OBJECT_PREVIEW_CAMERA_NAME = "ObjectPreviewCamera"
+OBJECT_LABEL_MATERIAL_NAME = "ObjectLabelMaterial"
+OBJECT_HIGHLIGHT_PASS_INDEX = 101
 
 
 @dataclass
@@ -91,7 +98,11 @@ class BlenderSceneTracker:
         # If it exists but positions/rotations don't match, it moved
         return not self.object_exists_unchanged(object_id, pos, rot)
 
-    def register_object(self, obj_data: dict, blender_name: str):
+    def register_object(
+        self,
+        obj_data: dict,
+        blender_name: str,
+    ):
         """Register a newly created object (overwrites if object moved)."""
         object_id = obj_data["id"]
         source_id = obj_data["source_id"]
@@ -121,6 +132,11 @@ class BlenderSceneTracker:
     def get_object_state(self, object_id: str) -> Optional[BlenderObjectState]:
         """Get current state for a specific object."""
         return self._objects.get(object_id)
+
+    def iter_states(self) -> tuple[BlenderObjectState, ...]:
+        """Return a snapshot tuple of all tracked object states."""
+
+        return tuple(self._objects.values())
 
     def get_cached_empty(self, source_id: str) -> Optional[Any]:
         """Get cached Empty parent object for a source_id if it exists.
@@ -157,6 +173,89 @@ class BlenderSceneTracker:
 
 # Global scene tracker instance
 _scene_tracker = BlenderSceneTracker()
+
+
+def iter_tracked_object_states() -> tuple[BlenderObjectState, ...]:
+    """Return tracked object states."""
+
+    return _scene_tracker.iter_states()
+
+
+def get_tracked_object_state(object_id: str) -> Optional[BlenderObjectState]:
+    """Return the tracked state for ``object_id`` if present."""
+
+    return _scene_tracker.get_object_state(object_id)
+
+
+def get_object_bounds(
+    object_id: str,
+) -> tuple[Tuple[float, float, float], Tuple[float, float, float]] | None:
+    """Compute world-space bounding box corners for a tracked object."""
+
+    state = _scene_tracker.get_object_state(object_id)
+    if state is None:
+        return None
+
+    blender_obj = bpy.data.objects.get(state.blender_name)
+    if blender_obj is None:
+        return None
+
+    return _compute_object_bounds(blender_obj)
+
+
+def _iter_mesh_descendants(root_obj):
+    """Yield mesh objects under the provided Blender object.
+
+    Assets often import as empties that parent several mesh nodes.  Walking the
+    hierarchy ensures the bounding-box query accounts for every mesh that makes
+    up the logical object instead of just the top-level container.
+    """
+
+    stack = [root_obj]
+    while stack:
+        current = stack.pop()
+        if current is None:
+            continue
+        if getattr(current, "type", None) == "MESH":
+            yield current
+        stack.extend(getattr(current, "children", []) or [])
+
+
+def _compute_object_bounds(
+    blender_obj,
+) -> tuple[Tuple[float, float, float], Tuple[float, float, float]] | None:
+    """Return world axis-aligned bounds for the provided object."""
+
+    mesh_children = list(_iter_mesh_descendants(blender_obj))
+    if not mesh_children:
+        return None
+
+    min_world = Vector((math.inf, math.inf, math.inf))
+    max_world = Vector((-math.inf, -math.inf, -math.inf))
+
+    for mesh_obj in mesh_children:
+        try:
+            matrix_world = mesh_obj.matrix_world
+            corners = getattr(mesh_obj, "bound_box", None)
+        except Exception:
+            continue
+
+        if not corners:
+            continue
+
+        for corner in corners:
+            world_corner = matrix_world @ Vector(corner)
+            min_world.x = min(min_world.x, world_corner.x)
+            min_world.y = min(min_world.y, world_corner.y)
+            min_world.z = min(min_world.z, world_corner.z)
+            max_world.x = max(max_world.x, world_corner.x)
+            max_world.y = max(max_world.y, world_corner.y)
+            max_world.z = max(max_world.z, world_corner.z)
+
+    return (
+        (float(min_world.x), float(min_world.y), float(min_world.z)),
+        (float(max_world.x), float(max_world.y), float(max_world.z)),
+    )
 
 
 @contextmanager
@@ -202,92 +301,17 @@ def suppress_blender_logs(log_file_path: str = BLENDER_LOG_FILE):
         os.close(saved_stderr_fd)
 
 
-def floorplan_to_origin(
-    scene_data: dict[str, Any],
-    rooms_by_apartment: list[tuple[Any, list]] = None,
-    align_rotation: bool = True,
-) -> dict[str, Any]:
-    """
-    Align scene_data and Room objects to origin with axes aligned.
 
-    Centers floor plan at origin (0,0) and rotates to align walls with X/Y axes.
-    Aligns floorplan together.
-
-    Args:
-        scene_data: Scene dictionary with room boundaries
-        rooms_by_apartment: List of (apartment_id, rooms) tuples (optional)
-        align_rotation: If True, rotate to align walls with X/Y axes (default: True)
-
-    Returns:
-        Modified scene_data (rooms modified in-place)
-    """
-    rooms = scene_data.get("rooms", [])
-    if not rooms:
-        return scene_data
-
-    # Step 1: Calculate centroid
-    all_x, all_y, all_boundaries = [], [], []
-    for room in rooms:
-        boundary = room.get("boundary", [])
-        if boundary:
-            # Convert to Vector2
-            boundary_vec = (
-                [Vector2(x=p["x"], y=p["y"]) for p in boundary]
-                if isinstance(boundary[0], dict)
-                else boundary
-            )
-            all_boundaries.append(boundary_vec)
-            for p in boundary_vec:
-                all_x.append(p.x)
-                all_y.append(p.y)
-
-    if not all_x:
-        return scene_data
-
-    centroid_x, centroid_y = sum(all_x) / len(all_x), sum(all_y) / len(all_y)
-
-    # Step 2: Calculate rotation
-    rotation_angle = 0.0
-    if align_rotation:
-        centered = [
-            [Vector2(x=p.x - centroid_x, y=p.y - centroid_y) for p in b] for b in all_boundaries
-        ]
-        # rotation_angle = math.radians(get_dominant_angle(centered, strategy="length_weighted"))
-        rotation_angle = math.radians(get_dominant_angle(centered, strategy="complex_sum"))
-        # logger.debug(
-        #     f"Aligning: center=({centroid_x:.2f}, {centroid_y:.2f}), rotation={math.degrees(rotation_angle):.2f}°"
-        # )
-
-    # Step 3: Apply transformation
-    cos_a, sin_a = math.cos(rotation_angle), math.sin(rotation_angle)
-
-    # Transform scene_data (floors)
-    for room in rooms:
-        for point in room.get("boundary", []):
-            x, y = point["x"] - centroid_x, point["y"] - centroid_y
-            point["x"], point["y"] = x * cos_a - y * sin_a, x * sin_a + y * cos_a
-
-    if rooms_by_apartment:
-        for _, room_list in rooms_by_apartment:
-            for room in room_list:
-                if hasattr(room, "boundary") and room.boundary:
-                    room.boundary = [
-                        Vector2(
-                            x=(p.x - centroid_x) * cos_a - (p.y - centroid_y) * sin_a,
-                            y=(p.x - centroid_x) * sin_a + (p.y - centroid_y) * cos_a,
-                        )
-                        for p in room.boundary
-                    ]
-
-    return scene_data
-
-
-def parse_scene_definition(scene_data: dict[str, Any]):
+def parse_scene_definition(scene_data: dict[str, Any], with_walls: bool = False):
     """
     Parses the scene definition dictionary and creates the scene in Blender.
 
+    Optionally creates room walls (with structural cutouts) after all rooms
+    are laid out when `with_walls` is True.
+
     Args:
         scene_data: A dictionary representing the scene, loaded from the YAML file.
+        with_walls: If True, also create walls for all rooms after layout.
     """
     # logger.debug("Parsing scene definition and creating scene in Blender...")
 
@@ -301,14 +325,41 @@ def parse_scene_definition(scene_data: dict[str, Any]):
     for room_data in scene_data.get("rooms", []):
         _create_room(room_data)
 
+    # Optionally add walls after all floors/objects are created
+    if with_walls:
+        try:
+            create_room_walls(scene_data.get("rooms", []))
 
-def parse_room_definition(room_data: dict[str, Any], clear=True):
+            # Apply wall materials if specified in shells
+            for room_data in scene_data.get("rooms", []):
+                try:
+                    wall_shell = find_shell(room_data, "wall")
+                    if wall_shell and getattr(wall_shell, "material_id", None):
+                        room_id = room_data.get("id") if isinstance(room_data, dict) else getattr(room_data, "id", "unknown")
+                        apply_wall_material(
+                            material_id=wall_shell.material_id,
+                            wall_object_name=f"Wall_{room_id}",
+                        )
+                except Exception as mat_err:
+                    logger.warning(f"Failed to apply wall material: {mat_err}")
+        except Exception as e:
+            logger.warning(f"Failed to create walls: {e}")
+
+
+def parse_room_definition(
+    room_data: dict[str, Any],
+    clear=True,
+    with_walls: Union[bool, str] = False,
+):
     """
     Parses the room definition dictionary and creates the scene in Blender.
 
     Args:
         room_data: A dictionary representing the room, loaded from the YAML file.
         clear: Whether to clear the Blender scene before building room.
+        with_walls: If True, also create walls for this room after layout.
+                    If set to "translucent", creates walls with a translucent material
+                    for clearer visual feedback.
 
     # NOTE: not sure if it's good for `clear` to default to True; (it was for testing)
     # NOTE: I think there's a bug where if `clear=True`, not all assets are recreated at next iteration's `parse_room_definition()` call. this happens after critique's rejection. look into it!
@@ -325,6 +376,30 @@ def parse_room_definition(room_data: dict[str, Any], clear=True):
                 _clear_scene()
 
             _create_room(room_data)
+
+            if with_walls:
+                try:
+                    translucent = (
+                        isinstance(with_walls, str) and with_walls.lower() == "translucent"
+                    )
+                    create_room_walls([room_data], translucent=translucent)
+
+                    # Apply wall material if specified and walls are opaque
+                    if not translucent:
+                        try:
+                            wall_shell = find_shell(room_data, "wall")
+                            if wall_shell and getattr(wall_shell, "material_id", None):
+                                room_id = room_data.get("id") if isinstance(room_data, dict) else getattr(room_data, "id", "unknown")
+                                apply_wall_material(
+                                    material_id=wall_shell.material_id,
+                                    wall_object_name=f"Wall_{room_id}",
+                                )
+                        except Exception as mat_err:
+                            logger.warning(f"Failed to apply wall material: {mat_err}")
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to create walls for room {room_data.get('id', 'unknown')}: {e}"
+                    )
 
 
 def cleanup_orphan_data(num_passes: int = 3):
@@ -360,28 +435,27 @@ def _clear_scene():
 
 
 def _create_room(room_data: dict[str, Any]):
-    """Creates a representation of a room including floor mesh, walls, and objects."""
+    """Creates a representation of a room including floor mesh and objects."""
     if room_data is None:
         logger.warning("room_data is None, skipping room creation")
         return
 
     room_id = room_data.get("id", "unknown_room")
-    room_category = room_data.get("category", "unknown")
-    # logger.debug(f"Creating room: {room_id}")
+    logger.debug(f"Creating room: {room_id}")
 
     # Create floor mesh
-    floor_result = _create_floor_mesh(room_data["boundary"], room_id, room_category=room_category)
-    # logger.debug(f"Created floor: {floor_result['status']}")
+    floor_result = _create_floor_mesh(room_data["boundary"], room_id)
+    logger.debug(f"Created floor: {floor_result['status']}")
 
     # Apply floor material
-    if room_data.get("floor"):
-        material_id = room_data["floor"]["material_id"]
+    floor = find_shell(room_data, "floor")
+    if floor and getattr(floor, "material_id", None):
         apply_floor_material(
-            material_id=material_id,
+            material_id=floor.material_id,
             floor_object_name=floor_result["object_name"],
             boundary=room_data["boundary"],
         )
-        logger.debug(f"Applied material {material_id} to floor")
+        logger.debug(f"Applied material {floor.material_id} to floor")
     # Create objects in the room
     for obj_data in room_data.get("objects", []):
         try:
@@ -421,38 +495,10 @@ def _check_object_duplicate_status(obj_data: dict[str, Any]) -> str:
     return "proceed_new"
 
 
-def _check_object_duplicate_status(obj_data: dict[str, Any]) -> str:
-    """
-    Check if object already exists and determine what action to take.
-
-    Args:
-        obj_data: Dictionary containing object data
-
-    Returns:
-        String indicating status: "skip_unchanged", "recreate_moved", or "proceed_new"
-    """
-    object_id = obj_data.get("id")
-    object_name = obj_data.get("name", "Unnamed Object")
-    pos = obj_data.get("position", {"x": 0, "y": 0, "z": 0})
-    rot = obj_data.get("rotation", {"x": 0, "y": 0, "z": 0})
-
-    if not object_id:
-        return "proceed_new"
-
-    if _scene_tracker.object_exists_unchanged(object_id, pos, rot):
-        logger.debug(
-            f"Skipping duplicate object: {object_name} (id: {object_id}) - unchanged at {pos}"
-        )
-        return "skip_unchanged"
-
-    if _scene_tracker.object_exists_but_moved(object_id, pos, rot):
-        logger.debug(f"Object {object_name} (id: {object_id}) has moved - will recreate at {pos}")
-        return "recreate_moved"
-
-    return "proceed_new"
-
-
-def _create_object(obj_data: dict[str, Any], parent_location: str = "origin"):
+def _create_object(
+    obj_data: dict[str, Any],
+    parent_location: str = "origin",
+):
     """
     Creates a single object in the Blender scene.
     Raises an IOError if the object cannot be imported.
@@ -492,18 +538,37 @@ def _create_object(obj_data: dict[str, Any], parent_location: str = "origin"):
         if cached_empty:
             logger.debug(f"Reusing cached model for source_id: {source_id}")
 
-            # Create new Empty parent with linked duplicate children
+            # Duplicate the entire cached hierarchy via selection, linking mesh data
             with suppress_blender_logs():
-                bpy.ops.object.empty_add(type="PLAIN_AXES", location=(0, 0, 0))
-            blender_obj = bpy.context.active_object
-            blender_obj.name = object_name
+                # Deselect everything
+                bpy.ops.object.select_all(action="DESELECT")
 
-            # Create linked duplicates of all children
-            for child in cached_empty.children:
-                new_child = child.copy()
-                new_child.data = child.data  # Share mesh data (linked duplicate)
-                bpy.context.collection.objects.link(new_child)
-                new_child.parent = blender_obj
+                # Ensure the root is selected and active
+                cached_empty.select_set(True)
+                bpy.context.view_layer.objects.active = cached_empty
+
+                # Select all descendants (recursive) using Blender operator
+                bpy.ops.object.select_grouped(type="CHILDREN_RECURSIVE", extend=True)
+
+                # Snapshot objects before duplication to identify new ones
+                pre_objs = set(bpy.data.objects)
+
+                # Perform a linked duplicate so meshes share data
+                bpy.ops.object.duplicate(linked=True)
+
+            # Identify duplicated objects and pick the duplicated root
+            post_objs = set(bpy.data.objects)
+            new_objs = list(post_objs - pre_objs)
+            if not new_objs:
+                raise RuntimeError("Linked duplication produced no new objects.")
+
+            dup_roots = [o for o in new_objs if (o.parent is None) or (o.parent not in new_objs)]
+            if not dup_roots:
+                # Fallback: use any new object; hierarchy may be flat
+                dup_roots = [new_objs[0]]
+
+            blender_obj = dup_roots[0]
+            blender_obj.name = object_name
 
             # Skip to transformation section
             # (Set position, rotation, and scale)
@@ -520,7 +585,10 @@ def _create_object(obj_data: dict[str, Any], parent_location: str = "origin"):
 
             # Register the created object in tracker
             if object_id and blender_obj:
-                _scene_tracker.register_object(obj_data, blender_obj.name)
+                _scene_tracker.register_object(
+                    obj_data,
+                    blender_obj.name,
+                )
                 logger.debug(f"Registered object in tracker: {object_name} (id: {object_id})")
 
             return
@@ -633,7 +701,10 @@ def _create_object(obj_data: dict[str, Any], parent_location: str = "origin"):
 
     # Register the created object in tracker
     if object_id and blender_obj:
-        _scene_tracker.register_object(obj_data, blender_obj.name)
+        _scene_tracker.register_object(
+            obj_data,
+            blender_obj.name,
+        )
         logger.debug(f"Registered object in tracker: {object_name} (id: {object_id})")
 
 
@@ -642,7 +713,6 @@ def _create_floor_mesh(
     room_id: str,
     floor_thickness_m: float = 0.1,
     origin: str = "center",
-    room_category: str = "unknown",
 ) -> dict[str, Any]:
     """
     Args:
@@ -650,7 +720,6 @@ def _create_floor_mesh(
         room_id: Room identifier for naming
         floor_thickness_m: Thickness of the floor in meters (default: 0.1)
         origin: Origin placement - "center" or "min" (default: "center")
-        room_category: Room category from ENTITY_SUBTYPE_MAP (e.g., "bedroom", "bathroom")
 
     Returns:
         Dictionary with creation status and metadata
@@ -662,8 +731,8 @@ def _create_floor_mesh(
             "message": f"Room {room_id}: At least 3 boundary points required for floor mesh",
         }
 
-    floor_name = f"Floor_{room_category}_{room_id}"
-    mesh_name = f"FloorMesh_{room_category}_{room_id}"
+    floor_name = f"Floor_{room_id}"
+    mesh_name = f"FloorMesh_{room_id}"
 
     # Check if floor already exists
     if floor_name in bpy.data.objects:
@@ -1710,6 +1779,32 @@ def export_to_gltf(filepath: str, scene: str = None, exclude_grid: bool = True) 
     return filepath
 
 
+def debug_scene_summary(max_other: int = 20) -> dict:
+    """Return a quick summary of objects in the current scene.
+
+    Includes lists of floor and wall object names and a sample of other objects.
+    """
+    objs = list(bpy.context.scene.objects)
+    floors = [o.name for o in objs if o.type == "MESH" and o.name.startswith("Floor_")]
+    walls = [o.name for o in objs if o.type == "MESH" and o.name.startswith("Wall_")]
+    others = [(o.name, o.type) for o in objs if o.name not in floors + walls][:max_other]
+
+    summary = {
+        "count": len(objs),
+        "floors": floors,
+        "walls": walls,
+        "others": others,
+    }
+    logger.debug(
+        "Scene summary: count=%d, floors=%d, walls=%d, others(sample)=%d",
+        summary["count"],
+        len(floors),
+        len(walls),
+        len(others),
+    )
+    return summary
+
+
 def _configure_output_image(format: str, resolution: int):
     format = format.upper()
     mapping = {"JPG": "JPEG"}
@@ -1724,11 +1819,13 @@ def _configure_output_image(format: str, resolution: int):
 
 def _configure_render_settings(engine: str = None, samples: int = 256, enable_gpu: bool = False):
     """Selects a compatible render engine and configures render settings."""
-    try:
-        engine_prop = bpy.context.scene.render.bl_rna.properties["engine"]
-        available_engines = [item.identifier for item in engine_prop.enum_items]
-    except Exception:
-        available_engines = []
+
+    available_engines = ['BLENDER_EEVEE', 'BLENDER_WORKBENCH', 'CYCLES']
+    # try:
+    #     engine_prop = bpy.context.scene.render.bl_rna.properties["engine"]
+    #     available_engines = [item.identifier for item in engine_prop.enum_items]
+    # except Exception:
+    #     available_engines = []
 
     # Use specified engine if provided and available
     if engine and engine in available_engines:
@@ -1914,6 +2011,100 @@ def _setup_isometric_camera(auto_zoom: bool = True, margin: float = 2.0):
     bpy.context.scene.camera = camera
 
 
+def _apply_camera_track(camera: bpy.types.Object, target: bpy.types.Object) -> None:
+    """Apply tracking constraints so the camera points at ``target`` while staying upright.
+
+    Adds two Locked Track constraints:
+    - TRACK_NEGATIVE_Z with LOCK_Y
+    - TRACK_NEGATIVE_Z with LOCK_X
+
+    This combination robustly preserves world-up (+Z) without roll while aiming at the target.
+    Any existing TRACK_TO/DAMPED_TRACK/LOCKED_TRACK constraints are removed first.
+    """
+    # Remove existing tracking constraints to avoid stacking
+    for c in list(camera.constraints):
+        if c.type in ("TRACK_TO", "DAMPED_TRACK", "LOCKED_TRACK"):
+            camera.constraints.remove(c)
+
+    def _add_locked(lock_axis: str):
+        con = camera.constraints.new(type="LOCKED_TRACK")
+        con.target = target
+        # Cameras in Blender look down -Z
+        con.track_axis = "TRACK_NEGATIVE_Z"
+        con.lock_axis = lock_axis
+        return con
+
+    # Apply two locked tracks for stability
+    _add_locked("LOCK_Y")
+    _add_locked("LOCK_X")
+
+
+def _setup_egocentric_camera(
+    auto_zoom: bool = True,
+    margin: float = 1.5,
+    fallback_distance: float = 5.0,
+    default_height: float = 1.6,
+    track_target: Optional[bpy.types.Object] = None,
+):
+    """Sets up a perspective camera from a first-person viewpoint.
+
+    If ``track_target`` is provided, attaches a tracking constraint so the camera
+    continuously points at that object instead of computing orientation manually.
+    """
+
+    for obj in bpy.context.scene.objects:
+        if obj.type == "CAMERA":
+            bpy.data.objects.remove(obj, do_unlink=True)
+
+    bounds = _calculate_scene_bounds()
+
+    if bounds:
+        min_x, max_x, min_y, max_y, min_z, max_z = bounds
+        center_x = (min_x + max_x) / 2
+        center_y = (min_y + max_y) / 2
+        center_z = (min_z + max_z) / 2
+        width = max_x - min_x
+        depth = max_y - min_y
+    else:
+        center_x = center_y = 0.0
+        min_z = 0.0
+        center_z = default_height
+        width = depth = 4.0
+
+    camera_height = max(center_z, min_z + default_height)
+
+    with suppress_blender_logs():
+        bpy.ops.object.camera_add(location=(center_x, center_y, camera_height))
+
+    camera = bpy.context.object
+    camera.name = "EgocentricCamera"
+    camera.data.type = "PERSP"
+    camera.data.clip_start = 0.05
+    camera.data.clip_end = 500.0
+    # Spawn with initial rotation: +X 90 degrees (XYZ Euler)
+    camera.rotation_euler = (math.radians(90.0), 0.0, 0.0)
+
+    if auto_zoom:
+        forward_distance = max(max(width, depth) * margin, 1.0)
+        lens = max(18.0, min(45.0, (36.0 * margin) / max(max(width, depth), 1.0)))
+    else:
+        forward_distance = fallback_distance
+        lens = 35.0
+
+    if track_target is not None:
+        _apply_camera_track(camera, track_target)
+    else:
+        # Manual look-at straight ahead along +Y at eye height
+        look_target = Vector((center_x, center_y + forward_distance, camera_height))
+        direction = look_target - Vector(camera.location)
+        if direction.length == 0:
+            direction = Vector((0.0, 1.0, 0.0))
+        camera.rotation_euler = direction.to_track_quat("Z", "Y").to_euler()
+    camera.data.lens = lens
+
+    bpy.context.scene.camera = camera
+
+
 def _setup_lighting(energy: float = 0.2):
     """Sets up basic lighting for the scene."""
     if not any(obj.type == "LIGHT" for obj in bpy.context.scene.objects):
@@ -1949,7 +2140,7 @@ def render_to_file(output_path: str | Path) -> Path:
         # NOTE: `bpy` seems to switch context between `_configure_render_settings()` call
         #       and render call, reverting the rendering engine back to Cycles.
         # print(f"{bpy.context.scene.render.engine=}")  # TEMP
-        bpy.context.scene.render.engine = "BLENDER_EEVEE_NEXT"  # TEMP HACK
+        # bpy.context.scene.render.engine = "BLENDER_EEVEE_NEXT"  # TEMP HACK
         bpy.ops.render.render(write_still=True)
 
     if output_path.exists():
@@ -1963,13 +2154,17 @@ def render_to_numpy() -> np.ndarray:
     """
     Alternative: Render directly to NumPy array in memory (no file).
 
+    NOTE: This function does not seem to work with `bpy` in "standalone" mode (directly invoked from Python).
+          To save render, it seems necessary to save the render into the filesystem, and retrieve as file.
+
     Returns:
         NumPy array of rendered image data.
     """
     # Render to Blender's internal buffer
     with suppress_blender_logs():
-        bpy.ops.render.render()
+        bpy.ops.render.render(write_still=False)
 
+    # ORIG (doesn't work)
     # Get rendered image from Blender
     render_result = bpy.context.scene.render
     width = render_result.resolution_x
@@ -1980,6 +2175,24 @@ def render_to_numpy() -> np.ndarray:
 
     # Convert to NumPy array (RGBA format)
     image_array = np.array(pixels).reshape((height, width, 4))
+
+    # # ALT (doesn't work)
+    # # Access pixels from the Compositor Viewer node image
+    # # NOTE: This requires setting up a 'Viewer' terminal output node.
+    # viewer_img = bpy.data.images.get("Viewer Node")
+    # if viewer_img is None:
+    #     raise RuntimeError("Viewer Node image not found.")
+
+    # px = viewer_img.pixels[:]
+    # if not px:
+    #     raise RuntimeError("Viewer Node pixels are empty.")
+
+    # width = int(viewer_img.size[0])
+    # height = int(viewer_img.size[1])
+    # if width <= 0 or height <= 0:
+    #     raise RuntimeError("Viewer Node reported invalid size (0x0). Check compositor setup and render settings.")
+
+    # image_array = np.array(px).reshape((height, width, 4))
 
     return image_array
 
@@ -2000,7 +2213,7 @@ def create_scene_visualization(
         resolution: The resolution of the output image.
         format: The format of the output image.
         output_dir: The directory to save the output image to.
-        view: The view to render from. Can be 'top_down' or 'isometric'.
+        view: The view to render from. Can be 'top_down', 'isometric', or 'egocentric'.
         background_color: RGBA color for the background.
         show_grid: Whether to show a grid in the visualization.
 
@@ -2031,8 +2244,12 @@ def create_scene_visualization(
             _setup_top_down_camera()
         elif view == "isometric":
             _setup_isometric_camera()
+        elif view == "egocentric":
+            _setup_egocentric_camera()
         else:
-            raise ValueError(f"Unsupported view type: {view}. Must be 'top_down' or 'isometric'.")
+            raise ValueError(
+                f"Unsupported view type: {view}. Must be 'top_down', 'isometric', or 'egocentric'."
+            )
         _setup_lighting(energy=0.5)
 
         # Create grid if requested
@@ -2053,6 +2270,394 @@ def visualize(scene=None, **kwargs):
 
     with SceneSwitcher(scene):
         return create_scene_visualization(**kwargs)
+
+
+class _ObjectAugmentor:
+    """Applies temporary object augmentations for visualization renders."""
+
+    def __init__(self, target_ids: list[str], augmentations: set[str]):
+        self.target_ids = target_ids
+        self.augmentations = augmentations
+        self._target_pairs = self._resolve_targets()
+        self._original_pass_indices: dict[str, int] = {}
+        self._view_layer_state: bool | None = None
+        self._text_objects: list[bpy.types.Object] = []
+
+    @property
+    def has_targets(self) -> bool:
+        return bool(self._target_pairs)
+
+    def _resolve_targets(self) -> list[tuple[str, bpy.types.Object]]:
+        resolved: list[tuple[str, bpy.types.Object]] = []
+        seen: set[str] = set()
+        for object_id in self.target_ids:
+            state = _scene_tracker.get_object_state(object_id)
+            if not state:
+                continue
+            blender_obj = bpy.data.objects.get(state.blender_name)
+            if not blender_obj or blender_obj.name in seen:
+                continue
+            resolved.append((object_id, blender_obj))
+            seen.add(blender_obj.name)
+        return resolved
+
+    def prepare_highlight(self, view_layer: bpy.types.ViewLayer) -> int | None:
+        if "highlight" not in self.augmentations:
+            return None
+
+        mesh_objects: list[bpy.types.Object] = []
+        for _, obj in self._target_pairs:
+            mesh_objects.extend(_collect_mesh_descendants(obj))
+
+        if not mesh_objects:
+            return None
+
+        self._view_layer_state = view_layer.use_pass_object_index
+        view_layer.use_pass_object_index = True
+
+        for mesh in mesh_objects:
+            self._original_pass_indices[mesh.name] = mesh.pass_index
+            mesh.pass_index = OBJECT_HIGHLIGHT_PASS_INDEX
+
+        return OBJECT_HIGHLIGHT_PASS_INDEX
+
+    def create_labels(self, camera: bpy.types.Object | None):
+        if "show_id" not in self.augmentations or camera is None:
+            return
+
+        for object_id, blender_obj in self._target_pairs:
+            label_obj = _create_object_label(object_id, blender_obj, camera)
+            if label_obj:
+                self._text_objects.append(label_obj)
+
+    def update_camera(self, camera: bpy.types.Object | None):
+        if camera is None:
+            return
+
+        for label in self._text_objects:
+            for constraint in label.constraints:
+                if constraint.type == "TRACK_TO":
+                    constraint.target = camera
+
+    def get_bounds(self) -> tuple[Vector | None, float]:
+        mesh_objects: list[bpy.types.Object] = []
+        for _, obj in self._target_pairs:
+            mesh_objects.extend(_collect_mesh_descendants(obj))
+
+        if mesh_objects:
+            bounds = _calculate_bounds_for_objects(mesh_objects)
+            if bounds:
+                min_x, max_x, min_y, max_y, min_z, max_z = bounds
+                center = Vector(
+                    (
+                        (min_x + max_x) / 2,
+                        (min_y + max_y) / 2,
+                        (min_z + max_z) / 2,
+                    )
+                )
+                radius = max(max_x - min_x, max_y - min_y, max_z - min_z) / 2
+                return center, max(radius, 0.5)
+
+        if not self._target_pairs:
+            return None, 0.0
+
+        aggregate = Vector((0.0, 0.0, 0.0))
+        for _, obj in self._target_pairs:
+            aggregate += Vector(obj.matrix_world.translation)
+        center = aggregate / len(self._target_pairs)
+        return center, 1.0
+
+    def cleanup(self):
+        for name, original_index in self._original_pass_indices.items():
+            obj = bpy.data.objects.get(name)
+            if obj:
+                obj.pass_index = original_index
+
+        if self._view_layer_state is not None:
+            bpy.context.view_layer.use_pass_object_index = self._view_layer_state
+
+        for label in list(self._text_objects):
+            obj = bpy.data.objects.get(label.name)
+            if obj:
+                data = obj.data
+                bpy.data.objects.remove(obj, do_unlink=True)
+                if data and getattr(data, "users", 0) == 0:
+                    bpy.data.curves.remove(data)
+        self._text_objects.clear()
+
+
+def _collect_mesh_descendants(root: bpy.types.Object) -> list[bpy.types.Object]:
+    meshes: list[bpy.types.Object] = []
+
+    def _traverse(obj: bpy.types.Object):
+        if obj.type == "MESH":
+            meshes.append(obj)
+        for child in obj.children:
+            _traverse(child)
+
+    _traverse(root)
+    return meshes
+
+
+def _calculate_bounds_for_objects(
+    objects: list[bpy.types.Object],
+) -> tuple[float, float, float, float, float, float] | None:
+    if not objects:
+        return None
+
+    valid_objects = [obj for obj in objects if getattr(obj, "bound_box", None)]
+    if not valid_objects:
+        return None
+
+    first_obj = valid_objects[0]
+    bbox_corners = [first_obj.matrix_world @ Vector(corner) for corner in first_obj.bound_box]
+
+    min_x = min(v.x for v in bbox_corners)
+    max_x = max(v.x for v in bbox_corners)
+    min_y = min(v.y for v in bbox_corners)
+    max_y = max(v.y for v in bbox_corners)
+    min_z = min(v.z for v in bbox_corners)
+    max_z = max(v.z for v in bbox_corners)
+
+    for obj in valid_objects[1:]:
+        bbox_corners = [obj.matrix_world @ Vector(corner) for corner in obj.bound_box]
+        min_x = min(min_x, min(v.x for v in bbox_corners))
+        max_x = max(max_x, max(v.x for v in bbox_corners))
+        min_y = min(min_y, min(v.y for v in bbox_corners))
+        max_y = max(max_y, max(v.y for v in bbox_corners))
+        min_z = min(min_z, min(v.z for v in bbox_corners))
+        max_z = max(max_z, max(v.z for v in bbox_corners))
+
+    return (min_x, max_x, min_y, max_y, min_z, max_z)
+
+
+def _create_object_label(
+    object_id: str, blender_obj: bpy.types.Object, camera: bpy.types.Object
+) -> bpy.types.Object | None:
+    center, size = _object_center_and_size(blender_obj)
+    if center is None:
+        return None
+
+    text_curve = bpy.data.curves.new(name=f"ObjectLabelCurve_{object_id}", type="FONT")
+    text_curve.body = object_id
+    text_curve.align_x = "CENTER"
+    text_curve.align_y = "CENTER"
+    text_curve.size = max(size * 0.25, 0.35)
+
+    text_obj = bpy.data.objects.new(f"ObjectLabel_{object_id}", text_curve)
+    bpy.context.scene.collection.objects.link(text_obj)
+
+    offset_height = max(size * 0.6, 0.5)
+    text_obj.location = center + Vector((0.0, 0.0, offset_height))
+    text_obj.parent = blender_obj
+    text_obj.matrix_parent_inverse = blender_obj.matrix_world.inverted()
+    text_obj.show_in_front = True
+    text_obj.hide_select = True
+
+    material = _create_unlit_material(
+        f"{OBJECT_LABEL_MATERIAL_NAME}_{object_id}", (1.0, 1.0, 1.0, 1.0)
+    )
+    if text_obj.data.materials:
+        text_obj.data.materials[0] = material
+    else:
+        text_obj.data.materials.append(material)
+
+    constraint = text_obj.constraints.new(type="TRACK_TO")
+    constraint.target = camera
+    constraint.track_axis = "TRACK_Z"
+    constraint.up_axis = "UP_Y"
+
+    return text_obj
+
+
+def _object_center_and_size(
+    blender_obj: bpy.types.Object,
+) -> tuple[Vector | None, float]:
+    mesh_objects = _collect_mesh_descendants(blender_obj)
+    bounds = _calculate_bounds_for_objects(mesh_objects) if mesh_objects else None
+
+    if bounds:
+        min_x, max_x, min_y, max_y, min_z, max_z = bounds
+        center = Vector(
+            (
+                (min_x + max_x) / 2,
+                (min_y + max_y) / 2,
+                (min_z + max_z) / 2,
+            )
+        )
+        size = max(max_x - min_x, max_y - min_y, max_z - min_z)
+        return center, max(size, 1.0)
+
+    return Vector(blender_obj.matrix_world.translation), 1.0
+
+
+def _ensure_preview_camera(scene: bpy.types.Scene) -> bpy.types.Object:
+    camera = bpy.data.objects.get(OBJECT_PREVIEW_CAMERA_NAME)
+
+    if not camera or camera.type != "CAMERA":
+        if camera and camera.type != "CAMERA":
+            bpy.data.objects.remove(camera, do_unlink=True)
+        with suppress_blender_logs():
+            bpy.ops.object.camera_add(location=(0.0, 0.0, 0.0))
+        camera = bpy.context.object
+        camera.name = OBJECT_PREVIEW_CAMERA_NAME
+        # Spawn with initial rotation: +X 90 degrees (XYZ Euler)
+        camera.rotation_euler = (math.radians(90.0), 0.0, 0.0)
+
+    if camera.name not in scene.collection.objects:
+        scene.collection.objects.link(camera)
+
+    camera.data.type = "PERSP"
+    camera.data.lens = 35
+    camera.data.clip_start = 0.05
+    camera.data.clip_end = 500.0
+
+    return camera
+
+
+def _position_preview_camera(
+    camera: bpy.types.Object, center: Vector, radius: float, angle_degrees: float
+):
+    distance = max(radius * 2.2, 2.0)
+    height = max(center.z + radius * 0.6, center.z + 0.5)
+    angle = math.radians(angle_degrees)
+
+    camera.location = Vector(
+        (
+            center.x + math.cos(angle) * distance,
+            center.y + math.sin(angle) * distance,
+            height,
+        )
+    )
+
+    # NOTE: direction handling is offloaded to `_apply_camera_track()`.
+    # If no tracking constraints exist, raise a warning
+    if not any(c.type == "LOCKED_TRACK" for c in getattr(camera, "constraints", [])):
+        logger.warning("Direction constraint not found for preview camera")
+
+
+def _render_preview_rotation(
+    scene: bpy.types.Scene,
+    augmentor: _ObjectAugmentor,
+    output_path: Path,
+    angles: list[float] = [0, 90, 180, 270],
+    image_format: str = "jpg",
+) -> Path | None:
+    """Render four rotational previews to files using the final renderer.
+
+    Saves individual frames into './tmp' as '<stem>_rot_XXX.<ext>' and returns
+    the path of the last rendered frame.
+    """
+    center, radius = augmentor.get_bounds()
+    if center is None or radius <= 0:
+        return None
+
+    original_camera = scene.camera
+    preview_camera = _ensure_preview_camera(scene)
+
+    saved_paths: list[Path] = []
+
+    scene.camera = preview_camera
+    augmentor.update_camera(preview_camera)
+
+    # Track the target object if exists
+    if augmentor.has_targets:
+        first_target = augmentor._target_pairs[0][1]
+        _apply_camera_track(preview_camera, first_target)
+
+    for angle in angles:
+        _position_preview_camera(preview_camera, center, radius, angle)
+        angle_path = f"{output_path}_rot_{angle:03d}.{image_format.lower()}"
+        saved_paths.append(render_to_file(angle_path))
+
+    # Restore camera to original
+    scene.camera = original_camera
+    augmentor.update_camera(original_camera)
+
+    compose_image_grid([np.array(Image.open(path)) for path in saved_paths], output_path)
+    logger.debug(f"Composed rotation preview render -> {output_path} (frames: {len(saved_paths)})")
+
+    return output_path
+
+
+def create_object_visualization(
+    resolution=1024,
+    format="jpg",
+    filename: str = None,
+    output_dir: str = None,
+    view: str = "top_down",
+    background_color: tuple[float, float, float, float] = BACKGROUND_COLOR,
+    show_grid: bool = False,
+    augmentations: list[str] | None = None,
+    target_objects: list[str] | None = None,
+    scene: str | None = None,
+) -> Path:
+    """Render the scene with object-focused augmentations."""
+
+    augmentations = set(augmentations or [])
+    target_objects = target_objects or []
+
+    if not filename:
+        filename = "object_render"
+
+    if output_dir is None:
+        output_dir = tempfile.gettempdir()
+
+    output_path = get_filename(
+        output_dir=output_dir,
+        base_name=f"{filename}_{view}",
+        extension=format.lower(),
+        strategy="increment",
+    )
+
+    with SceneSwitcher(scene):
+        # Resolve targets early so egocentric camera can track them
+        augmentor = _ObjectAugmentor(target_objects, augmentations)
+        track_target_obj = augmentor._target_pairs[0][1] if (view == "egocentric" and augmentor.has_targets) else None
+
+        with suppress_blender_logs():
+            # _configure_render_settings()  # OG
+            _configure_render_settings(engine="CYCLES")  # ALT
+            _configure_output_image(format, resolution)
+
+            if view == "top_down":
+                _setup_top_down_camera()
+            elif view == "isometric":
+                _setup_isometric_camera()
+            elif view == "egocentric":
+                _setup_egocentric_camera(track_target=track_target_obj)
+            else:
+                raise ValueError(
+                    f"Unsupported view type: {view}. Must be 'top_down', 'isometric', or 'egocentric'."
+                )
+
+            _setup_lighting(energy=0.5)
+
+            if show_grid:
+                _create_grid()
+
+        scene_obj = bpy.context.scene
+        highlight_index = augmentor.prepare_highlight(bpy.context.view_layer)
+
+        with suppress_blender_logs():
+            setup_lighting_foundation(scene_obj, background_color=background_color)
+            setup_post_processing(scene_obj, highlight_pass_index=highlight_index)
+
+        augmentor.create_labels(scene_obj.camera)
+
+        render_result: Path | None = None
+
+        try:
+            if "preview_rotation" in augmentations and augmentor.has_targets:
+                preview_path = _render_preview_rotation(scene_obj, augmentor, output_path, image_format=format)
+                if preview_path:
+                    render_result = Path(preview_path)
+            if render_result is None:
+                render_result = render_to_file(output_path)
+        finally:
+            augmentor.cleanup()
+
+    return render_result
 
 
 def load_scene_from_yaml(filepath: str) -> dict[str, Any]:
@@ -2169,30 +2774,251 @@ def setup_lighting_foundation(
 #     fill_light.visible_shadow = False
 
 
-def setup_post_processing(scene: bpy.types.Scene):
-    """Configures color management and compositor nodes for the final look."""
+def setup_post_processing(
+    scene: bpy.types.Scene,
+    highlight_pass_index: int | None = None,
+    highlight_color: tuple[float, float, float, float] = (1.0, 0.65, 0.1, 1.0),
+    enable_glare: bool = True,
+):
+    """Configures color management and compositor nodes for the final look.
+
+    Uses an ID Mask + Blur + Subtract + Multiply + Glare chain for object highlights,
+    avoiding unsupported Dilate/Erode modes across Blender versions.
+    """
     print("Setting up post-processing...")
     scene.view_settings.view_transform = "AgX"
     scene.view_settings.look = "AgX - Medium High Contrast"
 
+    # Enable object index pass if highlighting
+    view_layer = bpy.context.view_layer
+    view_layer.use_pass_object_index = highlight_pass_index is not None
+    view_layer.update()
+
+    # Ensure compositing is enabled
+    scene.render.use_compositing = True
+    # Enable compositor and reset nodes
     scene.use_nodes = True
-    nt = scene.node_tree
-    nt.nodes.clear()
+    tree = scene.node_tree
+    nodes = tree.nodes
+    links = tree.links
+    nodes.clear()
 
-    render_layers = nt.nodes.new(type="CompositorNodeRLayers")
-    composite_output = nt.nodes.new(type="CompositorNodeComposite")
-    glare_node = nt.nodes.new(type="CompositorNodeGlare")
+    # Base nodes
+    rlayers = nodes.new("CompositorNodeRLayers")
+    # # Route RLayers to the active scene + view layer to ensure IndexOB is valid
+    # try:
+    #     rlayers.scene = scene
+    # except Exception:
+    #     pass
+    # try:
+    #     rlayers.layer = bpy.context.view_layer.name
+    # except Exception:
+    #     pass
+    comp = nodes.new("CompositorNodeComposite")
 
-    glare_node.glare_type = "FOG_GLOW"
-    glare_node.threshold = 1.5
-    glare_node.size = 4
+    # Optional base glare on the full image
+    base_socket = rlayers.outputs["Image"]
+    if enable_glare:
+        base_glare = nodes.new("CompositorNodeGlare")
+        base_glare.glare_type = "FOG_GLOW"
+        base_glare.threshold = 1.5
+        base_glare.size = 4
+        links.new(rlayers.outputs["Image"], base_glare.inputs["Image"])
+        base_socket = base_glare.outputs["Image"]
 
-    nt.links.new(render_layers.outputs["Image"], glare_node.inputs["Image"])
-    nt.links.new(glare_node.outputs["Image"], composite_output.inputs["Image"])
+    final_socket = base_socket
+
+    # Highlight chain if requested
+    if highlight_pass_index is not None:
+        id_mask = nodes.new("CompositorNodeIDMask")
+        id_mask.index = int(highlight_pass_index)
+        # Slightly cleaner edges
+        try:
+            id_mask.use_antialiasing = True
+        except Exception:
+            pass
+
+        blur = nodes.new("CompositorNodeBlur")
+        blur.filter_type = "GAUSS"
+        blur.size_x = 25
+        blur.size_y = 25
+        blur.use_relative = False
+
+        sub = nodes.new("CompositorNodeMixRGB")
+        sub.blend_type = "SUBTRACT"
+        sub.inputs[0].default_value = 1.0
+
+        color_mix = nodes.new("CompositorNodeMixRGB")
+        color_mix.blend_type = "MULTIPLY"
+        color_mix.inputs[0].default_value = 1.0
+        # Tint with provided highlight color
+        color_mix.inputs[2].default_value = highlight_color
+
+        glow = nodes.new("CompositorNodeGlare")
+        glow.glare_type = "FOG_GLOW"
+        glow.quality = "HIGH"
+        glow.size = 9
+        glow.mix = 0.0
+
+        add_mix = nodes.new("CompositorNodeMixRGB")
+        add_mix.blend_type = "ADD"
+        add_mix.inputs[0].default_value = 1.0
+
+        # Wire up highlight chain
+        links.new(rlayers.outputs["IndexOB"], id_mask.inputs["ID value"])
+        links.new(id_mask.outputs["Alpha"], blur.inputs["Image"])
+        links.new(blur.outputs["Image"], sub.inputs[1])
+        links.new(id_mask.outputs["Alpha"], sub.inputs[2])
+        links.new(sub.outputs["Image"], color_mix.inputs[1])
+        links.new(color_mix.outputs["Image"], glow.inputs["Image"])
+
+        # Combine glow with base image
+        links.new(base_socket, add_mix.inputs[1])
+        links.new(glow.outputs["Image"], add_mix.inputs[2])
+        final_socket = add_mix.outputs["Image"]
+
+    # To Composite
+    links.new(final_socket, comp.inputs["Image"])
+
+    # Also feed a Viewer node so pixel data can be read reliably
+    try:
+        viewer = nodes.new("CompositorNodeViewer")
+        # Use same final image (post effects/highlights) for Viewer output
+        links.new(final_socket, viewer.inputs["Image"])
+    except Exception:
+        # If nodes cannot be created (unlikely), continue without viewer
+        pass
+
+
+# NOTE: temporarily, if interior door is not needed, let's delete this function later
+
+
+def _door_boundary_to_coords(door_boundary: list) -> list[tuple[float, float]]:
+    """Normalize mixed point representations into (x, y) tuples."""
+    coords: list[tuple[float, float]] = []
+    for point in door_boundary or []:
+        if isinstance(point, tuple):
+            coords.append(point)
+        elif hasattr(point, "x") and hasattr(point, "y"):
+            coords.append((point.x, point.y))
+        else:
+            coords.append((point["x"], point["y"]))
+    return coords
+
+
+def is_interior_door(door_boundary: list, check_distance: float = 0.4) -> bool:
+    """
+    Check if door is interior (between two different rooms).
+
+    Args:
+        door_boundary: List of (x, y) tuples or Vector2 points defining the door polygon
+        check_distance: Distance in meters to check away from door centroid (default: 0.4m)
+
+    Returns:
+        True if interior door, False if exterior door
+    """
+    coords = _door_boundary_to_coords(door_boundary)
+    if not coords:
+        return False
+
+    centroid_x = sum(x for x, _ in coords) / len(coords)
+    centroid_y = sum(y for _, y in coords) / len(coords)
+
+    check_positions = {
+        "left": (centroid_x - check_distance, centroid_y),
+        "right": (centroid_x + check_distance, centroid_y),
+        "down": (centroid_x, centroid_y - check_distance),
+        "up": (centroid_x, centroid_y + check_distance),
+    }
+
+    floors_by_direction = {}
+    for direction, (check_x, check_y) in check_positions.items():
+        for obj in bpy.context.scene.objects:
+            if obj.type != "MESH" or not obj.name.startswith("Floor_"):
+                continue
+
+            if obj.data.polygons:
+                bbox_x = [obj.matrix_world @ Vector(v.co) for v in obj.data.vertices]
+                x_coords = [v.x for v in bbox_x]
+                y_coords = [v.y for v in bbox_x]
+
+                if x_coords and y_coords:
+                    min_x, max_x = min(x_coords), max(x_coords)
+                    min_y, max_y = min(y_coords), max(y_coords)
+
+                    if min_x <= check_x <= max_x and min_y <= check_y <= max_y:
+                        floors_by_direction[direction] = obj.name
+                        break
+
+    has_different_lr = (
+        "left" in floors_by_direction
+        and "right" in floors_by_direction
+        and floors_by_direction["left"] != floors_by_direction["right"]
+    )
+    has_different_ud = (
+        "up" in floors_by_direction
+        and "down" in floors_by_direction
+        and floors_by_direction["up"] != floors_by_direction["down"]
+    )
+
+    return has_different_lr or has_different_ud
+
+
+def mark_interior_door(
+    door_boundary: list, door_id: str, check_distance: float = 0.4, height: float = 2.0
+) -> bool:
+    """
+    Check if a door is interior and, if so, mark it with a yellow cube.
+
+    Args:
+        door_boundary: List of (x, y) tuples or Vector2 points defining the door polygon
+        door_id: Identifier for the door (for naming)
+        check_distance: Distance in meters to check away from door centroid (default: 0.4m)
+        height: Height of the marker cube in meters (default: 2.0m)
+
+    Returns:
+        True if interior door was marked, False otherwise
+    """
+    coords = _door_boundary_to_coords(door_boundary)
+    if not coords:
+        return False
+
+    if not is_interior_door(door_boundary, check_distance=check_distance):
+        return False
+
+    centroid_x = sum(x for x, _ in coords) / len(coords)
+    centroid_y = sum(y for _, y in coords) / len(coords)
+
+    x_coords = [x for x, _ in coords]
+    y_coords = [y for _, y in coords]
+    width = max(x_coords) - min(x_coords)
+    depth = max(y_coords) - min(y_coords)
+    marker_size = min(width, depth, 0.2)
+    if marker_size <= 0:
+        marker_size = 0.1
+
+    with suppress_blender_logs():
+        bpy.ops.mesh.primitive_cube_add(
+            size=marker_size, location=(centroid_x, centroid_y, height / 2)
+        )
+
+    marker = bpy.context.active_object
+    marker.name = f"DoorMarker_{door_id}"
+    marker.scale.z = height / marker_size
+
+    yellow_mat = _create_unlit_material(f"DoorMarker_Material_{door_id}", (1.0, 0.9, 0.0, 1.0))
+
+    if marker.data.materials:
+        marker.data.materials[0] = yellow_mat
+    else:
+        marker.data.materials.append(yellow_mat)
+
+    logger.debug(f"Marked interior door {door_id} at ({centroid_x:.2f}, {centroid_y:.2f})")
+    return True
 
 
 def create_room_walls(
-    rooms: list,
+    rooms: list[Room],
     wall_height: float = 2.7,
     wall_thickness: float = 0.05,
     door_cutouts: bool = True,
@@ -2202,6 +3028,7 @@ def create_room_walls(
     window_height_bottom: float = DEFAULT_WINDOW_HEIGHT_BOTTOM,
     window_height_top: float = DEFAULT_WINDOW_HEIGHT_TOP,
     keep_cutters_visible: bool = False,
+    translucent: bool = False,
 ):
     """Create walls for each room individually (excluding windows and exterior doors).
 
@@ -2216,6 +3043,7 @@ def create_room_walls(
         window_height_bottom: Bottom height of window cutouts (default: DEFAULT_WINDOW_HEIGHT_BOTTOM)
         window_height_top: Top height of window cutouts (default: DEFAULT_WINDOW_HEIGHT_TOP)
         keep_cutters_visible: If True, keep cutter objects visible for debugging (default: False)
+        translucent: If True, assign a translucent wall material (default: False)
 
     Returns:
         Number of walls created
@@ -2234,84 +3062,161 @@ def create_room_walls(
     # First, collect all non-door, non-window room boundaries as polygons for door classification
     all_room_polygons = []
     for room in rooms:
-        if room.category not in ["door", "window"] and room.boundary and len(room.boundary) >= 3:
+        r_category = getattr(room, "category", None)
+        if r_category is None and isinstance(room, dict):
+            r_category = room.get("category")
+        r_boundary = getattr(room, "boundary", None)
+        if r_boundary is None and isinstance(room, dict):
+            r_boundary = room.get("boundary")
+        if r_category not in ["door", "window"] and r_boundary and len(r_boundary) >= 3:
             try:
-                room_coords = [(p.x, p.y) for p in room.boundary]
-                room_polygon = Polygon(room_coords)
+                boundary_points = []
+                for p in r_boundary:
+                    if hasattr(p, "x"):
+                        boundary_points.append((p.x, p.y))
+                    else:
+                        boundary_points.append((p["x"], p["y"]))
+                room_polygon = Polygon(boundary_points)
                 if room_polygon.is_valid and not room_polygon.is_empty:
                     all_room_polygons.append(room_polygon)
             except Exception:
                 continue
 
+    # Collect windows and doors from both structure (newer model) and category (older model)
     for r in rooms:
-        # Include windows
-        if (
-            window_cutouts
-            and getattr(r, "category", None) == "window"
-            and getattr(r, "boundary", None)
-            and len(r.boundary) >= 3
-        ):
-            window_cutout_polygons.append((r.id, [(p.x, p.y) for p in r.boundary]))
-        # Include exterior doors
-        elif (
-            door_cutouts
-            and getattr(r, "category", None) == "door"
-            and getattr(r, "boundary", None)
-            and len(r.boundary) >= 3
-        ):
-            door_boundary = [(p.x, p.y) for p in r.boundary]
-            try:
-                door_polygon = Polygon(door_boundary)
-                if door_polygon.is_valid and not door_polygon.is_empty:
-                    door_type = classify_door_type(door_polygon, all_room_polygons)
-                    is_interior = door_type == "interior"
-                else:
-                    is_interior = False
-            except Exception:
-                is_interior = False
+        # Handle structure-based model (newer approach from main)
+        r_structs = getattr(r, "structure", None)
+        if r_structs is None and isinstance(r, dict):
+            r_structs = r.get("structure")
+        if r_structs:
+            for s in r_structs:
+                # s can be pydantic Structure or dict
+                s_type = getattr(s, "type", None) if not isinstance(s, dict) else s.get("type")
+                s_id = getattr(s, "id", None) if not isinstance(s, dict) else s.get("id")
+                s_boundary = (
+                    getattr(s, "boundary", None) if not isinstance(s, dict) else s.get("boundary")
+                )
+                if not s_boundary or len(s_boundary) < 3:
+                    continue
+                # Normalize boundary to list of (x, y)
+                boundary_xy: list[tuple[float, float]] = []
+                for p in s_boundary:
+                    if hasattr(p, "x"):
+                        boundary_xy.append((p.x, p.y))
+                    else:
+                        boundary_xy.append((p["x"], p["y"]))
 
-            if not is_interior:
-                exterior_door_cutout_polygons.append((r.id, door_boundary))
-                logger.debug(f"Door {r.id}: identified as exterior door")
-            else:
-                interior_door_polygons.append((r.id, door_boundary))
-                logger.debug(f"Door {r.id}: identified as interior door")
+                if window_cutouts and s_type == "window":
+                    window_cutout_polygons.append((str(s_id), boundary_xy))
+                elif door_cutouts and s_type == "door":
+                    try:
+                        door_polygon = Polygon(boundary_xy)
+                        if door_polygon.is_valid and not door_polygon.is_empty:
+                            door_type = classify_door_type(door_polygon, all_room_polygons)
+                            is_interior = door_type == "interior"
+                        else:
+                            is_interior = False
+                    except Exception:
+                        is_interior = False
+
+                    if not is_interior:
+                        exterior_door_cutout_polygons.append((str(s_id), boundary_xy))
+                        logger.debug(f"Door {s_id}: identified as exterior door")
+                    else:
+                        interior_door_polygons.append((str(s_id), boundary_xy))
+                        logger.debug(f"Door {s_id}: identified as interior door")
+        else:
+            # Handle category-based model (older approach from HEAD)
+            r_category = getattr(r, "category", None)
+            if r_category is None and isinstance(r, dict):
+                r_category = r.get("category")
+            r_boundary = getattr(r, "boundary", None)
+            if r_boundary is None and isinstance(r, dict):
+                r_boundary = r.get("boundary")
+            r_id = getattr(r, "id", None)
+            if r_id is None and isinstance(r, dict):
+                r_id = r.get("id", "unknown")
+
+            # Include windows
+            if (
+                window_cutouts
+                and r_category == "window"
+                and r_boundary
+                and len(r_boundary) >= 3
+            ):
+                boundary_points = []
+                for p in r_boundary:
+                    if hasattr(p, "x"):
+                        boundary_points.append((p.x, p.y))
+                    else:
+                        boundary_points.append((p["x"], p["y"]))
+                window_cutout_polygons.append((str(r_id), boundary_points))
+            # Include exterior doors
+            elif (
+                door_cutouts
+                and r_category == "door"
+                and r_boundary
+                and len(r_boundary) >= 3
+            ):
+                door_boundary = []
+                for p in r_boundary:
+                    if hasattr(p, "x"):
+                        door_boundary.append((p.x, p.y))
+                    else:
+                        door_boundary.append((p["x"], p["y"]))
+                try:
+                    door_polygon = Polygon(door_boundary)
+                    if door_polygon.is_valid and not door_polygon.is_empty:
+                        door_type = classify_door_type(door_polygon, all_room_polygons)
+                        is_interior = door_type == "interior"
+                    else:
+                        is_interior = False
+                except Exception:
+                    is_interior = False
+
+                if not is_interior:
+                    exterior_door_cutout_polygons.append((str(r_id), door_boundary))
+                    logger.debug(f"Door {r_id}: identified as exterior door")
+                else:
+                    interior_door_polygons.append((str(r_id), door_boundary))
+                    logger.debug(f"Door {r_id}: identified as interior door")
 
     for room in rooms:
-        # Skip windows
-        if room.category == "window":
+        # Extract boundary safely
+        r_boundary = getattr(room, "boundary", None)
+        if r_boundary is None and isinstance(room, dict):
+            r_boundary = room.get("boundary")
+        if not r_boundary or len(r_boundary) < 3:
             continue
 
-        # Skip all doors (both interior and exterior)
-        if room.category == "door":
-            continue
+        # Support Vector2 objects or dict-like points
+        boundary_points = []
+        for p in r_boundary:
+            if hasattr(p, "x"):
+                boundary_points.append((p.x, p.y))
+            else:
+                boundary_points.append((p["x"], p["y"]))
 
-        # Skip invalid boundaries
-        if not room.boundary or len(room.boundary) < 3:
-            continue
+        room_id = getattr(room, "id", None)
+        if room_id is None and isinstance(room, dict):
+            room_id = room.get("id", "unknown")
 
-        # Create wall for this room
-        boundary_points = [(p.x, p.y) for p in room.boundary]
-
-        mesh = bpy.data.meshes.new(f"Wall_{room.id}")
-        obj = bpy.data.objects.new(f"Wall_{room.id}", mesh)
+        mesh = bpy.data.meshes.new(f"Wall_{room_id}")
+        obj = bpy.data.objects.new(f"Wall_{room_id}", mesh)
         bpy.context.collection.objects.link(obj)
 
         bm = bmesh.new()
 
-        # Create bottom vertices
         bottom_verts = []
         for x, y in boundary_points:
             v = bm.verts.new((x, y, 0))
             bottom_verts.append(v)
 
-        # Create top vertices
         top_verts = []
         for x, y in boundary_points:
             v = bm.verts.new((x, y, wall_height))
             top_verts.append(v)
 
-        # Create wall faces
         num_verts = len(bottom_verts)
         for i in range(num_verts):
             next_i = (i + 1) % num_verts
@@ -2321,30 +3226,41 @@ def create_room_walls(
             )
             face.normal_update()
 
-        # Apply mesh
         bm.to_mesh(mesh)
         bm.free()
         mesh.update()
 
-        # Add solidify modifier for wall thickness
         solidify = obj.modifiers.new(name="Solidify", type="SOLIDIFY")
         solidify.thickness = wall_thickness
         solidify.offset = -1
 
-        # Apply modifier
         bpy.context.view_layer.objects.active = obj
         with suppress_blender_logs():
             bpy.ops.object.modifier_apply(modifier="Solidify")
 
-        # Apply window cutouts if requested (only for windows, not exterior doors)
-        if window_cutouts and window_cutout_polygons:
-            # Create room polygon for intersection checking
-            try:
-                room_polygon = Polygon(boundary_points)
-            except Exception:
-                room_polygon = None
+        # If requested, use translucent material for walls
+        if translucent:
+            # Don't create material if it exists already
+            mat_name = "TranslucentWallMaterial"
+            if mat_name in bpy.data.materials:
+                wall_material = bpy.data.materials[mat_name]
+            else:
+                wall_material = create_translucent_material(name=mat_name)
 
-            for idx, (cutout_id, cutout_boundary) in enumerate(window_cutout_polygons):
+            # Prevent duplicate material assignment
+            if not any(m and m.name == mat_name for m in obj.data.materials):
+                obj.data.materials.append(wall_material)
+
+        # Create room polygon for intersection checking
+        try:
+            room_polygon = Polygon(boundary_points)
+        except Exception:
+            room_polygon = None
+
+        # Apply window cutouts if requested (windows and exterior doors)
+        all_window_cutouts = window_cutout_polygons + exterior_door_cutout_polygons
+        if window_cutouts and all_window_cutouts:
+            for idx, (cutout_id, cutout_boundary) in enumerate(all_window_cutouts):
                 if not cutout_boundary:
                     continue
 
@@ -2415,14 +3331,8 @@ def create_room_walls(
                                 f"Successfully created window object: {window_result.get('object')}"
                             )
 
-        # Apply interior door cutouts if requested
         if door_cutouts and interior_door_polygons:
-            # Create room polygon for intersection checking
-            try:
-                room_polygon = Polygon(boundary_points)
-            except Exception:
-                room_polygon = None
-
+            # Reuse room_polygon created above for window cutouts
             for idx, (door_id, door_boundary) in enumerate(interior_door_polygons):
                 if not door_boundary:
                     continue
@@ -2542,3 +3452,71 @@ def apply_floor_material(
         logger.debug(f"Failed to apply material to floor {floor_object_name}")
 
     return success
+
+
+def apply_wall_material(
+    material_id: str,
+    wall_object_name: str,
+    uv_scale: float = 1.0,
+) -> bool:
+    """
+    Apply a material to a wall object in Blender.
+
+    Mirrors apply_floor_material but targets the wall mesh ("Wall_<room_id>").
+    Performs a simple UV unwrap for reasonable tiling before applying.
+
+    Args:
+        material_id: Material UID from Graphics-DB
+        wall_object_name: Name of the wall object in Blender (e.g., "Wall_room-01")
+        uv_scale: UV scale for texture tiling
+
+    Returns:
+        True if successful, False otherwise
+    """
+
+    try:
+        # Ensure the target object exists
+        obj = bpy.data.objects.get(wall_object_name)
+        if not obj:
+            logger.debug(f"Wall object not found: {wall_object_name}")
+            return False
+
+        # Create or refresh UVs for the wall mesh to ensure sane tiling
+        try:
+            with suppress_blender_logs():
+                bpy.ops.object.select_all(action="DESELECT")
+                obj.select_set(True)
+                bpy.context.view_layer.objects.active = obj
+                bpy.ops.object.mode_set(mode="EDIT")
+                bpy.ops.mesh.select_all(action="SELECT")
+                # Smart project works well for vertical quads
+                bpy.ops.uv.smart_project(angle_limit=66.0, island_margin=0.001)
+                bpy.ops.object.mode_set(mode="OBJECT")
+        except Exception as uv_err:
+            logger.debug(f"UV unwrap failed for {wall_object_name}: {uv_err}")
+
+        # Resolve material texture via database
+        material_db = MaterialDatabase()
+        texture_path = material_db.download_texture(material_id)
+        if not texture_path:
+            logger.debug(f"Failed to download texture for wall material: {material_id}")
+            return False
+
+        # Reuse the generic texture applicator (works for any mesh)
+        material_name = f"Mat_{Path(texture_path).stem}_{wall_object_name}"
+        success = texture_floor_mesh(
+            floor_object_name=wall_object_name,
+            texture_path=texture_path,
+            material_name=material_name,
+            uv_scale=uv_scale,
+        )
+
+        if success:
+            logger.debug(f"Applied wall material {material_id} to {wall_object_name}")
+        else:
+            logger.debug(f"Failed to apply wall material to {wall_object_name}")
+
+        return success
+    except Exception as e:
+        logger.debug(f"Error applying wall material to {wall_object_name}: {e}")
+        return False

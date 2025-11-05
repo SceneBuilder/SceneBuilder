@@ -1,7 +1,7 @@
 from pathlib import Path
 
-import addon_utils
 import bpy
+import addon_utils
 
 from scene_builder.config import DOOR_ADDON_ZIP_PATH, WINDOW_ADDON_ZIP_PATH
 from scene_builder.logging import logger

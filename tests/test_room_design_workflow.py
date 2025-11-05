@@ -1,5 +1,4 @@
 import asyncio
-import os
 from pathlib import Path
 
 from pydantic_graph import Graph, GraphRunResult
@@ -23,16 +22,20 @@ from scene_builder.nodes.placement import (
     PlacementVisualFeedback,
     placement_graph,
 )
-
 from scene_builder.nodes.routing import MultiRoomDesignOrchestrator
-from scene_builder.msd_integration.loader import MSDLoader, normalize_floor_plan_orientation, scale_floor_plan
+from scene_builder.importer.msd.loader import MSDLoader
 from scene_builder.utils.conversions import pydantic_from_yaml
+from scene_builder.utils.floorplan import (
+    normalize_floor_plan_orientation,
+    scale_floor_plan,
+)
 from scene_builder.utils.geometry import round_vector2_list, simplify_polygon, save_polygon_image
 from scene_builder.utils.image import create_gif_from_images
 from scene_builder.utils.pai import transform_paths_to_binary
 from scene_builder.utils.pydantic import save_yaml
+from scene_builder.utils.room import render_structure_links
+from scene_builder.utils.scene import recenter_scene
 from scene_builder.workflow.agents import generic_agent, room_design_agent
-
 # from scene_builder.workflow.graphs import (
 #     room_design_graph,
 #     placement_graph,
@@ -44,6 +47,30 @@ configure_logging(level="DEBUG")
 
 # Params
 SAVE_DIR = "assets"
+DEBUG = True
+# DEBUG = False
+
+
+def _debug_render_structure_links(rooms: list[Room], case: str, suffix: str = None) -> list[Path]:
+    """Render per-room structure link images for debugging.
+
+    Saves images under `test_output/<case>/<room.id>/structure_links.png`.
+    Returns a list of saved paths.
+    """
+    saved: list[Path] = []
+    for room in rooms:
+        structures = room.structure or []
+        if not structures:
+            continue
+        attachments = [(s.id, room.id) for s in structures]
+        out_dir = Path(f"test_output/{case}/{room.id}")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        output_path = out_dir / f"structure_links_{suffix}.png"
+        render_structure_links([room], structures, attachments, output_path)
+        logger.debug(f"Saved structure links viz: {output_path}")
+        saved.append(output_path)
+    return saved
+
 
 # Data
 # single room
@@ -598,7 +625,7 @@ def test_single_room_design_workflow(case: str):
             boundary=boundary,
         ),
         room_plan=RoomPlan(room_description=description),
-        extra_info={"building_name": case}
+        extra_info={"building_name": case},
     )
     blender._clear_scene()
 
@@ -643,7 +670,7 @@ def test_parallel_room_design_workflow(cases: list[str]):
                 boundary=boundary,
             ),
             room_plan=RoomPlan(room_description=description),
-            extra_info={"building_name": case}
+            extra_info={"building_name": case},
         )
         initial_states.append((case, room_state))
 
@@ -692,28 +719,51 @@ def test_multi_room_design_workflow(case: str):
 
     # Import a unit-level floor plan from MSD
     floor_plan_id = test_data["floor_plan_id"]
-    graph = msd_loader.create_graph(floor_plan_id)
-    scene_data = msd_loader.graph_to_scene_data(graph)
+    # graph = msd_loader.create_graph(floor_plan_id)  # OG
+    graph = msd_loader.create_graph(floor_plan_id, format="sb")  # ALT
+    scene = msd_loader.apt_graph_to_scene(graph)
+    # Keep a dict-like handle with Pydantic Room objects for downstream steps
+    scene_data = {
+        "category": scene.category,
+        "tags": scene.tags,
+        "height_class": scene.height_class,
+        "rooms": scene.rooms,
+    }
+    # NOTE: green and purple rooms don't seem to be a part of scene schema for some reason. TODO: investigate
+    scene_data = recenter_scene(scene_data, rotate=True)
+    for idx, room in enumerate(scene_data["rooms"]):
+        scene_data["rooms"][idx] = Room(**room)
+
+    if DEBUG:
+        _debug_render_structure_links(scene_data["rooms"], case, "default")
 
     # Normalize floor plan orientation
-    scene_data['rooms'], correction_angle = normalize_floor_plan_orientation(scene_data['rooms'])
+    scene_data["rooms"], correction_angle = normalize_floor_plan_orientation(scene_data["rooms"])
     logger.debug(f"Floor plan normalized with correction angle: {correction_angle:.2f}°")
+
+    if DEBUG:
+        _debug_render_structure_links(scene_data["rooms"], case, "post_norm")
 
     # Scale floor plan
     # floor_plan_scale_factor = 1.5
     floor_plan_scale_factor = 2.0
-    scene_data['rooms'] = scale_floor_plan(scene_data['rooms'], scale_factor=floor_plan_scale_factor)
+    scene_data["rooms"] = scale_floor_plan(
+        scene_data["rooms"], scale_factor=floor_plan_scale_factor
+    )
     logger.debug(f"Floor plan scaled by factor: {floor_plan_scale_factor}")
 
+    if DEBUG:
+        _debug_render_structure_links(scene_data["rooms"], case, "post_scale")
+
     # Simplify boundary geometry
-    for i, room in enumerate(scene_data['rooms']):
+    for i, room in enumerate(scene_data["rooms"]):
         Path(f"test_output/{case}/{room.id}").mkdir(parents=True, exist_ok=True)
         # Save (before)
         save_polygon_image(
             room.boundary,
             f"test_output/{case}/{room.id}/floor_plan_{i}_before.png",
             show_labels=True,
-            figsize=(10, 10)
+            figsize=(10, 10),
         )
 
         # Apply simplification and rounding
@@ -726,12 +776,47 @@ def test_multi_room_design_workflow(case: str):
             room.boundary,
             f"test_output/{case}/{room.id}/floor_plan_{i}_after.png",
             show_labels=True,
-            figsize=(10, 10)
+            figsize=(10, 10),
         )
 
+    if DEBUG:
+        _debug_render_structure_links(scene_data["rooms"], case, "final")
+
     Path(f"test_output/{case}").mkdir(parents=True, exist_ok=True)
-    floor_plan_img_path = msd_loader.render_floor_plan(graph, output_path=f"test_output/{case}/floor_plan.jpg", node_size=225, edge_size=0, show_label=True)
+    # Turn SceneBuilder-format floor plan graph into MSD-format for plotting (TEMP?)
+    # Filter out structure (shell) elements: door, entrance_door, wall, window
+    graph_msd = graph.subgraph(
+        n
+        for n, d in graph.nodes(data=True)
+        # if d.get("entity_subtype") not in ["door", "entrance_door", "wall", "window"]
+        if d.get("entity_subtype") not in ["DOOR", "ENTRANCE_DOOR", "WALL", "WINDOW"]
+    )
+    from msd.constants import ROOM_NAMES, ROOM_MAPPING
+
+    # Rename `entity_subtype` column to `room_type`
+    for node, data in graph_msd.nodes(data=True):
+        if "entity_subtype" in data:
+            data["room_type"] = ROOM_MAPPING[data.pop("entity_subtype")]
+    # Map string room_type field back to integer index
+    mapping = {cat: index for index, cat in enumerate(ROOM_NAMES)}
+    nodes_to_pop = []
+    for node, data in graph_msd.nodes(data=True):
+        if "room_type" in data:
+            if data["room_type"] in mapping:
+                data["room_type"] = mapping[data["room_type"]]
+            else:
+                print(f"Throwing out {node}")  # DEBUG
+                nodes_to_pop.append(node)
+    floor_plan_img_path = msd_loader.render_floor_plan(
+        graph_msd,
+        output_path=f"test_output/{case}/floor_plan.jpg",
+        node_size=225,
+        edge_size=0,
+        show_label=True,
+    )
     images = transform_paths_to_binary([floor_plan_img_path])
+
+    # TODO: verify matching of IDs from floor plan viz (generated from graph_msd) and scene_data (generated from graph_sb)
     room_plan_user_prompt = (
         "You are a design orchestration agent who is part of a building interior design system. ",
         "Given the description of the desired place by the user and an image of the floor plan, ",
@@ -769,19 +854,21 @@ def test_multi_room_design_workflow(case: str):
             room_design_state = RoomDesignState(
                 room=room_design_state_blueprint.room,
                 room_plan=RoomPlan(room_description=room_design_state_blueprint.room_plan),
-                extra_info={"building_name": case}
+                extra_info={"building_name": case},
             )
             initial_room_design_states.append(room_design_state)
-            save_yaml(room_design_state, f"test_output/{case}/{room_design_state.room.id}/room_design_state_0.yaml")  # log
+            save_yaml(
+                room_design_state,
+                f"test_output/{case}/{room_design_state.room.id}/room_design_state_0.yaml",
+            )  # log
 
         # Then run the multi-room design orchestrator
         return await multi_room_graph.run(
-            MultiRoomDesignOrchestrator(),
-            state=initial_room_design_states
+            MultiRoomDesignOrchestrator(), state=initial_room_design_states
         )
 
     # Terminate early for fast scene def file saving
-    generation_config.terminate_early = True # DEBUG
+    generation_config.terminate_early = True  # DEBUG
 
     # Execute the multi-room design workflow (single asyncio.run call)
     result = asyncio.run(run_multi_room_design())

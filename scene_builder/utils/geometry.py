@@ -1,12 +1,113 @@
 """Geometry utility functions for scene building."""
 
 from pathlib import Path
+import math
+from typing import Iterable
 
 import matplotlib.pyplot as plt
-from shapely.geometry import Polygon
+from shapely.geometry import LineString, Point, Polygon
+from shapely.geometry.base import BaseGeometry
 
 from scene_builder.definition.scene import Vector2
 from scene_builder.logging import logger
+
+
+def convert_to_shapely(boundary: Iterable[Vector2]) -> Polygon:
+    """Build a valid Shapely polygon from an iterable of ``Vector2`` points."""
+
+    coords = [(vertex.x, vertex.y) for vertex in boundary]
+    if len(coords) < 3:
+        raise ValueError("A polygon requires at least three boundary vertices.")
+
+    polygon = Polygon(coords)
+    if not polygon.is_valid:
+        polygon = polygon.buffer(0)
+
+    if polygon.is_empty or polygon.area <= 0.0:
+        raise ValueError("Boundary does not form a valid polygon with positive area.")
+
+    return polygon
+
+
+def convert_to_listvec2(polygon: list[Vector2]):
+    """Convert shapely.Polygon to list[Vector2]"""
+    # Note: Shapely polygon.exterior.coords includes a duplicate closing point, which we don't need (?)
+    return [Vector2(x=x, y=y) for x, y in list(polygon.exterior.coords)[:-1]]
+
+
+def get_longest_edge_angle(polygon: Polygon | list[Vector2]) -> float:
+    """
+    Calculate the angle (degrees) of the longest edge in a polygon.
+
+    Accepts a shapely Polygon or a list of Vector2 points.
+    Returns angle in degrees from X-axis (counterclockwise).
+    """
+    # Convert to coordinate list
+    if isinstance(polygon, Polygon):
+        coords = list(polygon.exterior.coords[:-1])  # Exclude duplicate last point
+    elif isinstance(polygon, list) and polygon and isinstance(polygon[0], Vector2):
+        coords = [(v.x, v.y) for v in polygon]
+    else:
+        raise TypeError("Expected shapely Polygon or list[Vector2]")
+
+    max_length = 0.0
+    angle = 0.0
+
+    for i in range(len(coords)):
+        p1 = coords[i]
+        p2 = coords[(i + 1) % len(coords)]
+
+        dx = p2[0] - p1[0]
+        dy = p2[1] - p1[1]
+        length = math.hypot(dx, dy)
+
+        if length > max_length:
+            max_length = length
+            angle = math.degrees(math.atan2(dy, dx))
+
+    return angle
+
+
+def boundary_to_geometry(boundary: Iterable[Vector2] | None) -> BaseGeometry | None:
+    """Convert a boundary definition into an appropriate Shapely geometry."""
+    if not boundary:
+        return None
+
+    coords = [(v.x, v.y) for v in boundary]
+
+    if len(coords) == 1:
+        return Point(coords[0])
+    if len(coords) == 2:
+        return LineString(coords)
+
+    polygon = Polygon(coords)
+    if not polygon.is_valid or polygon.area == 0.0:
+        return LineString(coords)
+    return polygon
+
+
+def boundary_distance(
+    boundary_a: Iterable[Vector2] | None,
+    boundary_b: Iterable[Vector2] | None,
+) -> float | None:
+    """Compute the shortest distance between two boundaries."""
+    geom_a = boundary_to_geometry(boundary_a)
+    geom_b = boundary_to_geometry(boundary_b)
+    if geom_a is None or geom_b is None:
+        return None
+    return geom_a.distance(geom_b)
+
+
+def are_boundaries_close(
+    boundary_a: Iterable[Vector2] | None,
+    boundary_b: Iterable[Vector2] | None,
+    max_distance: float,
+) -> bool:
+    """Return True if two boundaries are within a specified distance."""
+    distance = boundary_distance(boundary_a, boundary_b)
+    if distance is None:
+        return False
+    return distance <= max_distance
 
 
 def polygon_centroid(vertices: list[Vector2]) -> Vector2:

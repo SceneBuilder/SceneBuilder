@@ -18,15 +18,25 @@ import matplotlib.pyplot as plt
 import networkx as nx
 import numpy as np
 import pandas as pd
+from msd.constants import ROOM_NAMES
+from msd.graphs import extract_access_graph, get_geometries_from_id
 from msd.plot import plot_floor, set_figure
 from PIL import Image
+from rich.console import Console
 from shapely import wkt
 from shapely import affinity
 from shapely.geometry import Polygon
 
 from scene_builder.config import MSD_CSV_PATH
-from scene_builder.definition.scene import Room, Vector2
-from scene_builder.utils.geometry import round_vector2
+from scene_builder.definition.scene import Room, Scene, Structure, Vector2
+from scene_builder.utils.floorplan import (
+    normalize_floor_plan_orientation,
+    scale_floor_plan,
+    get_dominant_angle,
+)
+from scene_builder.utils.geometry import round_vector2, get_longest_edge_angle
+from scene_builder.utils.room import assign_structures_to_rooms
+
 
 # Entity subtype mapping (MSD entity_subtype → SceneBuilder category)
 # Comment or uncomment to add or remove entities
@@ -55,6 +65,9 @@ ENTITY_SUBTYPE_MAP = {
     "DOOR": "door",
     "WINDOW": "window",
 }
+
+
+console = Console()
 
 
 def parse_polygon(geom_string: str) -> list[Vector2]:
@@ -606,6 +619,15 @@ class MSDLoader:
             self._df = pd.read_csv(self.csv_path)
         return self._df
 
+    def get_apartment_list(self, min_rooms: int = 5, max_rooms: int = 30) -> list[str]:
+        """Get list of apartment IDs"""
+        # Count actual rooms per apartment
+        room_counts = self.df[self.df["entity_type"] == "area"].groupby("apartment_id").size()
+
+        # Filter by room count
+        suitable = room_counts[(room_counts >= min_rooms) & (room_counts <= max_rooms)].index.tolist()  # fmt:skip
+        return suitable
+
     def get_building_list(self) -> List[int]:
         """Get list of building IDs"""
         buildings = self.df["building_id"].dropna().unique().tolist()
@@ -624,7 +646,7 @@ class MSDLoader:
         apartments = building_data["apartment_id"].dropna().unique().tolist()
         return apartments
 
-    def create_graph(self, apartment_id: str) -> Optional[nx.Graph]:
+    def create_graph(self, apartment_id: str, format="msd") -> Optional[nx.Graph]:
         """Create NetworkX graph for one apartment - includes all entity types"""
         apt_data = self.df[self.df["apartment_id"] == apartment_id]
 
@@ -632,53 +654,76 @@ class MSDLoader:
             print(f"No data found for apartment {apartment_id}")
             return None
 
+        # Use first floor first
         floor_id = apt_data["floor_id"].iloc[0]
 
-        # Get all entities for this apartment on this floor
-        floor_data = apt_data[apt_data["floor_id"] == floor_id].reset_index(drop=True)
+        if format == "msd":
+            geoms, geom_types = get_geometries_from_id(apt_data, floor_id, column="roomtype")
+            graph = extract_access_graph(geoms, geom_types, ROOM_NAMES, floor_id)
 
-        graph = nx.Graph()
-        graph.graph["ID"] = floor_id
-        graph.graph["floor_id"] = floor_id
+        elif format == "sb":  # SceneBuilder
+            # Get all entities for this apartment on this floor
+            floor_data = apt_data[apt_data["floor_id"] == floor_id].reset_index(drop=True)
+
+            graph = nx.Graph()
+            graph.graph["ID"] = floor_id
+            graph.graph["floor_id"] = floor_id
+
+            for idx, row in floor_data.iterrows():
+                geom_str = row.get("geom")
+                coords = []
+                centroid = (0, 0)
+
+                if pd.notna(geom_str):
+                    try:
+                        geom = wkt.loads(geom_str)
+                        if hasattr(geom, "exterior"):
+                            coords = list(geom.exterior.coords)
+                        if hasattr(geom, "centroid"):
+                            centroid = (geom.centroid.x, geom.centroid.y)
+                    except Exception:
+                        pass
+
+                    graph.add_node(
+                        idx,
+                        entity_subtype=row.get("entity_subtype"),
+                        geometry=coords,
+                        centroid=centroid,
+                    )
+
+        # Add metadata
         graph.graph["apartment_id"] = apartment_id
         graph.graph["source"] = "MSD"
 
-        for idx, row in floor_data.iterrows():
-            geom_str = row.get("geom")
-            coords = []
-            centroid = (0, 0)
-
-            if pd.notna(geom_str):
-                try:
-                    geom = wkt.loads(geom_str)
-                    if hasattr(geom, "exterior"):
-                        coords = list(geom.exterior.coords)
-                    if hasattr(geom, "centroid"):
-                        centroid = (geom.centroid.x, geom.centroid.y)
-                except Exception:
-                    pass
-
-            graph.add_node(
-                idx,
-                entity_subtype=row.get("entity_subtype"),
-                geometry=coords,
-                centroid=centroid,
-            )
-
         return graph
+
+    def get_random_apartment(self) -> Optional[str]:
+        """Get random suitable apartment ID"""
+        apartments = self.get_apartment_list()
+        return random.choice(apartments) if apartments else None
 
     def get_random_building(self) -> Optional[int]:
         """Get random building ID"""
         buildings = self.get_building_list()
         return random.choice(buildings) if buildings else None
 
-    def convert_graph_to_rooms(self, graph: nx.Graph) -> list[Room]:
+    def convert_graph_to_rooms(
+        self,
+        graph: nx.Graph,
+        *,
+        include_structure: bool = True,
+        distance_threshold: float = 0.05,
+    ) -> list[Room]:
+        # NOTE: This is not compatible with 'msd' format `nx.graph`s anymore, for some reason.
+        # Let's look into https://github.com/SceneBuilder/SceneBuilder/tree/50bbf93ee1bc1562b4aa67357ae602dd338dd31d/scene_builder to find out.
         """Convert NetworkX graph nodes to SceneBuilder Room objects using entity_subtype.
 
         This method uses ENTITY_SUBTYPE_MAP which filters entities based on their
         entity_subtype attribute (e.g., "BEDROOM", "LIVING_ROOM"). More selective
         """
-        rooms = []
+        # Collect rooms and structural elements separately
+        rooms: list[Room] = []
+        structures: list[Structure] = []
 
         apartment_id = graph.graph.get("apartment_id", "unknown")
         apt_prefix = apartment_id[:8] if len(apartment_id) >= 8 else apartment_id
@@ -707,40 +752,68 @@ class MSDLoader:
             if category is None:
                 continue
 
-            room = Room(
-                id=f"msd_{apt_prefix}_{node_id}",
-                category=category,
-                tags=["msd"],
-                boundary=coords,
-                objects=[],
-            )
+            uid = f"msd_{apt_prefix}_{node_id}"  # NOTE: ensures unique id; future-proof
 
-            rooms.append(room)
+            # Detect structural elements
+            if category in ("window", "door") and coords:
+                structures.append(Structure(id=uid, type=category, boundary=coords))
+
+            else:
+                # Regular room
+                room = Room(
+                    id=uid,
+                    category=category,
+                    tags=["msd"],
+                    boundary=coords,
+                    objects=[],
+                )
+                rooms.append(room)
+
+        if not rooms:
+            return rooms
+
+        # Attach structural elements to connected rooms
+        if include_structure and structures:
+            assign_structures_to_rooms(rooms, structures, distance_threshold)
 
         return rooms
 
-    def graph_to_scene_data(self, graph: nx.Graph) -> dict:
-        """Convert graph to scene data dict"""
+    def apt_graph_to_scene(self, graph: nx.Graph) -> Scene:
+        """Convert a single-apartment graph to a Scene (pydantic) object.
+
+        Returns a Scene; apartment-specific metadata (e.g., apartment_id) is not
+        embedded in the Scene model, but remains available from the graph if
+        needed by callers.
+        """
         rooms = self.convert_graph_to_rooms(graph)
+        return Scene(
+            category="residential",
+            tags=["msd", "apartment"],
+            height_class="single_story",
+            rooms=rooms,
+        )
 
-        return {
-            "category": "residential",
-            "tags": ["msd", "apartment"],
-            "height_class": "single_story",
-            "rooms": rooms,
-            "metadata": {
-                "apartment_id": graph.graph.get("apartment_id", "unknown"),
-                "room_count": len(rooms),
-                "source": "MSD",
-            },
-        }
+    def floor_graph_to_scene(self, graph: nx.Graph) -> Scene:
+        """Convert a floor-level graph (multiple apartments) to a Scene.
 
-    def get_scene(self, apartment_id: str) -> Optional[dict]:
-        """Create graph and convert to scene data in one step"""
+        Returns a Scene; building/floor/apartment metadata is not embedded in
+        the Scene model and should be tracked separately by callers if needed.
+        """
+        rooms = self.convert_graph_to_rooms(graph)
+        return Scene(
+            category="residential",
+            tags=["msd", "floor"],
+            height_class="single_story",
+            rooms=rooms,
+        )
+
+    # NOTE: Only used in `test_floor_plan_postprocessing.py`; TODO: refactor out.
+    def get_scene(self, apartment_id: str) -> Optional[Scene]:
+        """Create graph and convert to a Scene in one step."""
         graph = self.create_graph(apartment_id)
         if graph is None:
             return None
-        return self.graph_to_scene_data(graph)
+        return self.apt_graph_to_scene(graph)
 
     def render_floor_plan(
         self,

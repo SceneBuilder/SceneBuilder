@@ -1,7 +1,7 @@
 import argparse
 import random
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Optional
 
 import matplotlib.pyplot as plt
 import pytest
@@ -12,6 +12,7 @@ from scene_builder.msd_integration.loader import (
     get_dominant_angle,
     normalize_floor_plan_orientation,
 )
+from scene_builder.utils.room import render_structure_links
 
 
 OUTPUT_DIR = Path("test_output/floorplan_postprocessing")
@@ -41,10 +42,10 @@ def _run_orientation_correction(
 
         apartment_id = random.choice(apartments)
         scene = loader.get_scene(apartment_id)
-        if not scene or not scene["rooms"]:
+        if scene is None or not scene.rooms:
             continue
 
-        rooms = scene["rooms"]
+        rooms = scene.rooms
         original_polys = [_room_to_polygon(room) for room in rooms]
         _, correction_angle = normalize_floor_plan_orientation(rooms, strategy=strategy)
         corrected_polys = [_room_to_polygon(room) for room in rooms]
@@ -127,9 +128,60 @@ def test_orientation_correction_stability(strategy):
         pytest.skip(reason)
 
 
+def _run_structure_links_visualization(
+    building_id: int = 2144, apartment_id: Optional[str] = None
+) -> Optional[Path]:
+    """Generate a debug image of room ↔ structure associations.
+
+    Returns path to the saved image if generated, otherwise None.
+    """
+    loader = MSDLoader()
+
+    # Resolve apartment id
+    apt_id = apartment_id
+    if apt_id is None:
+        apartments = loader.get_apartments_in_building(building_id)
+        if not apartments:
+            return None
+        apt_id = apartments[0]
+
+    # Build rooms with structures attached (never returns structures as rooms)
+    graph = loader.create_graph(apt_id, format="sb")
+    if graph is None:
+        return None
+    rooms = loader.convert_graph_to_rooms(graph, include_structure=True)
+
+    # Extract structures and attachments from rooms
+    structures = []
+    attachments: list[tuple[str, str]] = []
+    for room in rooms:
+        if not getattr(room, "structure", None):
+            continue
+        for s in room.structure:
+            structures.append(s)
+            attachments.append((s.id, room.id))
+
+    if not structures:
+        # No structures to visualize
+        return None
+
+    # Render debug visualization into the existing postprocessing output dir
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    out_path = OUTPUT_DIR / f"structure_links_{apt_id}.png"
+    render_structure_links(rooms, structures, attachments, out_path)
+    return out_path if out_path.exists() else None
+
+
+def test_structure_links_visualization():
+    """Pytest wrapper for structure links visualization."""
+    out = _run_structure_links_visualization()
+    if out is None:
+        pytest.skip("No structures available to visualize or dataset unavailable.")
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Run orientation correction visualization across strategies."
+        description="Floor plan postprocessing visualizations and debug utilities."
     )
     parser.add_argument(
         "--runs",
@@ -142,6 +194,24 @@ if __name__ == "__main__":
         action="store_false",
         help="Overlay a light grid on the saved plots.",
     )
+    parser.add_argument(
+        "--links",
+        action="store_true",
+        default=True,
+        help="Generate a room ↔ structure links debug image (saved to output dir).",
+    )
+    parser.add_argument(
+        "--building-id",
+        type=int,
+        default=2144,
+        help="Building ID to use when generating structure links visualization.",
+    )
+    parser.add_argument(
+        "--apartment-id",
+        type=str,
+        default=None,
+        help="Specific apartment ID. If omitted, uses the first apartment in the building.",
+    )
     args = parser.parse_args()
 
     for strategy in ("length_weighted", "count", "complex_sum"):
@@ -150,3 +220,12 @@ if __name__ == "__main__":
         )
         if not success and reason:
             print(reason)
+
+    if args.links:
+        out = _run_structure_links_visualization(
+            building_id=args.building_id, apartment_id=args.apartment_id
+        )
+        if out is None:
+            print("No structure links visualization generated (no data or dataset unavailable).")
+        else:
+            print(f"Saved structure links visualization: {out}")

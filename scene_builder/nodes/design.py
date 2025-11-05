@@ -9,7 +9,7 @@ from scene_builder.config import DEBUG, generation_config
 from scene_builder.database.object import ObjectDatabase
 from scene_builder.decoder.blender import blender
 # from scene_builder.definition.scene import Object, Room, Vector3
-from scene_builder.definition.scene import Floor, Object, ObjectBlueprint, Room, Scene, Vector3
+from scene_builder.definition.scene import Object, ObjectBlueprint, Room, Scene, Shell, Vector3
 from scene_builder.logging import logger
 # from scene_builder.nodes.feedback import VisualFeedback
 # from scene_builder.nodes.placement import PlacementNode, VisualFeedback
@@ -30,6 +30,8 @@ from scene_builder.workflow.agents import (
 # from scene_builder.workflow.states import PlacementState, RoomDesignState
 from scene_builder.workflow.states import CritiqueAction, PlacementState, RoomDesignState, MainState
 from scene_builder.workflow.toolsets import material_toolset, shopping_toolset
+from scene_builder.validation.linter import format_lint_feedback, lint_room
+from scene_builder.validation.models import LintReport
 
 console = Console()
 obj_db = ObjectDatabase()
@@ -72,7 +74,8 @@ class RoomDesignNode(BaseNode[RoomDesignState]):
     ) -> RoomDesignNode | End[Room]:
         console.print("[bold cyan]Executing Node:[/] RoomDesignNode")
         room = ctx.state.room
-        blender.parse_room_definition(room)
+        # Build room and add translucent walls for clearer feedback renders
+        blender.parse_room_definition(room, with_walls="translucent")
         output_dir = f"test_output/{ctx.state.extra_info['building_name']}/{ctx.state.room.id}"
         top_down_render = blender.visualize(scene=room.id, output_dir=output_dir, show_grid=True)
         isometric_render = blender.visualize(
@@ -125,9 +128,16 @@ class RoomDesignNode(BaseNode[RoomDesignState]):
         # if response.output.decision == "finalize":
         #     return End(ctx.state.room)
 
+        # Inspect current floor shell (if any) for context
+        floor_shell = None
+        try:
+            floor_shell = next((s for s in room.shells if s.type == "floor"), None)
+        except Exception:
+            floor_shell = None
+
         material_change_user_prompt = (
             "Do you want to change the floor material (texture), or keep the existing one?",
-            f"Current floor state: {dict(room).get('floor', None)}"
+            f"Current floor state: {floor_shell}",
         )
         material_change_response = await room_design_agent.run(material_change_user_prompt, output_type=MaterialAction)
         # if material_change_response.output:  # is True
@@ -141,9 +151,51 @@ class RoomDesignNode(BaseNode[RoomDesignState]):
             material_response = await room_design_agent.run(material_user_prompt, toolsets=[material_toolset], output_type=MaterialSelection)
             logger.debug(f"Selected floor material for room {room.id}: {material_response.output.material_id}")
             # logger.debug(f"Selected floor material for room {room.id}: {material_response.output}")
-            # ctx.state.room.floor = material_response.output
-            # ctx.state.room.floor = Floor(material_id=material_response.output)
-            ctx.state.room.floor = Floor(material_id=material_response.output.material_id)
+            # Update existing floor shell or append a new one
+            existing_floor = next((s for s in ctx.state.room.shells if s.type == "floor"), None)
+            if existing_floor is not None:
+                existing_floor.material_id = material_response.output.material_id
+            else:
+                ctx.state.room.shells.append(
+                    Shell(type="floor", material_id=material_response.output.material_id)
+                )
+
+        # Ask about wall material selection similar to floor
+        wall_shell = None
+        try:
+            wall_shell = next((s for s in room.shells if s.type == "wall"), None)
+        except Exception:
+            wall_shell = None
+
+        wall_change_user_prompt = (
+            "Do you want to change the wall material (texture), or keep the existing one?",
+            f"Current wall state: {wall_shell}",
+        )
+        wall_change_response = await room_design_agent.run(
+            wall_change_user_prompt, output_type=MaterialAction
+        )
+        if wall_change_response.output.action == "change":
+            wall_material_user_prompt = (
+                "Could you search for a material (texture) to be applied to the wall?",
+                "The `query` tool provides search results from a material database.",
+                "The `get_metadata` tool provides various metadata about the material.",
+                "Please return the `material_id` of the material of your choice."
+            )
+            wall_material_response = await room_design_agent.run(
+                wall_material_user_prompt,
+                toolsets=[material_toolset],
+                output_type=MaterialSelection,
+            )
+            logger.debug(
+                f"Selected wall material for room {room.id}: {wall_material_response.output.material_id}"
+            )
+            existing_wall = next((s for s in ctx.state.room.shells if s.type == "wall"), None)
+            if existing_wall is not None:
+                existing_wall.material_id = wall_material_response.output.material_id
+            else:
+                ctx.state.room.shells.append(
+                    Shell(type="wall", material_id=wall_material_response.output.material_id)
+                )
 
         shopping_user_prompt = (
             "Please explore the object database to choose the objects that you would like to use for designing the room.",
@@ -191,20 +243,28 @@ class RoomDesignNode(BaseNode[RoomDesignState]):
                 output_type=list[Object],
             )
             ctx.state.room.objects = placement_response.output
-            
+
             # post-placement render
-            blender.parse_room_definition(room)
+            # Rebuild room after placement with translucent walls for feedback
+            blender.parse_room_definition(room, with_walls="translucent")
+            lint_report = lint_room(ctx.state.room)
+            ctx.state.last_lint_report = lint_report
+            lint_summary = format_lint_feedback(lint_report)
+            if DEBUG:
+                print(f"[Lint] {lint_summary}")
             top_down_render = blender.visualize(scene=room.id, output_dir=output_dir, show_grid=True)
             isometric_render = blender.visualize(
                 scene=room.id, output_dir=output_dir, view="isometric", show_grid=True
             )
             renders = transform_paths_to_binary([top_down_render, isometric_render])
+            lint_section = f"Automated lint analysis for the current placement:\n{lint_summary}"
 
             critique_user_prompt = (
                 "Updated renders:",
                 *renders,
+                lint_section,
                 "Do you approve of the previous placement result?",
-                "If so, please provide a rationale, and if not, please provide feedback for the PlacementAgent,", 
+                "If so, please provide a rationale, and if not, please provide feedback for the PlacementAgent,",
                 "so it can address the issues in the upcoming design step.",
             )
             critique_response = await room_design_agent.run(
@@ -218,6 +278,8 @@ class RoomDesignNode(BaseNode[RoomDesignState]):
                 print(f"{critique.explanation=}")
             if critique.result == "rejected":
                 feedback = critique.explanation
+                if lint_report.issues:
+                    feedback = f"{feedback}\n\nAutomated lint analysis:\n{lint_summary}"
             elif critique.result == "approved":
                 break
             if generation_config.terminate_early:

@@ -83,10 +83,19 @@ class Section(BaseModel):
     children: list[Object] = Field(default_factory=list)
 
 
-class Floor(BaseModel):
-    """Represents a single floor in a room."""
+class Shell(BaseModel):
+    """Represents a room shell surface such as a floor or wall."""
 
+    type: Literal["wall", "floor"]
     material_id: str | None = None
+
+
+class Structure(BaseModel):
+    """Represents a structural element (e.g., door, window) excl. wall"""
+
+    id: str
+    type: Literal["door", "window"]
+    boundary: list[Vector2] | None = None
 
 
 class Room(BaseModel):
@@ -94,15 +103,13 @@ class Room(BaseModel):
 
     id: str
     category: str | None = None
-    tags: list[str] | None = None
+    tags: list[str] = []
     # plan: GenericPlan | None = None
-    boundary: list[Vector2] | None = None
+    boundary: list[Vector2] = []
     # floor_dimensions: FloorDimensions | None = None
-    # viz: list[Path] = []
     objects: list[Object] = []
-    floor: Floor | None = None
-    # objects: list[Object] = Field(default_factory=list)
-    # objects: list[Object | Section] = Field(default_factory=list)
+    shells: list[Shell] = []
+    structure: list[Structure] | None = None  # NOTE: try to make this invisible/immutable
     
     # NOTE: for origin normalization state tracking, for now
     extra_info: Any | None = None
@@ -125,5 +132,24 @@ class Scene(BaseModel):
 
     category: str | None
     height_class: Literal["single_story", "two_story", "multi_story", "high_rise", "skyscraper"]
-    rooms: list[Room] = Field(default_factory=list)
-    tags: list[str] | None
+    rooms: list[Room] = []
+    tags: list[str] = []
+
+
+def find_shell(
+    room_or_data: Room | dict[str, Any],
+    shell_type: Literal["wall", "floor"],
+) -> Shell | None:
+    """
+    Returns the shell of the requested type from a Room or room dict, or None if not found.
+
+    Accepts either a pydantic Room instance or a plain room dictionary.
+    """
+    if not isinstance(room_or_data, Room):
+        room_or_data = Room(**room_or_data)
+
+    shells = room_or_data.shells or []
+    for s in shells:
+        if s.type == shell_type:
+            return s
+    return None
