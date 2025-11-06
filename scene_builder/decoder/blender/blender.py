@@ -12,7 +12,6 @@ import bmesh
 import addon_utils
 import numpy as np
 import yaml
-from matplotlib import pyplot as plt
 from PIL import Image
 from mathutils import Vector
 from mathutils.geometry import tessellate_polygon
@@ -2710,7 +2709,6 @@ def setup_lighting_foundation(
     background_color: tuple[float, float, float, float] = BACKGROUND_COLOR,
 ):
     """Sets up global illumination and world environment lighting."""
-    print("Setting up foundation lighting...")
     scene.render.engine = "CYCLES"
     cycles_settings = scene.cycles
 
@@ -2812,7 +2810,6 @@ def setup_post_processing(
     Uses an ID Mask + Blur + Subtract + Multiply + Glare chain for object highlights,
     avoiding unsupported Dilate/Erode modes across Blender versions.
     """
-    print("Setting up post-processing...")
     scene.view_settings.view_transform = "AgX"
     scene.view_settings.look = "AgX - Medium High Contrast"
 
@@ -2932,6 +2929,8 @@ def _door_boundary_to_coords(door_boundary: list) -> list[tuple[float, float]]:
             coords.append((point["x"], point["y"]))
     return coords
 
+##########################################################################################
+# restoring start here --------------------------------------------------------------------
 
 def create_room_walls(
     rooms: list[Room],
@@ -2998,9 +2997,10 @@ def create_room_walls(
             except Exception:
                 continue
 
-    # Collect windows and doors from both structure (newer model) and category (older model)
+##########################################################################################
+# restoring: checked all room_polygons works okay --------------------------------------------------------------------
+
     for r in rooms:
-        # Handle structure-based model (newer approach from main)
         r_structs = getattr(r, "structure", None)
         if r_structs is None and isinstance(r, dict):
             r_structs = r.get("structure")
@@ -3042,7 +3042,6 @@ def create_room_walls(
                         interior_door_polygons.append((str(s_id), boundary_xy))
                         logger.debug(f"Door {s_id}: identified as interior door")
         else:
-            # Handle category-based model (older approach from HEAD)
             r_category = getattr(r, "category", None)
             if r_category is None and isinstance(r, dict):
                 r_category = r.get("category")
@@ -3097,6 +3096,8 @@ def create_room_walls(
                     interior_door_polygons.append((str(r_id), door_boundary))
                     logger.debug(f"Door {r_id}: identified as interior door")
 
+##########################################################################################
+#-- checked everything works okay --------------------------------------------------------------------
     for room in rooms:
         # Extract boundary safely
         r_boundary = getattr(room, "boundary", None)
@@ -3178,14 +3179,14 @@ def create_room_walls(
             for idx, (cutout_id, cutout_boundary) in enumerate(window_cutout_polygons):
                 if not cutout_boundary:
                     continue
-
+                
                 # Only apply window cutout if it intersects with this room's boundary
                 if room_polygon:
                     try:
                         cutout_polygon = Polygon(cutout_boundary)
                         # Check if cutout intersects with room or is very close (within 0.1m)
                         if cutout_polygon.is_valid and (
-                            cutout_polygon.intersects(room_polygon)
+                            cutout_polygon.intersects(room_polygon) 
                             or room_polygon.distance(cutout_polygon) < 0.1
                         ):
                             _create_window_cutout(
@@ -3212,6 +3213,10 @@ def create_room_walls(
                                     colour=(0.8, 0.9, 1.0, 1.0),  # Light blue window
                                 )
 
+                                if window_result:
+                                    logger.debug(f"Successfully created window object: {window_result.get('object')}")
+                            else:
+                                logger.debug(f"Skipping window object creation for window {cutout_id} (render_windows=False)")
                     except Exception:
                         # Skip this cutout if polygon creation fails
                         continue
@@ -3246,77 +3251,25 @@ def create_room_walls(
                                 f"Successfully created window object: {window_result.get('object')}"
                             )
 
-        # Apply exterior door cutouts if requested (exterior doors use window cutouts)
-        if window_cutouts and exterior_door_cutout_polygons:
-            # Reuse room_polygon created above
-            for idx, (door_id, door_boundary) in enumerate(exterior_door_cutout_polygons):
-                if not door_boundary:
-                    continue
-
-                # Only apply window cutout if it intersects with this room's boundary
-                if room_polygon:
-                    try:
-                        door_polygon = Polygon(door_boundary)
-                        # Check if door intersects with room or is very close (within 0.1m)
-                        if door_polygon.is_valid and (
-                            door_polygon.intersects(room_polygon)
-                            or room_polygon.distance(door_polygon) < 0.1
-                        ):
-                            # Create the cutout in the wall (exterior doors use window cutout)
-                            _create_window_cutout(
-                                wall_obj=obj,
-                                apt_id=str(door_id),
-                                window_idx=idx,
-                                window_boundary=door_boundary,
-                                z_bottom=window_height_bottom,
-                                z_top=window_height_top,
-                                keep_cutter_visible=keep_cutters_visible,
-                            )
-
-                            # Create the actual door object at this boundary if rendering is enabled
-                            if render_doors:
-                                door_result = create_door_from_boundary(
-                                    door_boundary=door_boundary,
-                                    door_id=str(door_id),
-                                    z_position=0.0,
-                                    default_depth=0.1,
-                                    door_height=DEFAULT_DOOR_HEIGHT,
-                                    randomize_type=True,
-                                    randomize_handle=True,
-                                    randomize_material=True,
-                                    randomize_color=False,
-                                    paint_color=(1.0, 1.0, 1.0, 1.0),  # White door
-                                )
-
-                    except Exception:
-                        # Skip this door if polygon creation fails
-                        continue
-                else:
-                    # Fallback: apply cutout if room polygon couldn't be created
-                    _create_window_cutout(
-                        wall_obj=obj,
-                        apt_id=str(door_id),
-                        window_idx=idx,
-                        window_boundary=door_boundary,
-                        z_bottom=window_height_bottom,
-                        z_top=window_height_top,
-                        keep_cutter_visible=keep_cutters_visible,
-                    )
-
         # Apply interior door cutouts if requested
         if door_cutouts and interior_door_polygons:
-            # Reuse room_polygon created above for window cutouts
+            # Create room polygon for intersection checking
+            try:
+                room_polygon = Polygon(boundary_points)
+            except Exception:
+                room_polygon = None
+            
             for idx, (door_id, door_boundary) in enumerate(interior_door_polygons):
                 if not door_boundary:
                     continue
-
+                
                 # Only apply door cutout if it intersects with this room's boundary
                 if room_polygon:
                     try:
                         door_polygon = Polygon(door_boundary)
                         # Check if door intersects with room or is very close (within 0.1m)
                         if door_polygon.is_valid and (
-                            door_polygon.intersects(room_polygon)
+                            door_polygon.intersects(room_polygon) 
                             or room_polygon.distance(door_polygon) < 0.1
                         ):
                             # Create the cutout in the wall
@@ -3345,6 +3298,10 @@ def create_room_walls(
                                     paint_color=(1.0, 1.0, 1.0, 1.0),  # White door
                                 )
 
+                                if door_result:
+                                    logger.debug(f"Successfully created door object: {door_result.get('object')}")
+                            else:
+                                logger.debug(f"Skipping door object creation for door {door_id} (render_doors=False)")
                     except Exception:
                         # Skip this door if polygon creation fails
                         continue

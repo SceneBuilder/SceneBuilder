@@ -139,17 +139,15 @@ def test_msd_to_blender(
 
             blender.parse_scene_definition(scene_data)
 
-            # Create walls per-room to keep cutouts local and performant
-            walls_created_total = 0
-            for room in rooms_dict:
-                walls_created_total += blender.create_room_walls(
-                    [room],
-                    door_cutouts=door_cutout,
-                    window_cutouts=window_cutout,
-                    render_doors=render_doors,
-                    render_windows=render_windows,
-                    keep_cutters_visible=keep_cutters_visible,
-                )
+            # Create walls for entire floorplan at once
+            walls_created_total = blender.create_room_walls(
+                rooms_dict,
+                door_cutouts=door_cutout,
+                window_cutouts=window_cutout,
+                render_doors=render_doors,
+                render_windows=render_windows,
+                keep_cutters_visible=keep_cutters_visible,
+            )
             if walls_created_total > 0:
                 print(f"   ✓ Created {walls_created_total} room walls for floor {floor_id}")
 
