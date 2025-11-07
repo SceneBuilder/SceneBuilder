@@ -12,6 +12,7 @@ import bmesh
 import addon_utils
 import numpy as np
 import yaml
+from matplotlib import pyplot as plt
 from PIL import Image
 from mathutils import Vector
 from mathutils.geometry import tessellate_polygon
@@ -2709,6 +2710,7 @@ def setup_lighting_foundation(
     background_color: tuple[float, float, float, float] = BACKGROUND_COLOR,
 ):
     """Sets up global illumination and world environment lighting."""
+    print("Setting up foundation lighting...")
     scene.render.engine = "CYCLES"
     cycles_settings = scene.cycles
 
@@ -2810,6 +2812,7 @@ def setup_post_processing(
     Uses an ID Mask + Blur + Subtract + Multiply + Glare chain for object highlights,
     avoiding unsupported Dilate/Erode modes across Blender versions.
     """
+    print("Setting up post-processing...")
     scene.view_settings.view_transform = "AgX"
     scene.view_settings.look = "AgX - Medium High Contrast"
 
@@ -2965,24 +2968,17 @@ def create_room_walls(
     """
     walls_created = 0
 
-    # Gather window polygons (separate from exterior doors)
     window_cutout_polygons: list[tuple[str, list[tuple[float, float]]]] = []
 
-    # Gather exterior door polygons (separate from windows)
     exterior_door_cutout_polygons: list[tuple[str, list[tuple[float, float]]]] = []
 
-    # Gather interior door polygons
     interior_door_polygons: list[tuple[str, list[tuple[float, float]]]] = []
 
     # First, collect all non-door, non-window room boundaries as polygons for door classification
     all_room_polygons = []
     for room in rooms:
-        r_category = getattr(room, "category", None)
-        if r_category is None and isinstance(room, dict):
-            r_category = room.get("category")
-        r_boundary = getattr(room, "boundary", None)
-        if r_boundary is None and isinstance(room, dict):
-            r_boundary = room.get("boundary")
+        r_category = room.get("category")
+        r_boundary = room.get("boundary")
         if r_category not in ["door", "window"] and r_boundary and len(r_boundary) >= 3:
             try:
                 boundary_points = []
@@ -3000,87 +2996,29 @@ def create_room_walls(
 ##########################################################################################
 # restoring: checked all room_polygons works okay --------------------------------------------------------------------
 
+    # Collect windows and doors from both structure (newer model) and category (older model)
     for r in rooms:
-        r_structs = getattr(r, "structure", None)
-        if r_structs is None and isinstance(r, dict):
-            r_structs = r.get("structure")
-        if r_structs:
-            for s in r_structs:
-                # s can be pydantic Structure or dict
-                s_type = getattr(s, "type", None) if not isinstance(s, dict) else s.get("type")
-                s_id = getattr(s, "id", None) if not isinstance(s, dict) else s.get("id")
-                s_boundary = (
-                    getattr(s, "boundary", None) if not isinstance(s, dict) else s.get("boundary")
-                )
-                if not s_boundary or len(s_boundary) < 3:
-                    continue
-                # Normalize boundary to list of (x, y)
-                boundary_xy: list[tuple[float, float]] = []
-                for p in s_boundary:
-                    if hasattr(p, "x"):
-                        boundary_xy.append((p.x, p.y))
-                    else:
-                        boundary_xy.append((p["x"], p["y"]))
+        # Handle structure-based model (newer approach from main)
+        for s in r.get("structure", []):
+            # s can be pydantic Structure or dict
+            s_type = s.get("type")
+            s_id = s.get("id")
+            s_boundary = s.get("boundary")
+            if not s_boundary or len(s_boundary) < 3:
+                continue
+            # Normalize boundary to list of (x, y)
+            boundary_xy: list[tuple[float, float]] = []
+            for p in s_boundary:
+                if hasattr(p, "x"):
+                    boundary_xy.append((p.x, p.y))
+                else:
+                    boundary_xy.append((p["x"], p["y"]))
 
-                if window_cutouts and s_type == "window":
-                    window_cutout_polygons.append((str(s_id), boundary_xy))
-                elif door_cutouts and s_type == "door":
-                    try:
-                        door_polygon = Polygon(boundary_xy)
-                        if door_polygon.is_valid and not door_polygon.is_empty:
-                            door_type = classify_door_type(door_polygon, all_room_polygons)
-                            is_interior = door_type == "interior"
-                        else:
-                            is_interior = False
-                    except Exception:
-                        is_interior = False
-
-                    if not is_interior:
-                        exterior_door_cutout_polygons.append((str(s_id), boundary_xy))
-                        logger.debug(f"Door {s_id}: identified as exterior door")
-                    else:
-                        interior_door_polygons.append((str(s_id), boundary_xy))
-                        logger.debug(f"Door {s_id}: identified as interior door")
-        else:
-            r_category = getattr(r, "category", None)
-            if r_category is None and isinstance(r, dict):
-                r_category = r.get("category")
-            r_boundary = getattr(r, "boundary", None)
-            if r_boundary is None and isinstance(r, dict):
-                r_boundary = r.get("boundary")
-            r_id = getattr(r, "id", None)
-            if r_id is None and isinstance(r, dict):
-                r_id = r.get("id", "unknown")
-
-            # Include windows
-            if (
-                window_cutouts
-                and r_category == "window"
-                and r_boundary
-                and len(r_boundary) >= 3
-            ):
-                boundary_points = []
-                for p in r_boundary:
-                    if hasattr(p, "x"):
-                        boundary_points.append((p.x, p.y))
-                    else:
-                        boundary_points.append((p["x"], p["y"]))
-                window_cutout_polygons.append((str(r_id), boundary_points))
-            # Include exterior doors
-            elif (
-                door_cutouts
-                and r_category == "door"
-                and r_boundary
-                and len(r_boundary) >= 3
-            ):
-                door_boundary = []
-                for p in r_boundary:
-                    if hasattr(p, "x"):
-                        door_boundary.append((p.x, p.y))
-                    else:
-                        door_boundary.append((p["x"], p["y"]))
+            if window_cutouts and s_type == "window":
+                window_cutout_polygons.append((str(s_id), boundary_xy))
+            elif door_cutouts and s_type == "door":
                 try:
-                    door_polygon = Polygon(door_boundary)
+                    door_polygon = Polygon(boundary_xy)
                     if door_polygon.is_valid and not door_polygon.is_empty:
                         door_type = classify_door_type(door_polygon, all_room_polygons)
                         is_interior = door_type == "interior"
@@ -3090,19 +3028,26 @@ def create_room_walls(
                     is_interior = False
 
                 if not is_interior:
-                    exterior_door_cutout_polygons.append((str(r_id), door_boundary))
-                    logger.debug(f"Door {r_id}: identified as exterior door")
+                    exterior_door_cutout_polygons.append((str(s_id), boundary_xy))
+                    logger.debug(f"Door {s_id}: identified as exterior door")
                 else:
-                    interior_door_polygons.append((str(r_id), door_boundary))
-                    logger.debug(f"Door {r_id}: identified as interior door")
+                    interior_door_polygons.append((str(s_id), boundary_xy))
+                    logger.debug(f"Door {s_id}: identified as interior door")
+##################################################
+# restoring: checked all door_polygons works okay --------------------------------------------------------------------
+##################################################
 
-##########################################################################################
-#-- checked everything works okay --------------------------------------------------------------------
+
     for room in rooms:
-        # Extract boundary safely
-        r_boundary = getattr(room, "boundary", None)
-        if r_boundary is None and isinstance(room, dict):
-            r_boundary = room.get("boundary")
+
+        r_category = room.get("category")
+        if r_category == "window":
+            continue
+
+        if r_category == "door":
+            continue
+
+        r_boundary = room.get("boundary")
         if not r_boundary or len(r_boundary) < 3:
             continue
 
@@ -3253,12 +3198,7 @@ def create_room_walls(
 
         # Apply interior door cutouts if requested
         if door_cutouts and interior_door_polygons:
-            # Create room polygon for intersection checking
-            try:
-                room_polygon = Polygon(boundary_points)
-            except Exception:
-                room_polygon = None
-            
+            # Reuse room_polygon created above for window cutouts
             for idx, (door_id, door_boundary) in enumerate(interior_door_polygons):
                 if not door_boundary:
                     continue
