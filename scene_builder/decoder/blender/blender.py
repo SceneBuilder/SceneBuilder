@@ -3113,13 +3113,10 @@ def create_room_walls(
             if not any(m and m.name == mat_name for m in obj.data.materials):
                 obj.data.materials.append(wall_material)
 
-        # Create room polygon for intersection checking
-        try:
-            room_polygon = Polygon(boundary_points)
-        except Exception:
-            room_polygon = None
+        # # Create room polygon for intersection checking
+        # try:
+        room_polygon = Polygon(boundary_points)
 
-        # Apply window cutouts if requested (only for windows, not exterior doors)
         if window_cutouts and window_cutout_polygons:
             for idx, (cutout_id, cutout_boundary) in enumerate(window_cutout_polygons):
                 if not cutout_boundary:
@@ -3158,10 +3155,6 @@ def create_room_walls(
                                     colour=(0.8, 0.9, 1.0, 1.0),  # Light blue window
                                 )
 
-                                if window_result:
-                                    logger.debug(f"Successfully created window object: {window_result.get('object')}")
-                            else:
-                                logger.debug(f"Skipping window object creation for window {cutout_id} (render_windows=False)")
                     except Exception:
                         # Skip this cutout if polygon creation fails
                         continue
@@ -3196,22 +3189,17 @@ def create_room_walls(
                                 f"Successfully created window object: {window_result.get('object')}"
                             )
 
-        # Apply interior door cutouts if requested
         if door_cutouts and interior_door_polygons:
-            # Reuse room_polygon created above for window cutouts
             for idx, (door_id, door_boundary) in enumerate(interior_door_polygons):
                 if not door_boundary:
                     continue
                 
-                # Only apply door cutout if it intersects with this room's boundary
+                # Only apply door cutout if it is very close to this room's boundary (within 0.1m)
                 if room_polygon:
                     try:
                         door_polygon = Polygon(door_boundary)
-                        # Check if door intersects with room or is very close (within 0.1m)
-                        if door_polygon.is_valid and (
-                            door_polygon.intersects(room_polygon) 
-                            or room_polygon.distance(door_polygon) < 0.1
-                        ):
+                        # Check if door is very close (within 0.1m)
+                        if door_polygon.is_valid and room_polygon.distance(door_polygon) < 0.1:
                             # Create the cutout in the wall
                             _create_interior_door_cutout(
                                 wall_obj=obj,
@@ -3245,17 +3233,6 @@ def create_room_walls(
                     except Exception:
                         # Skip this door if polygon creation fails
                         continue
-                else:
-                    # Fallback: apply cutout if room polygon couldn't be created
-                    _create_interior_door_cutout(
-                        wall_obj=obj,
-                        apt_id=str(door_id),
-                        door_idx=idx,
-                        door_boundary=door_boundary,
-                        z_bottom=0.0,
-                        z_top=DEFAULT_DOOR_HEIGHT,
-                        keep_cutter_visible=keep_cutters_visible,
-                    )
 
         # logger.debug(f"Created wall for room {room.id} ({room.category})")
         walls_created += 1
