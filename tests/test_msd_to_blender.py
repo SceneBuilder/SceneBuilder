@@ -82,7 +82,6 @@ def test_msd_to_blender(
     enable_windows: bool = True,
     render_doors: bool = False,
     render_windows: bool = False,
-    visualize_entities: bool = False,
     keep_cutters_visible: bool = False,
 ):
     loader = MSDLoader()
@@ -94,18 +93,6 @@ def test_msd_to_blender(
     if building_id is None:
         building_id = loader.get_random_building()
     print(f"Loading building {building_id}...\n")
-
-    # Visualize building entities if requested
-    if visualize_entities:
-        output_dir = Path(__file__).parent.parent / "test_output"
-        output_dir.mkdir(parents=True, exist_ok=True)
-        viz_path = output_dir / f"building_{building_id}_entities.png"
-        print("Visualizing building entities...")
-        result = loader.visualize_building_entities(
-            building_id=building_id, output_path=str(viz_path)
-        )
-        if result:
-            print(f"   ✓ Saved entity visualization: {result}\n")
 
     # Get apartments for each floor
     floors = _collect_building_floors(loader, building_id, floor_filter=floor_id)
@@ -223,7 +210,7 @@ if __name__ == "__main__":
     test_msd_to_blender(
         enable_addons=True,
         door_cutout=True,
-        window_cutout=False,
+        window_cutout=True,
         entire_floor=True,
         building_id=2144,
         floor_id=None,
@@ -233,7 +220,6 @@ if __name__ == "__main__":
         enable_windows=True,
         render_doors=False,
         render_windows=False,
-        visualize_entities=False,
         keep_cutters_visible=True,
     )
     # Uncomment to test other configurations:
@@ -242,4 +228,3 @@ if __name__ == "__main__":
     # test_msd_to_blender(window_cutout=False)
     # test_msd_to_blender(door_cutout=False, window_cutout=False)
     # test_msd_to_blender(render_doors=True, render_windows=True)  # Enable both doors and windows
-    # test_msd_to_blender(visualize_entities=True)  # Enable entity visualization

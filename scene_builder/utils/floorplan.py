@@ -2,12 +2,277 @@
 
 from __future__ import annotations
 
+import math
+from pathlib import Path
 from typing import Optional
 
+import bpy
+import matplotlib.pyplot as plt
 import numpy as np
+from mathutils import Vector
+from PIL import Image
+from shapely import affinity
 from shapely.geometry import Polygon
 
 from scene_builder.definition.scene import Room, Vector2
+
+
+def classify_door_type(
+    door_polygon: Polygon,
+    all_entity_polygons: list[Polygon],
+    proximity_threshold: float = 0.01,
+) -> str:
+    """
+    Classify a door as interior or exterior based on proximity to other entities.
+
+    A door is interior if more than 1 entity is within the proximity threshold;
+    otherwise it's exterior (0 or 1 entity nearby).
+
+    Args:
+        door_polygon: The door boundary as a shapely Polygon
+        all_entity_polygons: List of all other entity polygons (excluding doors)
+        proximity_threshold: Distance threshold in meters (default: 0.01m = 1cm)
+
+    Returns:
+        "interior" if more than 1 entity is within threshold distance
+        "exterior" if 0 or 1 entity is within threshold distance
+    """
+    if not door_polygon or door_polygon.is_empty or not door_polygon.is_valid:
+        return "exterior"
+
+    if not all_entity_polygons:
+        return "exterior"
+
+    # Count entities within proximity threshold
+    nearby_count = 0
+    for entity_polygon in all_entity_polygons:
+        if not entity_polygon or entity_polygon.is_empty or not entity_polygon.is_valid:
+            continue
+
+        try:
+            distance = door_polygon.distance(entity_polygon)
+            if distance <= proximity_threshold:
+                nearby_count += 1
+        except Exception:
+            # Skip if distance calculation fails
+            continue
+
+    # Classify: more than 1 nearby entity = interior, otherwise exterior
+    if nearby_count > 1:
+        return "interior"
+    else:
+        return "exterior"
+
+
+def scale_boundary_for_cutout(
+    boundary: list,
+    scale_short_factor: float = 2.00,
+    scale_short_axis: bool = True,
+    scale_long_axis: bool = True,
+    scale_long_factor: float = 0.98,
+    debug: bool = False,
+    debug_prefix: str = "window",
+    debug_id: str = "",
+) -> list:
+    """
+    Scale a boundary polygon for cutout operations (windows, doors, etc.).
+
+    Uses anisotropic scaling along the short axis (orthogonal to dominant direction)
+    and/or longer axis for better cutout geometry. Pure geometry operation - no Blender dependencies.
+
+    Args:
+        boundary: List of (x, y) tuples defining polygon
+        scale_short_factor: Factor to scale the shorter axis (default: 2.00)
+        scale_short_axis: If True, scale along axis orthogonal to dominant direction (default: True)
+        scale_long_axis: If True, scale along the dominant (longer) direction (default: True)
+        scale_long_factor: Factor to scale the longer axis (default: 0.99)
+        debug: If True, saves debug visualization (default: False)
+        debug_prefix: Prefix for debug filename (e.g., "window" or "door")
+        debug_id: ID to include in debug filename (e.g., apt_id_index)
+
+    Returns:
+        List of (x, y) tuples of scaled boundary
+    """
+    try:
+        boundary_poly = Polygon(boundary)
+        rotation_angle = get_dominant_angle([boundary_poly], strategy="complex_sum")
+        centroid = boundary_poly.centroid
+        centroid_coords = (centroid.x, centroid.y)
+
+        aligned_poly = affinity.rotate(
+            boundary_poly, rotation_angle, origin=centroid_coords, use_radians=False
+        )
+        minx, miny, maxx, maxy = aligned_poly.bounds
+        width = maxx - minx
+        height = maxy - miny
+        is_width_dominant = width >= height
+
+        scaled_poly = boundary_poly
+        scale_axis_vector = np.array([0.0, 0.0])
+        arrow_points = None
+        boundary_centroid = np.array(centroid_coords)
+
+        if scale_short_axis and width > 0 and height > 0:
+            # Start with base factors
+            if is_width_dominant:
+                x_factor = scale_long_factor  # Width is longer - always scale it
+                y_factor = scale_short_factor  # Height is shorter
+            else:
+                x_factor = scale_short_factor  # Width is shorter
+                y_factor = scale_long_factor  # Height is longer - always scale it
+
+            scaled_aligned_poly = affinity.scale(
+                aligned_poly, xfact=x_factor, yfact=y_factor, origin=centroid_coords
+            )
+            scaled_poly = affinity.rotate(
+                scaled_aligned_poly, -rotation_angle, origin=centroid_coords, use_radians=False
+            )
+
+            theta = np.radians(-rotation_angle)
+            rotation_matrix = np.array(
+                [[np.cos(theta), -np.sin(theta)], [np.sin(theta), np.cos(theta)]]
+            )
+            scale_axis_local = np.array([0.0, 1.0]) if is_width_dominant else np.array([1.0, 0.0])
+            scale_axis_vector = rotation_matrix @ scale_axis_local
+
+            if np.linalg.norm(scale_axis_vector) > 0:
+                minor_extent = height if is_width_dominant else width
+                direction_length = 0.5 * max(minor_extent, 1.0)
+                direction = scale_axis_vector / np.linalg.norm(scale_axis_vector)
+                arrow_points = np.vstack(
+                    [
+                        boundary_centroid - direction * direction_length,
+                        boundary_centroid + direction * direction_length,
+                    ]
+                )
+        elif scale_long_axis and width > 0 and height > 0:
+            # Only scale long axis, not short axis
+            if is_width_dominant:
+                x_factor = scale_long_factor  # Width is longer
+                y_factor = 1.0  # Height is shorter
+            else:
+                x_factor = 1.0  # Width is shorter
+                y_factor = scale_long_factor  # Height is longer
+
+            scaled_aligned_poly = affinity.scale(
+                aligned_poly, xfact=x_factor, yfact=y_factor, origin=centroid_coords
+            )
+            scaled_poly = affinity.rotate(
+                scaled_aligned_poly, -rotation_angle, origin=centroid_coords, use_radians=False
+            )
+        elif not scale_short_axis and not scale_long_axis:
+            # Uniform scaling if neither axis-specific scaling is requested
+            scaled_poly = affinity.scale(
+                boundary_poly, xfact=scale_short_factor, yfact=scale_short_factor, origin=centroid_coords
+            )
+
+        # TEMP: visualization for debugging orthogonal scaling
+        if debug:
+            x, y = boundary_poly.exterior.xy
+            sx, sy = scaled_poly.exterior.xy
+
+            fig, ax = plt.subplots()
+            ax.plot(
+                x,
+                y,
+                color="#6699cc",
+                alpha=0.7,
+                linewidth=1,
+                solid_capstyle="round",
+                zorder=2,
+                label="original",
+            )
+            ax.plot(
+                sx,
+                sy,
+                color="#f44",
+                alpha=0.7,
+                linewidth=1,
+                solid_capstyle="round",
+                zorder=2,
+                label=(
+                    "scaled (short + long axis)" if (scale_short_axis and scale_long_axis)
+                    else "scaled (short axis)" if scale_short_axis
+                    else "scaled (long axis)" if scale_long_axis
+                    else "scaled (uniform)"
+                ),
+            )
+
+            if arrow_points is not None:
+                ax.plot(
+                    arrow_points[:, 0],
+                    arrow_points[:, 1],
+                    color="#0f0",
+                    linewidth=1.5,
+                    label="scale axis",
+                )
+
+            ax.set_aspect("equal")
+            ax.legend()
+
+            debug_dir = Path(__file__).resolve().parents[1] / "importer" / "msd" / "image_save"
+            debug_dir.mkdir(parents=True, exist_ok=True)
+            debug_filename = f"{debug_prefix}_{debug_id}.png" if debug_id else f"{debug_prefix}_debug.png"
+            debug_path = debug_dir / debug_filename
+
+            plt.savefig(debug_path, format="png", dpi=150)
+            plt.close(fig)
+
+            with Image.open(debug_path) as debug_image:
+                print(
+                    f"Saved {debug_prefix} scaling debug visualization to {debug_path} "
+                    f"(size={debug_image.size}, anisotropic={scale_short_axis})"
+                )
+
+        if scaled_poly.is_valid and not scaled_poly.is_empty:
+            expanded_boundary = list(scaled_poly.exterior.coords[:-1])
+        else:
+            expanded_boundary = boundary
+    except Exception as e:
+        print(f"Failed to scale boundary: {e}")
+        expanded_boundary = boundary
+
+    return expanded_boundary
+
+
+def get_longest_edge_angle(polygon: Polygon | list[Vector2]) -> float:
+    """
+    Calculate the angle of the longest edge in a polygon.
+    Useful for determining the orientation of rectangular features like doors or windows.
+
+    Args:
+        polygon: Shapely Polygon object or list of Vector2 points
+
+    Returns:
+        Angle in degrees (from X-axis, counterclockwise) of the longest edge
+    """
+    # Convert to coordinate list
+    if isinstance(polygon, Polygon):
+        coords = list(polygon.exterior.coords[:-1])  # Exclude duplicate last point
+    elif isinstance(polygon, list) and isinstance(polygon[0], Vector2):
+        coords = [(v.x, v.y) for v in polygon]
+    else:
+        raise TypeError("Expected shapely Polygon or list[Vector2]")
+
+    max_length = 0
+    angle = 0.0
+
+    for i in range(len(coords)):
+        p1 = coords[i]
+        p2 = coords[(i + 1) % len(coords)]
+
+        # Calculate edge vector and length
+        dx = p2[0] - p1[0]
+        dy = p2[1] - p1[1]
+        length = math.sqrt(dx**2 + dy**2)
+
+        # Track the longest edge and its angle
+        if length > max_length:
+            max_length = length
+            # Calculate angle in degrees (from X-axis, counterclockwise)
+            angle = math.degrees(math.atan2(dy, dx))
+
+    return angle
 
 
 def get_dominant_angle(
@@ -230,3 +495,154 @@ def normalize_floor_plan_orientation(
                         s.boundary = rotate_boundary(s.boundary, correction_angle, origin=centroid)
 
     return rooms, correction_angle
+
+
+def calculate_bounds_for_objects(objects: list) -> tuple[float, float, float, float, float, float] | None:
+    """Calculate bounding box for a list of Blender objects.
+
+    Args:
+        objects: List of Blender objects
+
+    Returns:
+        Tuple of (min_x, max_x, min_y, max_y, min_z, max_z) or None if no valid objects
+    """
+    if not objects:
+        return None
+
+    valid_objects = [obj for obj in objects if getattr(obj, "bound_box", None)]
+    if not valid_objects:
+        return None
+
+    first_obj = valid_objects[0]
+    bbox_corners = [first_obj.matrix_world @ Vector(corner) for corner in first_obj.bound_box]
+
+    min_x = min(v.x for v in bbox_corners)
+    max_x = max(v.x for v in bbox_corners)
+    min_y = min(v.y for v in bbox_corners)
+    max_y = max(v.y for v in bbox_corners)
+    min_z = min(v.z for v in bbox_corners)
+    max_z = max(v.z for v in bbox_corners)
+
+    for obj in valid_objects[1:]:
+        bbox_corners = [obj.matrix_world @ Vector(corner) for corner in obj.bound_box]
+        min_x = min(min_x, min(v.x for v in bbox_corners))
+        max_x = max(max_x, max(v.x for v in bbox_corners))
+        min_y = min(min_y, min(v.y for v in bbox_corners))
+        max_y = max(max_y, max(v.y for v in bbox_corners))
+        min_z = min(min_z, min(v.z for v in bbox_corners))
+        max_z = max(max_z, max(v.z for v in bbox_corners))
+
+    return (min_x, max_x, min_y, max_y, min_z, max_z)
+
+
+def get_world_bounds_2d(obj):
+    """Get 2D bounding box (X/Y only) of an object in world space.
+
+    Args:
+        obj: Blender object
+
+    Returns:
+        Tuple of (min_corner, max_corner) as Vector objects with x, y components
+    """
+    corners = [obj.matrix_world @ Vector(corner) for corner in obj.bound_box]
+    min_corner = Vector(
+        (
+            min(v.x for v in corners),
+            min(v.y for v in corners),
+        )
+    )
+    max_corner = Vector(
+        (
+            max(v.x for v in corners),
+            max(v.y for v in corners),
+        )
+    )
+    return min_corner, max_corner
+
+
+def push_window_to_wall(window_obj, search_radius: float = 0.5) -> bool:
+    """Push a window to the nearest wall face by moving its empty controller.
+
+    Searches for the biggest nearby mesh object (wall) within search_radius and
+    moves the window's empty controller to align with the nearest wall face.
+
+    Args:
+        window_obj: The window Blender object
+        search_radius: Search radius in meters (default: 0.5m)
+
+    Returns:
+        True if successfully pushed to wall, False otherwise
+    """
+    from scene_builder.logging import logger
+    from scene_builder.utils.geometry import distance_to_box_2d, get_object_volume
+
+    if window_obj is None:
+        logger.warning("Cannot push window to wall: window object is None")
+        return False
+
+    # Find the window's empty controller (parent object)
+    controller_obj = window_obj.parent
+    if controller_obj is None:
+        logger.warning(
+            f"Cannot push window '{window_obj.name}' to wall: no parent controller found"
+        )
+        return False
+
+    # Get window's world origin position
+    window_origin = window_obj.matrix_world.translation
+
+    # Find biggest nearby mesh object (wall)
+    biggest_wall = None
+    max_volume = 0.0
+
+    for obj in bpy.data.objects:
+        if obj.type == "MESH" and obj.name != window_obj.name:
+            min_c, max_c = get_world_bounds_2d(obj)
+            dist = distance_to_box_2d(window_origin, min_c, max_c)
+
+            if dist <= search_radius:
+                vol = get_object_volume(obj)
+                if vol > max_volume:
+                    max_volume = vol
+                    biggest_wall = obj
+
+    if not biggest_wall:
+        logger.debug(
+            f"No nearby wall found within {search_radius}m of window '{window_obj.name}'. "
+            f"Window remains at original position."
+        )
+        return False
+
+    # Find nearest X/Y side of the wall
+    min_corner_wall, max_corner_wall = get_world_bounds_2d(biggest_wall)
+
+    distances = {
+        "X+": abs(window_origin.x - max_corner_wall.x),
+        "X-": abs(window_origin.x - min_corner_wall.x),
+        "Y+": abs(window_origin.y - max_corner_wall.y),
+        "Y-": abs(window_origin.y - min_corner_wall.y),
+    }
+
+    nearest_side = min(distances, key=distances.get)
+
+    # Move empty controller to align with nearest wall face (keep Z same)
+    target_loc = controller_obj.location.copy()
+    if nearest_side == "X+":
+        target_loc.x = max_corner_wall.x
+    elif nearest_side == "X-":
+        target_loc.x = min_corner_wall.x
+    elif nearest_side == "Y+":
+        target_loc.y = max_corner_wall.y
+    elif nearest_side == "Y-":
+        target_loc.y = min_corner_wall.y
+    # Z coordinate remains unchanged
+
+    controller_obj.location = target_loc
+    bpy.context.view_layer.update()
+
+    logger.debug(
+        f"Pushed window '{window_obj.name}' to {nearest_side} face of wall '{biggest_wall.name}'. "
+        f"Controller moved to {target_loc}"
+    )
+
+    return True

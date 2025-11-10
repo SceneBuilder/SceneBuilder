@@ -28,20 +28,22 @@ from scene_builder.decoder.blender.controllers.interior_door import create_inter
 from scene_builder.decoder.blender.controllers.window import create_window
 from scene_builder.definition.scene import Object, Room, Scene, Vector2, find_shell
 from scene_builder.importer import objaverse_importer, test_asset_importer
-from scene_builder.importer.msd.loader import (
-    get_dominant_angle,
-    get_longest_edge_angle,
-    classify_door_type,
-    scale_boundary_for_cutout,
-)
 from scene_builder.logging import logger
 from scene_builder.tools.material_applicator import texture_floor_mesh
 from scene_builder.utils.blender import SceneSwitcher
 from scene_builder.utils.conversions import pydantic_to_dict
 from scene_builder.utils.file import get_filename
-from scene_builder.utils.floorplan import get_dominant_angle
-from scene_builder.utils.geometry import get_longest_edge_angle, polygon_centroid
+from scene_builder.utils.floorplan import (
+    calculate_bounds_for_objects,
+    classify_door_type,
+    get_dominant_angle,
+    get_longest_edge_angle,
+    push_window_to_wall,
+    scale_boundary_for_cutout,
+)
+from scene_builder.utils.geometry import calculate_bounds_2d, distance_to_box_2d, polygon_centroid
 from scene_builder.utils.image import compose_image_grid
+from scene_builder.utils.scene import calculate_scene_bounds
 
 HDRI_FILE_PATH = Path(
     f"{TEST_ASSET_DIR}/hdri/autumn_field_puresky_4k.exr"
@@ -301,7 +303,6 @@ def suppress_blender_logs(log_file_path: str = BLENDER_LOG_FILE):
         os.close(saved_stderr_fd)
 
 
-
 def parse_scene_definition(scene_data: dict[str, Any], with_walls: bool = False):
     """
     Parses the scene definition dictionary and creates the scene in Blender.
@@ -335,7 +336,11 @@ def parse_scene_definition(scene_data: dict[str, Any], with_walls: bool = False)
                 try:
                     wall_shell = find_shell(room_data, "wall")
                     if wall_shell and getattr(wall_shell, "material_id", None):
-                        room_id = room_data.get("id") if isinstance(room_data, dict) else getattr(room_data, "id", "unknown")
+                        room_id = (
+                            room_data.get("id")
+                            if isinstance(room_data, dict)
+                            else getattr(room_data, "id", "unknown")
+                        )
                         apply_wall_material(
                             material_id=wall_shell.material_id,
                             wall_object_name=f"Wall_{room_id}",
@@ -389,7 +394,11 @@ def parse_room_definition(
                         try:
                             wall_shell = find_shell(room_data, "wall")
                             if wall_shell and getattr(wall_shell, "material_id", None):
-                                room_id = room_data.get("id") if isinstance(room_data, dict) else getattr(room_data, "id", "unknown")
+                                room_id = (
+                                    room_data.get("id")
+                                    if isinstance(room_data, dict)
+                                    else getattr(room_data, "id", "unknown")
+                                )
                                 apply_wall_material(
                                     material_id=wall_shell.material_id,
                                     wall_object_name=f"Wall_{room_id}",
@@ -912,7 +921,7 @@ def _create_floor_mesh(
         bpy.ops.object.origin_set(type="ORIGIN_GEOMETRY", center="BOUNDS")
 
     # Calculate bounds
-    bounds = _calculate_bounds(vertices_2d)
+    bounds = calculate_bounds_2d(vertices_2d)
 
     # Build result with LLM metadata
     result = {
@@ -970,140 +979,6 @@ def get_apartment_outline(rooms: list) -> list:
         return []
 
     return outline
-
-
-# NOTE: TODO later some go to @gemetry.py or call from @geometry.py
-def _get_world_bounds_2d(obj) -> Tuple[Vector, Vector]:
-    """Get 2D bounding box (X/Y only) of an object in world space.
-    
-    Args:
-        obj: Blender object
-        
-    Returns:
-        Tuple of (min_corner, max_corner) as Vector objects with x, y components
-    """
-    corners = [obj.matrix_world @ Vector(corner) for corner in obj.bound_box]
-    min_corner = Vector((
-        min(v.x for v in corners),
-        min(v.y for v in corners),
-    ))
-    max_corner = Vector((
-        max(v.x for v in corners),
-        max(v.y for v in corners),
-    ))
-    return min_corner, max_corner
-
-
-def _distance_to_box_2d(point: Vector, min_corner: Vector, max_corner: Vector) -> float:
-    """Return the shortest 2D distance from a point to an axis-aligned bounding box.
-    
-    Args:
-        point: 2D or 3D point (only x, y components used)
-        min_corner: Minimum corner of bounding box (x, y)
-        max_corner: Maximum corner of bounding box (x, y)
-        
-    Returns:
-        Distance in meters
-    """
-    dx = max(min_corner.x - point.x, 0, point.x - max_corner.x)
-    dy = max(min_corner.y - point.y, 0, point.y - max_corner.y)
-    return math.sqrt(dx*dx + dy*dy)
-
-
-def _get_object_volume(obj) -> float:
-    """Calculate object volume from dimensions.
-    
-    Args:
-        obj: Blender object
-        
-    Returns:
-        Volume in cubic meters
-    """
-    d = obj.dimensions
-    return d.x * d.y * d.z
-
-
-def _push_window_to_wall(window_obj, search_radius: float = 0.5) -> bool:
-    """Push a window to the nearest wall face by moving its empty controller.
-    
-    Searches for the biggest nearby mesh object (wall) within search_radius and
-    moves the window's empty controller to align with the nearest wall face.
-    
-    Args:
-        window_obj: The window Blender object
-        search_radius: Search radius in meters (default: 0.5m)
-        
-    Returns:
-        True if successfully pushed to wall, False otherwise
-    """
-    if window_obj is None:
-        logger.warning("Cannot push window to wall: window object is None")
-        return False
-    
-    # Find the window's empty controller (parent object)
-    controller_obj = window_obj.parent
-    if controller_obj is None:
-        logger.warning(f"Cannot push window '{window_obj.name}' to wall: no parent controller found")
-        return False
-    
-    # Get window's world origin position
-    window_origin = window_obj.matrix_world.translation
-    
-    # Find biggest nearby mesh object (wall)
-    biggest_wall = None
-    max_volume = 0.0
-    
-    for obj in bpy.data.objects:
-        if obj.type == 'MESH' and obj.name != window_obj.name:
-            min_c, max_c = _get_world_bounds_2d(obj)
-            dist = _distance_to_box_2d(window_origin, min_c, max_c)
-            
-            if dist <= search_radius:
-                vol = _get_object_volume(obj)
-                if vol > max_volume:
-                    max_volume = vol
-                    biggest_wall = obj
-    
-    if not biggest_wall:
-        logger.debug(
-            f"No nearby wall found within {search_radius}m of window '{window_obj.name}'. "
-            f"Window remains at original position."
-        )
-        return False
-    
-    # Find nearest X/Y side of the wall
-    min_corner_wall, max_corner_wall = _get_world_bounds_2d(biggest_wall)
-    
-    distances = {
-        "X+": abs(window_origin.x - max_corner_wall.x),
-        "X-": abs(window_origin.x - min_corner_wall.x),
-        "Y+": abs(window_origin.y - max_corner_wall.y),
-        "Y-": abs(window_origin.y - min_corner_wall.y),
-    }
-    
-    nearest_side = min(distances, key=distances.get)
-    
-    # Move empty controller to align with nearest wall face (keep Z same)
-    target_loc = controller_obj.location.copy()
-    if nearest_side == "X+":
-        target_loc.x = max_corner_wall.x
-    elif nearest_side == "X-":
-        target_loc.x = min_corner_wall.x
-    elif nearest_side == "Y+":
-        target_loc.y = max_corner_wall.y
-    elif nearest_side == "Y-":
-        target_loc.y = min_corner_wall.y
-    # Z coordinate remains unchanged
-    
-    controller_obj.location = target_loc
-    bpy.context.view_layer.update()
-    
-    logger.debug(
-        f"Pushed window '{window_obj.name}' to {nearest_side} face of wall '{biggest_wall.name}'. "
-        f"Controller moved to {target_loc}"
-    )
-    
-    return True
 
 
 def _create_window_cutout(
@@ -1471,60 +1346,9 @@ def create_window_from_boundary(
             )
 
             # Push window to nearest wall
-            _push_window_to_wall(window_obj, search_radius=0.5)
+            push_window_to_wall(window_obj, search_radius=0.5)
 
     return result
-
-
-def _calculate_bounds(
-    vertices_2d: list[tuple[float, float]],
-) -> dict[str, float | bool | int]:
-    """
-    Calculate bounding box dimensions from 2D vertices.
-
-    Args:
-        vertices_2d: List of (x, y) coordinate tuples
-
-    Returns:
-        Dictionary containing min/max coordinates, width, height, and area
-    """
-
-    if not vertices_2d:
-        return {
-            "value": False,
-            "count": 0,
-            "min_x": 0,
-            "max_x": 0,
-            "min_y": 0,
-            "max_y": 0,
-            "width": 0,
-            "height": 0,
-            "area": 0,
-            "has_area": False,
-        }
-
-    x_coords = [x for x, y in vertices_2d]
-    y_coords = [y for x, y in vertices_2d]
-
-    min_x, max_x = min(x_coords), max(x_coords)
-    min_y, max_y = min(y_coords), max(y_coords)
-    width = max_x - min_x
-    height = max_y - min_y
-    area = width * height
-
-    return {
-        "value": True,
-        "count": len(vertices_2d),
-        "min_x": min_x,
-        "max_x": max_x,
-        "min_y": min_y,
-        "max_y": max_y,
-        "width": width,
-        "height": height,
-        "area": area,
-        "has_area": (width > 0 and height > 0),
-    }
-
 
 def _ensure_collection(collection_name: str):
     """Ensures a collection exists in the current scene and returns it.
@@ -1847,7 +1671,7 @@ def _configure_output_image(format: str, resolution: int):
 def _configure_render_settings(engine: str = None, samples: int = 256, enable_gpu: bool = False):
     """Selects a compatible render engine and configures render settings."""
 
-    available_engines = ['BLENDER_EEVEE', 'BLENDER_WORKBENCH', 'CYCLES']
+    available_engines = ["BLENDER_EEVEE", "BLENDER_WORKBENCH", "CYCLES"]
     # try:
     #     engine_prop = bpy.context.scene.render.bl_rna.properties["engine"]
     #     available_engines = [item.identifier for item in engine_prop.enum_items]
@@ -1903,50 +1727,6 @@ def _configure_render_settings(engine: str = None, samples: int = 256, enable_gp
                 # GPU acceleration not available, continue with CPU
                 pass
 
-
-def _calculate_scene_bounds():
-    """Calculate the bounding box of all visible objects in the scene.
-
-    Returns:
-        tuple: (min_x, max_x, min_y, max_y, min_z, max_z) or None if no objects
-    """
-    objects = [
-        obj
-        for obj in bpy.context.scene.objects
-        if obj.type == "MESH"
-        and obj.visible_get()
-        and not obj.name.startswith("Grid_")
-        and not obj.name.startswith("X_Axis_")
-        and not obj.name.startswith("Y_Axis_")
-    ]
-
-    if not objects:
-        return None
-
-    # Initialize with first object's bounds
-    first_obj = objects[0]
-    bbox_corners = [first_obj.matrix_world @ Vector(corner) for corner in first_obj.bound_box]
-
-    min_x = min(v.x for v in bbox_corners)
-    max_x = max(v.x for v in bbox_corners)
-    min_y = min(v.y for v in bbox_corners)
-    max_y = max(v.y for v in bbox_corners)
-    min_z = min(v.z for v in bbox_corners)
-    max_z = max(v.z for v in bbox_corners)
-
-    # Extend bounds with remaining objects
-    for obj in objects[1:]:
-        bbox_corners = [obj.matrix_world @ Vector(corner) for corner in obj.bound_box]
-        min_x = min(min_x, min(v.x for v in bbox_corners))
-        max_x = max(max_x, max(v.x for v in bbox_corners))
-        min_y = min(min_y, min(v.y for v in bbox_corners))
-        max_y = max(max_y, max(v.y for v in bbox_corners))
-        min_z = min(min_z, min(v.z for v in bbox_corners))
-        max_z = max(max_z, max(v.z for v in bbox_corners))
-
-    return (min_x, max_x, min_y, max_y, min_z, max_z)
-
-
 def _setup_top_down_camera(auto_zoom: bool = True, margin: float = 2.0):
     """Sets up a top-down orthographic camera.
 
@@ -1961,7 +1741,7 @@ def _setup_top_down_camera(auto_zoom: bool = True, margin: float = 2.0):
 
     # Calculate ortho_scale
     if auto_zoom:
-        bounds = _calculate_scene_bounds()
+        bounds = calculate_scene_bounds()
         if bounds:
             min_x, max_x, min_y, max_y, _, _ = bounds
             width = max_x - min_x
@@ -2004,7 +1784,7 @@ def _setup_isometric_camera(auto_zoom: bool = True, margin: float = 2.0):
 
     # Calculate ortho_scale
     if auto_zoom:
-        bounds = _calculate_scene_bounds()
+        bounds = calculate_scene_bounds()
         if bounds:
             min_x, max_x, min_y, max_y, min_z, max_z = bounds
             width = max_x - min_x
@@ -2083,7 +1863,7 @@ def _setup_egocentric_camera(
         if obj.type == "CAMERA":
             bpy.data.objects.remove(obj, do_unlink=True)
 
-    bounds = _calculate_scene_bounds()
+    bounds = calculate_scene_bounds()
 
     if bounds:
         min_x, max_x, min_y, max_y, min_z, max_z = bounds
@@ -2372,7 +2152,7 @@ class _ObjectAugmentor:
             mesh_objects.extend(_collect_mesh_descendants(obj))
 
         if mesh_objects:
-            bounds = _calculate_bounds_for_objects(mesh_objects)
+            bounds = calculate_bounds_for_objects(mesh_objects)
             if bounds:
                 min_x, max_x, min_y, max_y, min_z, max_z = bounds
                 center = Vector(
@@ -2425,39 +2205,6 @@ def _collect_mesh_descendants(root: bpy.types.Object) -> list[bpy.types.Object]:
     _traverse(root)
     return meshes
 
-
-def _calculate_bounds_for_objects(
-    objects: list[bpy.types.Object],
-) -> tuple[float, float, float, float, float, float] | None:
-    if not objects:
-        return None
-
-    valid_objects = [obj for obj in objects if getattr(obj, "bound_box", None)]
-    if not valid_objects:
-        return None
-
-    first_obj = valid_objects[0]
-    bbox_corners = [first_obj.matrix_world @ Vector(corner) for corner in first_obj.bound_box]
-
-    min_x = min(v.x for v in bbox_corners)
-    max_x = max(v.x for v in bbox_corners)
-    min_y = min(v.y for v in bbox_corners)
-    max_y = max(v.y for v in bbox_corners)
-    min_z = min(v.z for v in bbox_corners)
-    max_z = max(v.z for v in bbox_corners)
-
-    for obj in valid_objects[1:]:
-        bbox_corners = [obj.matrix_world @ Vector(corner) for corner in obj.bound_box]
-        min_x = min(min_x, min(v.x for v in bbox_corners))
-        max_x = max(max_x, max(v.x for v in bbox_corners))
-        min_y = min(min_y, min(v.y for v in bbox_corners))
-        max_y = max(max_y, max(v.y for v in bbox_corners))
-        min_z = min(min_z, min(v.z for v in bbox_corners))
-        max_z = max(max_z, max(v.z for v in bbox_corners))
-
-    return (min_x, max_x, min_y, max_y, min_z, max_z)
-
-
 def _create_object_label(
     object_id: str, blender_obj: bpy.types.Object, camera: bpy.types.Object
 ) -> bpy.types.Object | None:
@@ -2501,7 +2248,7 @@ def _object_center_and_size(
     blender_obj: bpy.types.Object,
 ) -> tuple[Vector | None, float]:
     mesh_objects = _collect_mesh_descendants(blender_obj)
-    bounds = _calculate_bounds_for_objects(mesh_objects) if mesh_objects else None
+    bounds = calculate_bounds_for_objects(mesh_objects) if mesh_objects else None
 
     if bounds:
         min_x, max_x, min_y, max_y, min_z, max_z = bounds
@@ -2640,7 +2387,11 @@ def create_object_visualization(
     with SceneSwitcher(scene):
         # Resolve targets early so egocentric camera can track them
         augmentor = _ObjectAugmentor(target_objects, augmentations)
-        track_target_obj = augmentor._target_pairs[0][1] if (view == "egocentric" and augmentor.has_targets) else None
+        track_target_obj = (
+            augmentor._target_pairs[0][1]
+            if (view == "egocentric" and augmentor.has_targets)
+            else None
+        )
 
         with suppress_blender_logs():
             # _configure_render_settings()  # OG
@@ -2676,7 +2427,9 @@ def create_object_visualization(
 
         try:
             if "preview_rotation" in augmentations and augmentor.has_targets:
-                preview_path = _render_preview_rotation(scene_obj, augmentor, output_path, image_format=format)
+                preview_path = _render_preview_rotation(
+                    scene_obj, augmentor, output_path, image_format=format
+                )
                 if preview_path:
                     render_result = Path(preview_path)
             if render_result is None:
@@ -2917,24 +2670,6 @@ def setup_post_processing(
         pass
 
 
-# NOTE: temporarily, if interior door is not needed, let's delete this function later
-
-
-def _door_boundary_to_coords(door_boundary: list) -> list[tuple[float, float]]:
-    """Normalize mixed point representations into (x, y) tuples."""
-    coords: list[tuple[float, float]] = []
-    for point in door_boundary or []:
-        if isinstance(point, tuple):
-            coords.append(point)
-        elif hasattr(point, "x") and hasattr(point, "y"):
-            coords.append((point.x, point.y))
-        else:
-            coords.append((point["x"], point["y"]))
-    return coords
-
-##########################################################################################
-# restoring start here --------------------------------------------------------------------
-
 def create_room_walls(
     rooms: list[Room],
     wall_height: float = 2.7,
@@ -2974,7 +2709,6 @@ def create_room_walls(
 
     interior_door_polygons: list[tuple[str, list[tuple[float, float]]]] = []
 
-    # First, collect all non-door, non-window room boundaries as polygons for door classification
     all_room_polygons = []
     for room in rooms:
         r_category = room.get("category")
@@ -2993,12 +2727,7 @@ def create_room_walls(
             except Exception:
                 continue
 
-##########################################################################################
-# restoring: checked all room_polygons works okay --------------------------------------------------------------------
-
-    # Collect windows and doors from both structure (newer model) and category (older model)
     for r in rooms:
-        # Handle structure-based model (newer approach from main)
         for s in r.get("structure", []):
             # s can be pydantic Structure or dict
             s_type = s.get("type")
@@ -3006,7 +2735,6 @@ def create_room_walls(
             s_boundary = s.get("boundary")
             if not s_boundary or len(s_boundary) < 3:
                 continue
-            # Normalize boundary to list of (x, y)
             boundary_xy: list[tuple[float, float]] = []
             for p in s_boundary:
                 if hasattr(p, "x"):
@@ -3033,13 +2761,8 @@ def create_room_walls(
                 else:
                     interior_door_polygons.append((str(s_id), boundary_xy))
                     logger.debug(f"Door {s_id}: identified as interior door")
-##################################################
-# restoring: checked all door_polygons works okay --------------------------------------------------------------------
-##################################################
-
 
     for room in rooms:
-
         r_category = room.get("category")
         if r_category == "window":
             continue
@@ -3096,11 +2819,6 @@ def create_room_walls(
         solidify.thickness = wall_thickness
         solidify.offset = -1
 
-        bpy.context.view_layer.objects.active = obj
-        with suppress_blender_logs():
-            bpy.ops.object.modifier_apply(modifier="Solidify")
-
-        # If requested, use translucent material for walls
         if translucent:
             # Don't create material if it exists already
             mat_name = "TranslucentWallMaterial"
@@ -3113,22 +2831,20 @@ def create_room_walls(
             if not any(m and m.name == mat_name for m in obj.data.materials):
                 obj.data.materials.append(wall_material)
 
-        # # Create room polygon for intersection checking
-        # try:
         room_polygon = Polygon(boundary_points)
 
         if window_cutouts and window_cutout_polygons:
             for idx, (cutout_id, cutout_boundary) in enumerate(window_cutout_polygons):
                 if not cutout_boundary:
                     continue
-                
+
                 # Only apply window cutout if it intersects with this room's boundary
                 if room_polygon:
                     try:
                         cutout_polygon = Polygon(cutout_boundary)
                         # Check if cutout intersects with room or is very close (within 0.1m)
                         if cutout_polygon.is_valid and (
-                            cutout_polygon.intersects(room_polygon) 
+                            cutout_polygon.intersects(room_polygon)
                             or room_polygon.distance(cutout_polygon) < 0.1
                         ):
                             _create_window_cutout(
@@ -3156,10 +2872,8 @@ def create_room_walls(
                                 )
 
                     except Exception:
-                        # Skip this cutout if polygon creation fails
                         continue
                 else:
-                    # Fallback: apply cutout if room polygon couldn't be created
                     _create_window_cutout(
                         wall_obj=obj,
                         apt_id=str(cutout_id),
@@ -3170,7 +2884,6 @@ def create_room_walls(
                         keep_cutter_visible=keep_cutters_visible,
                     )
 
-                    # Create the actual window object at this boundary if rendering is enabled
                     if render_windows:
                         window_result = create_window_from_boundary(
                             window_boundary=cutout_boundary,
@@ -3193,8 +2906,7 @@ def create_room_walls(
             for idx, (door_id, door_boundary) in enumerate(interior_door_polygons):
                 if not door_boundary:
                     continue
-                
-                # Only apply door cutout if it is very close to this room's boundary (within 0.1m)
+
                 if room_polygon:
                     try:
                         door_polygon = Polygon(door_boundary)
@@ -3211,7 +2923,6 @@ def create_room_walls(
                                 keep_cutter_visible=keep_cutters_visible,
                             )
 
-                            # Create the actual door object at this boundary if rendering is enabled
                             if render_doors:
                                 door_result = create_door_from_boundary(
                                     door_boundary=door_boundary,
@@ -3227,14 +2938,23 @@ def create_room_walls(
                                 )
 
                                 if door_result:
-                                    logger.debug(f"Successfully created door object: {door_result.get('object')}")
+                                    logger.debug(
+                                        f"Successfully created door object: {door_result.get('object')}"
+                                    )
                             else:
-                                logger.debug(f"Skipping door object creation for door {door_id} (render_doors=False)")
+                                logger.debug(
+                                    f"Skipping door object creation for door {door_id} (render_doors=False)"
+                                )
                     except Exception:
                         # Skip this door if polygon creation fails
                         continue
 
-        # logger.debug(f"Created wall for room {room.id} ({room.category})")
+        bpy.context.view_layer.objects.active = obj
+        with suppress_blender_logs():
+            solidify_mod = obj.modifiers.get("Solidify")
+            if solidify_mod:
+                bpy.ops.object.modifier_apply(modifier=solidify_mod.name)
+
         walls_created += 1
 
     return walls_created
@@ -3268,7 +2988,7 @@ def apply_floor_material(
             else:
                 boundary_tuples.append((point["x"], point["y"]))
 
-        bounds = _calculate_bounds(boundary_tuples)
+        bounds = calculate_bounds_2d(boundary_tuples)
         current_size = max(bounds["width"], bounds["height"])
         reference_size = 10.0  # 10x10 room -> uv_scale=30.0 base
         reference_uv_scale = 30.0
