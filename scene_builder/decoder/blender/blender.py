@@ -2725,7 +2725,7 @@ def create_room_walls(
                 continue
 
     for r in rooms:
-        for s in r.get("structure", []):
+        for s in r.get("structure") or []:
             # s can be pydantic Structure or dict
             s_type = s.get("type")
             s_id = s.get("id")
