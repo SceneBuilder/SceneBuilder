@@ -36,7 +36,6 @@ from scene_builder.utils.file import get_filename
 from scene_builder.utils.floorplan import (
     calculate_bounds_for_objects,
     classify_door_type,
-    get_dominant_angle,
     get_longest_edge_angle,
     push_window_to_wall,
     scale_boundary_for_cutout,
@@ -1048,30 +1047,27 @@ def _create_window_cutout(
 
         bm.to_mesh(cutter_mesh)
         cutter_mesh.update()
-
-        # If keeping cutter visible, apply a bright red material for visualization
-        if keep_cutter_visible:
-            cutter_material = _create_unlit_material(
-                f"WindowCutterMaterial_{apt_id}_{window_idx}",
-                (1.0, 0.0, 0.0, 0.5),  # Bright red with transparency
-            )
-            cutter_obj.data.materials.append(cutter_material)
-            # Make the cutter wireframe or semi-transparent for better visibility
-            cutter_obj.display_type = "WIRE" if hasattr(cutter_obj, "display_type") else "SOLID"
-
-        # Apply boolean modifier
-        bool_mod = wall_obj.modifiers.new(name=f"WindowCut_{window_idx}", type="BOOLEAN")
-        bool_mod.operation = "DIFFERENCE"
-        bool_mod.object = cutter_obj
-
-        bpy.context.view_layer.objects.active = wall_obj
-        bpy.ops.object.modifier_apply(modifier=bool_mod.name)
-
-        # Clean up cutter object only if not keeping it visible
-        if not keep_cutter_visible:
-            bpy.data.objects.remove(cutter_obj, do_unlink=True)
     finally:
         bm.free()
+
+    bpy.context.view_layer.objects.active = cutter_obj
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.select_all(action="SELECT")
+    bpy.ops.mesh.normals_make_consistent(inside=False)
+    bpy.ops.object.mode_set(mode="OBJECT")
+
+    cutter_obj.display_type = "WIRE" if hasattr(cutter_obj, "display_type") else "SOLID"
+
+    # Apply boolean modifier
+    bool_mod = wall_obj.modifiers.new(name=f"WindowCut_{window_idx}", type="BOOLEAN")
+    bool_mod.operation = "DIFFERENCE"
+    bool_mod.object = cutter_obj
+
+    bpy.context.view_layer.objects.active = wall_obj
+    bpy.ops.object.modifier_apply(modifier=bool_mod.name)
+
+    if not keep_cutter_visible:
+        bpy.data.objects.remove(cutter_obj, do_unlink=True)
 
 
 def _create_interior_door_cutout(
@@ -1145,16 +1141,13 @@ def _create_interior_door_cutout(
     finally:
         bm.free()
 
-    # If keeping cutter visible, apply a bright red material for visualization
-    if keep_cutter_visible:
-        cutter_material = _create_unlit_material(
-            f"DoorCutterMaterial_{apt_id}_{door_idx}",
-            (1.0, 0.0, 0.0, 0.5),  # Bright red with transparency
-        )
-        cutter_obj.data.materials.append(cutter_material)
-        # Make the cutter wireframe or semi-transparent for better visibility
-        cutter_obj.display_type = "WIRE" if hasattr(cutter_obj, "display_type") else "SOLID"
+    bpy.context.view_layer.objects.active = cutter_obj
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.select_all(action="SELECT")
+    bpy.ops.mesh.normals_make_consistent(inside=False)
+    bpy.ops.object.mode_set(mode="OBJECT")
 
+    cutter_obj.display_type = "WIRE" if hasattr(cutter_obj, "display_type") else "SOLID"
     # Apply boolean modifier
     bool_mod = wall_obj.modifiers.new(name=f"InteriorDoorCut_{door_idx}", type="BOOLEAN")
     bool_mod.operation = "DIFFERENCE"
@@ -1163,7 +1156,6 @@ def _create_interior_door_cutout(
     bpy.context.view_layer.objects.active = wall_obj
     bpy.ops.object.modifier_apply(modifier=bool_mod.name)
 
-    # Clean up cutter object only if not keeping it visible
     if not keep_cutter_visible:
         bpy.data.objects.remove(cutter_obj, do_unlink=True)
 
@@ -1192,11 +1184,14 @@ def create_door_from_boundary(
         door_boundary: List of (x, y) tuples defining door polygon
         door_id: Unique identifier for the door
         z_position: Z-height to place the door (default: 0.0 for floor level)
-        default_depth: Default door depth/thickness in meters (default: 0.1m)
         **door_settings: Additional settings to pass to create_interior_door
+                        (e.g., door_height, randomize_type, randomize_handle, etc.)
 
     Returns:
         Dictionary with creation summary, or None if failed
+
+    Note:
+        Door depth is automatically calculated from the door boundary polygon.
     """
 
     # Create polygon and get basic properties
@@ -1230,14 +1225,13 @@ def create_door_from_boundary(
 
     door_height = door_settings.pop("door_height", DEFAULT_DOOR_HEIGHT)
 
-    # Calculate location (centroid at floor level)
     location = (centroid.x, centroid.y, z_position)
 
-    logger.debug(
-        f"Door {door_id}: dimensions x={door_depth:.3f}m (depth), "
-        f"y={door_width:.3f}m (width), z={door_height:.3f}m (height), "
-        f"rotation={-rotation_angle:.1f}°"
-    )
+    # logger.debug(
+    #     f"Door {door_id}: dimensions x={door_depth:.3f}m (depth), "
+    #     f"y={door_width:.3f}m (width), z={door_height:.3f}m (height), "
+    #     f"rotation={-rotation_angle:.1f}°"
+    # )
 
     result = create_interior_door(
         name=f"InteriorDoor_{door_id}",
@@ -1349,6 +1343,7 @@ def create_window_from_boundary(
             push_window_to_wall(window_obj, search_radius=0.5)
 
     return result
+
 
 def _ensure_collection(collection_name: str):
     """Ensures a collection exists in the current scene and returns it.
@@ -1501,7 +1496,7 @@ def _create_grid(
         grid_object.select_set(True)
         bpy.context.view_layer.objects.active = grid_object
 
-    logger.debug(f"Successfully created '{GRID_NAME}' object with axis lines")
+    # logger.debug(f"Successfully created '{GRID_NAME}' object with axis lines")
 
 
 def load_template(path: str, clear_scene: bool):
@@ -1557,7 +1552,7 @@ def save_scene(filepath: str, scene: str = None, exclude_grid: bool = True):
         try:
             with suppress_blender_logs():
                 bpy.ops.file.pack_all()
-            logger.debug("Packed all external images into .blend file")
+            # logger.debug("Packed all external images into .blend file")
         except Exception as e:
             logger.debug(f"Warning: Could not pack images: {e}")
 
@@ -1726,6 +1721,7 @@ def _configure_render_settings(engine: str = None, samples: int = 256, enable_gp
             except Exception:
                 # GPU acceleration not available, continue with CPU
                 pass
+
 
 def _setup_top_down_camera(auto_zoom: bool = True, margin: float = 2.0):
     """Sets up a top-down orthographic camera.
@@ -2204,6 +2200,7 @@ def _collect_mesh_descendants(root: bpy.types.Object) -> list[bpy.types.Object]:
 
     _traverse(root)
     return meshes
+
 
 def _create_object_label(
     object_id: str, blender_obj: bpy.types.Object, camera: bpy.types.Object
@@ -2819,6 +2816,10 @@ def create_room_walls(
         solidify.thickness = wall_thickness
         solidify.offset = -1
 
+        bpy.context.view_layer.objects.active = obj
+        with suppress_blender_logs():
+            bpy.ops.object.modifier_apply(modifier=solidify.name)
+
         if translucent:
             # Don't create material if it exists already
             mat_name = "TranslucentWallMaterial"
@@ -2928,7 +2929,6 @@ def create_room_walls(
                                     door_boundary=door_boundary,
                                     door_id=str(door_id),
                                     z_position=0.0,
-                                    default_depth=0.1,
                                     door_height=DEFAULT_DOOR_HEIGHT,
                                     randomize_type=True,
                                     randomize_handle=True,
@@ -2948,12 +2948,6 @@ def create_room_walls(
                     except Exception:
                         # Skip this door if polygon creation fails
                         continue
-
-        bpy.context.view_layer.objects.active = obj
-        with suppress_blender_logs():
-            solidify_mod = obj.modifiers.get("Solidify")
-            if solidify_mod:
-                bpy.ops.object.modifier_apply(modifier=solidify_mod.name)
 
         walls_created += 1
 

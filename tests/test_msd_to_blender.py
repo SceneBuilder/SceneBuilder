@@ -9,9 +9,16 @@ from typing import Optional
 from scene_builder.decoder.blender import blender
 from scene_builder.definition.scene import Scene
 from scene_builder.importer.msd.loader import MSDLoader
+from scene_builder.logging import configure_logging
 from scene_builder.utils.blender import install_door_it_addon, install_window_it_addon
 from scene_builder.utils.room import render_structure_links
 from scene_builder.utils.scene import recenter_scene
+
+# Configure logging level (DEBUG shows all logs, INFO shows less)
+# configure_logging(level="DEBUG")
+# configure_logging(level="INFO")
+# configure_logging(level="WARNING")
+configure_logging(level="ERROR")
 
 
 OUTPUT_DIR = Path("test_output/msd_to_blender")
@@ -218,8 +225,8 @@ if __name__ == "__main__":
         render_links=False,
         enable_doors=True,
         enable_windows=True,
-        render_doors=False,
-        render_windows=False,
+        render_doors=True,
+        render_windows=True,
         keep_cutters_visible=True,
     )
     # Uncomment to test other configurations:
