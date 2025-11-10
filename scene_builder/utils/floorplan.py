@@ -15,6 +15,7 @@ from shapely import affinity
 from shapely.geometry import Polygon
 
 from scene_builder.definition.scene import Room, Vector2
+from scene_builder.utils.geometry import polygon_centroid
 
 
 def classify_door_type(
@@ -62,6 +63,84 @@ def classify_door_type(
         return "interior"
     else:
         return "exterior"
+
+
+def plot_floor_plan_with_windows(rooms: list[Room], output_path: str = "floor_plan.png"):
+    """Plot floor plan with windows marked in yellow."""
+    fig, ax = plt.subplots(figsize=(12, 12))
+    
+    # Plot rooms
+    for room in rooms:
+        if room.boundary and len(room.boundary) >= 3:
+            x = [v.x for v in room.boundary] + [room.boundary[0].x]
+            y = [v.y for v in room.boundary] + [room.boundary[0].y]
+            ax.plot(x, y, 'b-', linewidth=1)
+            ax.fill(x, y, color='lightblue', alpha=0.3)
+    
+    # Plot windows in yellow and mark centers with red dots
+    for room in rooms:
+        if room.structure:
+            for struct in room.structure:
+                if struct.type == "window" and struct.boundary and len(struct.boundary) >= 3:
+                    x = [v.x for v in struct.boundary] + [struct.boundary[0].x]
+                    y = [v.y for v in struct.boundary] + [struct.boundary[0].y]
+                    ax.plot(x, y, color='yellow', linewidth=3)
+                    ax.fill(x, y, color='yellow', alpha=0.8)
+                    
+                    # Calculate and mark window center with red dot
+                    center = polygon_centroid(struct.boundary)
+                    ax.plot(center.x, center.y, 'ro', markersize=3, zorder=15)
+                    
+                    # Find nearest point on any room boundary (wall face)
+                    nearest_point = None
+                    min_distance = float('inf')
+                    
+                    for check_room in rooms:
+                        if check_room.boundary and len(check_room.boundary) >= 3:
+                            # Check each edge of the room boundary
+                            for i in range(len(check_room.boundary)):
+                                p1 = check_room.boundary[i]
+                                p2 = check_room.boundary[(i + 1) % len(check_room.boundary)]
+                                
+                                # Find closest point on this edge to window center
+                                closest = _closest_point_on_segment(center, p1, p2)
+                                distance = math.sqrt((closest.x - center.x)**2 + (closest.y - center.y)**2)
+                                
+                                if distance < min_distance:
+                                    min_distance = distance
+                                    nearest_point = closest
+                    
+                    # Mark nearest point with blue dot
+                    if nearest_point:
+                        ax.plot(nearest_point.x, nearest_point.y, 'bo', markersize=3, zorder=14)
+    
+    ax.set_aspect('equal')
+    plt.savefig(output_path, dpi=150)
+    plt.close()
+    print(f"Saved floor plan to {output_path}")
+
+
+def _closest_point_on_segment(point: Vector2, seg_start: Vector2, seg_end: Vector2) -> Vector2:
+    """Find the closest point on a line segment to a given point."""
+    # Vector from seg_start to seg_end
+    dx = seg_end.x - seg_start.x
+    dy = seg_end.y - seg_start.y
+    
+    # If segment is a point, return that point
+    if dx == 0 and dy == 0:
+        return seg_start
+    
+    # Parameter t of the closest point on the infinite line
+    t = ((point.x - seg_start.x) * dx + (point.y - seg_start.y) * dy) / (dx * dx + dy * dy)
+    
+    # Clamp t to [0, 1] to stay on the segment
+    t = max(0, min(1, t))
+    
+    # Calculate the closest point
+    return Vector2(
+        x=seg_start.x + t * dx,
+        y=seg_start.y + t * dy
+    )
 
 
 def scale_boundary_for_cutout(
@@ -560,7 +639,7 @@ def get_world_bounds_2d(obj):
     return min_corner, max_corner
 
 
-def push_window_to_wall(window_obj, search_radius: float = 0.5) -> bool:
+def push_window_to_wall(window_obj, search_radius: float = 0.1) -> bool:
     """Push a window to the nearest wall face by moving its empty controller.
 
     Searches for the biggest nearby mesh object (wall) within search_radius and

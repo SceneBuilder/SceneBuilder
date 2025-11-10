@@ -37,7 +37,6 @@ from scene_builder.utils.floorplan import (
     calculate_bounds_for_objects,
     classify_door_type,
     get_longest_edge_angle,
-    push_window_to_wall,
     scale_boundary_for_cutout,
 )
 from scene_builder.utils.geometry import calculate_bounds_2d, distance_to_box_2d, polygon_centroid
@@ -1256,12 +1255,61 @@ def create_door_from_boundary(
     return result
 
 
+def _find_nearest_wall_point(window_center: Vector2, room_boundaries: list) -> Optional[Vector2]:
+    """Find the nearest point on any room boundary (wall) from window center.
+    
+    Args:
+        window_center: Center point of the window
+        room_boundaries: List of room boundary polygons (each as list of Vector2 or tuples)
+        
+    Returns:
+        Nearest point on wall as Vector2, or None if no boundaries found
+    """
+    nearest_point = None
+    min_distance = float('inf')
+    
+    for boundary in room_boundaries:
+        if not boundary or len(boundary) < 3:
+            continue
+            
+        # Check each edge of the boundary
+        for i in range(len(boundary)):
+            # Handle both Vector2 and tuple formats
+            p1 = boundary[i]
+            p2 = boundary[(i + 1) % len(boundary)]
+            
+            if isinstance(p1, (list, tuple)):
+                p1 = Vector2(x=p1[0], y=p1[1])
+            if isinstance(p2, (list, tuple)):
+                p2 = Vector2(x=p2[0], y=p2[1])
+            
+            # Calculate closest point on this edge
+            dx = p2.x - p1.x
+            dy = p2.y - p1.y
+            
+            if dx == 0 and dy == 0:
+                closest = p1
+            else:
+                t = ((window_center.x - p1.x) * dx + (window_center.y - p1.y) * dy) / (dx * dx + dy * dy)
+                t = max(0, min(1, t))
+                closest = Vector2(x=p1.x + t * dx, y=p1.y + t * dy)
+            
+            distance = math.sqrt((closest.x - window_center.x)**2 + (closest.y - window_center.y)**2)
+            
+            if distance < min_distance:
+                min_distance = distance
+                nearest_point = closest
+    
+    return nearest_point
+
+
 def create_window_from_boundary(
     window_boundary: list,
     window_id: str,
     z_position: float = 0.0,
     window_height_bottom: float = DEFAULT_WINDOW_HEIGHT_BOTTOM,
     window_height_top: float = DEFAULT_WINDOW_HEIGHT_TOP,
+    room_boundaries: Optional[list] = None,
     **window_settings,
 ) -> Optional[Dict[str, object]]:
     """Create a Window object from a window boundary polygon.
@@ -1272,6 +1320,7 @@ def create_window_from_boundary(
         z_position: Z-height to place the window (default: 0.0 for floor level)
         window_height_bottom: Bottom height of window (default: DEFAULT_WINDOW_HEIGHT_BOTTOM)
         window_height_top: Top height of window (default: DEFAULT_WINDOW_HEIGHT_TOP)
+        room_boundaries: List of room boundaries to find nearest wall point (optional)
         **window_settings: Additional settings to pass to create_window
 
     Returns:
@@ -1282,6 +1331,7 @@ def create_window_from_boundary(
     window_poly = Polygon(window_boundary)
     centroid = window_poly.centroid
     centroid_coords = (centroid.x, centroid.y)
+    window_center = Vector2(x=centroid.x, y=centroid.y)
 
     rotation_angle = get_longest_edge_angle(window_poly)
 
@@ -1310,8 +1360,21 @@ def create_window_from_boundary(
     # Calculate window vertical height from top and bottom heights
     window_height_value = window_height_top - window_height_bottom
 
-    # Calculate location (centroid at specified z level, typically window_height_bottom)
-    location = (centroid.x, centroid.y, z_position)
+    # Find nearest wall point if room boundaries provided
+    if room_boundaries:
+        nearest_wall_point = _find_nearest_wall_point(window_center, room_boundaries)
+        if nearest_wall_point:
+            # Use the nearest wall point as the window location
+            location = (nearest_wall_point.x, nearest_wall_point.y, z_position)
+            logger.debug(
+                f"Window {window_id}: positioned at nearest wall point ({nearest_wall_point.x:.3f}, {nearest_wall_point.y:.3f})"
+            )
+        else:
+            # Fall back to centroid if no wall point found
+            location = (centroid.x, centroid.y, z_position)
+    else:
+        # Use centroid if no room boundaries provided
+        location = (centroid.x, centroid.y, z_position)
 
     logger.debug(
         f"Window {window_id}: dimensions x={window_depth:.3f}m (depth), "
@@ -1329,7 +1392,7 @@ def create_window_from_boundary(
         **window_settings,
     )
 
-    # Log window creation and push to wall
+    # Log window creation (no longer using push_window_to_wall)
     if result.get("created") or result.get("linked"):
         window_obj = bpy.data.objects.get(result["object"])
         controller_name = result.get("controller")
@@ -1338,9 +1401,6 @@ def create_window_from_boundary(
             logger.debug(
                 f"Created window '{window_obj.name}' at {location} with rotation {-rotation_angle:.1f}° via empty controller '{controller_name}'"
             )
-
-            # Push window to nearest wall
-            push_window_to_wall(window_obj, search_radius=0.5)
 
     return result
 
@@ -2706,6 +2766,8 @@ def create_room_walls(
 
     interior_door_polygons: list[tuple[str, list[tuple[float, float]]]] = []
 
+    # Collect all room boundaries for window positioning
+    all_room_boundaries = []
     all_room_polygons = []
     for room in rooms:
         r_category = room.get("category")
@@ -2721,6 +2783,7 @@ def create_room_walls(
                 room_polygon = Polygon(boundary_points)
                 if room_polygon.is_valid and not room_polygon.is_empty:
                     all_room_polygons.append(room_polygon)
+                    all_room_boundaries.append(boundary_points)
             except Exception:
                 continue
 
@@ -2866,6 +2929,7 @@ def create_room_walls(
                                     z_position=window_height_bottom,
                                     window_height_bottom=window_height_bottom,
                                     window_height_top=window_height_top,
+                                    room_boundaries=all_room_boundaries,
                                     randomize_type=True,
                                     randomize_material=True,
                                     randomize_colour=False,
@@ -2892,6 +2956,7 @@ def create_room_walls(
                             z_position=window_height_bottom,
                             window_height_bottom=window_height_bottom,
                             window_height_top=window_height_top,
+                            room_boundaries=all_room_boundaries,
                             randomize_type=True,
                             randomize_material=True,
                             randomize_colour=False,
