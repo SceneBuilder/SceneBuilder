@@ -34,6 +34,7 @@ from scene_builder.utils.blender import SceneSwitcher
 from scene_builder.utils.conversions import pydantic_to_dict
 from scene_builder.utils.file import get_filename
 from scene_builder.utils.floorplan import (
+    _find_adjacent_wall_segments_from_centers_to_edges,
     calculate_bounds_for_objects,
     classify_door_type,
     find_nearest_wall_point,
@@ -2735,7 +2736,10 @@ def create_room_walls(
                     interior_door_polygons.append((str(s_id), boundary_xy))
                     logger.debug(f"Door {s_id}: identified as interior door")
 
-    for room in rooms:
+    # Detect adjacent walls to skip
+    adjacent_segments = _find_adjacent_wall_segments_from_centers_to_edges(rooms, threshold=0.025)
+
+    for room_idx, room in enumerate(rooms):
         r_category = room.get("category")
         if r_category == "window":
             continue
@@ -2778,6 +2782,12 @@ def create_room_walls(
         num_verts = len(bottom_verts)
         for i in range(num_verts):
             next_i = (i + 1) % num_verts
+
+            # Skip this edge if it's adjacent to another room
+            edge_key = (room_idx, i)
+            if edge_key in adjacent_segments:
+                logger.debug(f"Skipping wall edge {i} for room {room_id} (adjacent to another room)")
+                continue
 
             face = bm.faces.new(
                 [bottom_verts[i], bottom_verts[next_i], top_verts[next_i], top_verts[i]]

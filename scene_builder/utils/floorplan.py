@@ -70,7 +70,7 @@ def _find_adjacent_wall_segments_from_centers_to_edges(rooms: list[Room], thresh
     """Find segments of room walls that are adjacent to other room walls.
     
     Args:
-        rooms: List of Room objects
+        rooms: List of Room objects or dicts with boundary data
         threshold: Distance threshold for considering walls adjacent (in meters)
     
     Returns:
@@ -81,12 +81,20 @@ def _find_adjacent_wall_segments_from_centers_to_edges(rooms: list[Room], thresh
     adjacent_segments = {}
     
     for i, room1 in enumerate(rooms):
-        if not room1.boundary or len(room1.boundary) < 3:
+
+        r1_boundary = room1.get("boundary") if isinstance(room1, dict) else getattr(room1, "boundary", None)
+        if not r1_boundary or len(r1_boundary) < 3:
             continue
             
-        for edge_idx in range(len(room1.boundary)):
-            p1 = room1.boundary[edge_idx]
-            p2 = room1.boundary[(edge_idx + 1) % len(room1.boundary)]
+        for edge_idx in range(len(r1_boundary)):
+            p1 = r1_boundary[edge_idx]
+            p2 = r1_boundary[(edge_idx + 1) % len(r1_boundary)]
+            
+            # Convert to Vector2 if dict
+            if isinstance(p1, dict):
+                p1 = Vector2(x=p1["x"], y=p1["y"])
+            if isinstance(p2, dict):
+                p2 = Vector2(x=p2["x"], y=p2["y"])
             
             touching_portions = []
             
@@ -94,17 +102,27 @@ def _find_adjacent_wall_segments_from_centers_to_edges(rooms: list[Room], thresh
             for j, room2 in enumerate(rooms):
                 if i == j:  # Skip same room
                     continue
-                if not room2.boundary or len(room2.boundary) < 3:
+                
+                r2_boundary = room2.get("boundary") if isinstance(room2, dict) else getattr(room2, "boundary", None)
+                if not r2_boundary or len(r2_boundary) < 3:
                     continue
                 
-                # Quick pre-filter: skip if rooms are too far apart
-                if not are_boundaries_close(room1.boundary, room2.boundary, threshold):
+                # Convert to Vector2 if needed for are_boundaries_close
+                r1_boundary_vec2 = [Vector2(x=v["x"], y=v["y"]) if isinstance(v, dict) else v for v in r1_boundary]
+                r2_boundary_vec2 = [Vector2(x=v["x"], y=v["y"]) if isinstance(v, dict) else v for v in r2_boundary]
+                if not are_boundaries_close(r1_boundary_vec2, r2_boundary_vec2, threshold):
                     continue
                 
-                # Check each edge of room2
-                for edge2_idx in range(len(room2.boundary)):
-                    q1 = room2.boundary[edge2_idx]
-                    q2 = room2.boundary[(edge2_idx + 1) % len(room2.boundary)]
+                for edge2_idx in range(len(r2_boundary)):
+                    q1 = r2_boundary[edge2_idx]
+                    q2 = r2_boundary[(edge2_idx + 1) % len(r2_boundary)]
+                    
+                    # Convert to Vector2 if dict
+                    if isinstance(q1, dict):
+                        q1 = Vector2(x=q1["x"], y=q1["y"])
+                    if isinstance(q2, dict):
+                        q2 = Vector2(x=q2["x"], y=q2["y"])
+                    
                     edge2 = LineString([(q1.x, q1.y), (q2.x, q2.y)])
                     
                     # Calculate center point of edge1
