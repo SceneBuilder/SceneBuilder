@@ -12,9 +12,10 @@ import numpy as np
 from mathutils import Vector
 from PIL import Image
 from shapely import affinity
-from shapely.geometry import Polygon
+from shapely.geometry import Point, Polygon
 
 from scene_builder.definition.scene import Room, Vector2
+from scene_builder.utils.geometry import are_boundaries_close
 
 
 def classify_door_type(
@@ -63,7 +64,171 @@ def classify_door_type(
     else:
         return "exterior"
 
+################## debug temporarily ##################
+# this is centers to edges, not edges to edges
+def _find_adjacent_wall_segments_from_centers_to_edges(rooms: list[Room], threshold: float = 0.025):
+    """Find segments of room walls that are adjacent to other room walls.
+    
+    Args:
+        rooms: List of Room objects
+        threshold: Distance threshold for considering walls adjacent (in meters)
+    
+    Returns:
+        Dictionary mapping (room_idx, edge_idx) to list of touching segments [(start, end), ...]
+    """
+    from shapely.geometry import LineString
+    
+    adjacent_segments = {}
+    
+    for i, room1 in enumerate(rooms):
+        if not room1.boundary or len(room1.boundary) < 3:
+            continue
+            
+        for edge_idx in range(len(room1.boundary)):
+            p1 = room1.boundary[edge_idx]
+            p2 = room1.boundary[(edge_idx + 1) % len(room1.boundary)]
+            
+            touching_portions = []
+            
+            # Compare with all other rooms
+            for j, room2 in enumerate(rooms):
+                if i == j:  # Skip same room
+                    continue
+                if not room2.boundary or len(room2.boundary) < 3:
+                    continue
+                
+                # Quick pre-filter: skip if rooms are too far apart
+                if not are_boundaries_close(room1.boundary, room2.boundary, threshold):
+                    continue
+                
+                # Check each edge of room2
+                for edge2_idx in range(len(room2.boundary)):
+                    q1 = room2.boundary[edge2_idx]
+                    q2 = room2.boundary[(edge2_idx + 1) % len(room2.boundary)]
+                    edge2 = LineString([(q1.x, q1.y), (q2.x, q2.y)])
+                    
+                    # Calculate center point of edge1
+                    center1_x = (p1.x + p2.x) / 2
+                    center1_y = (p1.y + p2.y) / 2
+                    center1_point = Point(center1_x, center1_y)
+                    
+                    # Check if edge1's center is close to edge2
+                    distance = center1_point.distance(edge2)
+                    
+                    if distance <= threshold:
+                        # edge1's center is close to edge2 - mark entire edge1 as touching
+                        touching_portions.append((p1, p2))
+                        break  # No need to check other edges of room2
+            
+            if touching_portions:
+                adjacent_segments[(i, edge_idx)] = touching_portions
+    
+    return adjacent_segments
 
+
+def plot_floor_plan(
+    rooms: list[Room], 
+    output_path: str = "floor_plan.png",
+    show_doors: bool = False,
+    show_windows: bool = False,
+    show_adjacent_walls: bool = True,
+    adjacency_threshold: float = 0.05
+):
+    """Plot floor plan showing room boundaries with adjacent wall segments in green.
+    
+    Note: Adjacent wall detection only considers room boundaries, NOT door/window structures.
+    
+    Args:
+        rooms: List of Room objects to plot
+        output_path: Path to save the plot image
+        show_doors: If True, show interior doors in red
+        show_windows: If True, show windows in yellow
+        show_adjacent_walls: If True, show adjacent wall segments in green
+        adjacency_threshold: Distance threshold for considering walls adjacent (default: 0.05m)
+    """
+    fig, ax = plt.subplots(figsize=(12, 12))
+    
+    # Find adjacent wall segments if enabled
+    adjacent_segments = []
+    if show_adjacent_walls:
+        adjacent_segments = _find_adjacent_wall_segments_from_centers_to_edges(rooms, adjacency_threshold)
+    
+    # Plot rooms
+    for room_idx, room in enumerate(rooms):
+        if room.boundary and len(room.boundary) >= 3:
+            # Plot each edge segment
+            for i in range(len(room.boundary)):
+                p1 = room.boundary[i]
+                p2 = room.boundary[(i + 1) % len(room.boundary)]
+                
+                # Check if this segment has adjacent portions
+                edge_key = (room_idx, i)
+                if edge_key in adjacent_segments:
+                    # This edge has adjacent portions - plot them separately
+                    touching_portions = adjacent_segments[edge_key]
+                    
+                    # Plot the entire edge first in blue
+                    ax.plot([p1.x, p2.x], [p1.y, p2.y], 'b-', linewidth=1)
+                    
+                    # Then overlay green for touching portions
+                    for seg_start, seg_end in touching_portions:
+                        ax.plot([seg_start.x, seg_end.x], [seg_start.y, seg_end.y], 
+                               'g-', linewidth=2, zorder=10)
+                else:
+                    # No adjacent walls, just plot in blue
+                    ax.plot([p1.x, p2.x], [p1.y, p2.y], 'b-', linewidth=1)
+            
+            # Fill the room
+            x = [v.x for v in room.boundary] + [room.boundary[0].x]
+            y = [v.y for v in room.boundary] + [room.boundary[0].y]
+            ax.fill(x, y, color='lightblue', alpha=0.3)
+    
+    # Plot interior doors and windows if enabled
+    if show_doors or show_windows:
+        # Build list of all room polygons for door classification (only if needed)
+        all_room_polygons = []
+        if show_doors:
+            for room in rooms:
+                if room.boundary and len(room.boundary) >= 3:
+                    try:
+                        boundary_xy = [(v.x, v.y) for v in room.boundary]
+                        room_polygon = Polygon(boundary_xy)
+                        if room_polygon.is_valid and not room_polygon.is_empty:
+                            all_room_polygons.append(room_polygon)
+                    except Exception:
+                        continue
+        
+        # Plot interior doors and windows
+        for room in rooms:
+            if room.structure:
+                for struct in room.structure:
+                    if struct.boundary and len(struct.boundary) >= 3:
+                        x = [v.x for v in struct.boundary] + [struct.boundary[0].x]
+                        y = [v.y for v in struct.boundary] + [struct.boundary[0].y]
+                        
+                        # Only plot interior doors (red) if enabled
+                        if show_doors and struct.type == "door":
+                            try:
+                                boundary_xy = [(v.x, v.y) for v in struct.boundary]
+                                door_polygon = Polygon(boundary_xy)
+                                if door_polygon.is_valid and not door_polygon.is_empty:
+                                    door_type = classify_door_type(door_polygon, all_room_polygons)
+                                    if door_type == "interior":
+                                        ax.plot(x, y, color='red', linewidth=2)
+                                        ax.fill(x, y, color='red', alpha=0.7)
+                            except Exception:
+                                continue
+                        # Plot all windows (yellow) if enabled
+                        elif show_windows and struct.type == "window":
+                            ax.plot(x, y, color='yellow', linewidth=2)
+                            ax.fill(x, y, color='yellow', alpha=0.7)
+    
+    ax.set_aspect('equal')
+    plt.savefig(output_path, dpi=150)
+    plt.close()
+    print(f"Saved floor plan to {output_path}")
+
+################## debug temporarily ##################
 def find_nearest_wall_point(window_center: Vector2, room_boundaries: list) -> Optional[Vector2]:
     """Find the nearest point on any room boundary (wall) from window center.
     
@@ -110,7 +275,6 @@ def find_nearest_wall_point(window_center: Vector2, room_boundaries: list) -> Op
                 nearest_point = closest
     
     return nearest_point
-
 
 def scale_boundary_for_cutout(
     boundary: list,
