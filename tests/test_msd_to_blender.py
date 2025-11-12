@@ -11,7 +11,6 @@ from scene_builder.definition.scene import Scene
 from scene_builder.importer.msd.loader import MSDLoader
 from scene_builder.logging import configure_logging
 from scene_builder.utils.blender import install_door_it_addon, install_window_it_addon
-from scene_builder.utils.floorplan import plot_floor_plan_with_windows
 from scene_builder.utils.room import render_structure_links
 from scene_builder.utils.scene import recenter_scene
 
@@ -125,10 +124,6 @@ def test_msd_to_blender(
                 rooms=all_rooms,
             )
 
-            floor_plan_viz = OUTPUT_DIR / f"msd_building_{building_id}_floor_{floor_id}_floor_plan.png"
-            plot_floor_plan_with_windows(all_rooms, str(floor_plan_viz))
-            print(f"   ✓ Floor plan visualization: {floor_plan_viz.name}")
-
             scene_data = recenter_scene(floor_scene, rotate=align_rotation)
             rooms_dict = scene_data.get("rooms", [])
 
@@ -172,11 +167,6 @@ def test_msd_to_blender(
             # Default: apartment-per-file workflow (existing behavior)
             for apt_id, graph in apt_graphs:
                 apt_scene = loader.apt_graph_to_scene(graph)
-
-                apt_prefix = str(apt_id)[:8]
-                apt_viz = OUTPUT_DIR / f"msd_building_{building_id}_floor_{floor_id}_apt_{apt_prefix}_floor_plan.png"
-                plot_floor_plan_with_windows(apt_scene.rooms, str(apt_viz))
-                print(f"   ✓ Floor plan visualization: {apt_viz.name}")
 
                 scene_data = recenter_scene(apt_scene, rotate=align_rotation)
                 rooms_dict = scene_data.get("rooms", [])
