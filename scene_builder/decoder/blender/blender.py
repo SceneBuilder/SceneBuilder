@@ -939,46 +939,6 @@ def _create_floor_mesh(
     return result
 
 
-def get_apartment_outline(rooms: list) -> list:
-    """Extract outline for a single apartment from its rooms.
-
-    Merges all room boundaries into a unified apartment outline using shapely operations.
-
-    Args:
-        rooms: List of Room objects with boundary data
-
-    Returns:
-        List of (x, y) tuples representing the apartment outline, or empty list if failed
-    """
-    if not rooms:
-        return []
-
-    polygons = []
-    for room in rooms:
-        if len(room.boundary) >= 3:
-            coords = [(p.x, p.y) for p in room.boundary]
-            try:
-                poly = Polygon(coords)
-                if poly.is_valid:
-                    polygons.append(poly)
-            except Exception:
-                continue
-
-    if not polygons:
-        return []
-
-    unified = unary_union(polygons)
-
-    if hasattr(unified, "exterior"):
-        outline = list(unified.exterior.coords[:-1])
-    elif hasattr(unified, "geoms"):
-        largest = max(unified.geoms, key=lambda p: p.area)
-        outline = list(largest.exterior.coords[:-1])
-    else:
-        return []
-
-    return outline
-
 
 def _create_window_cutout(
     wall_obj,
