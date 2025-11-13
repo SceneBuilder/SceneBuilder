@@ -2912,6 +2912,16 @@ def create_room_walls(
                                 keep_cutter_visible=keep_cutters_visible,
                             )
 
+                            # Create floor mesh for interior door
+                            door_boundary_dicts = [{"x": x, "y": y} for x, y in door_boundary]
+                            door_floor_result = _create_floor_mesh(
+                                boundary=door_boundary_dicts,
+                                room_id=f"interior_door_{door_id}",
+                                floor_thickness_m=0.05,  # Thinner than room floors
+                                origin="center"
+                            )
+                            logger.debug(f"Created floor for interior door {door_id}: {door_floor_result['status']}")
+
                             if render_doors:
                                 door_result = create_door_from_boundary(
                                     door_boundary=door_boundary,
