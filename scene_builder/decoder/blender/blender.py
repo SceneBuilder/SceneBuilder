@@ -951,7 +951,7 @@ def _create_window_cutout(
     scale_factor: float = 2.00,
     scale_short_axis: bool = True,
     scale_long_axis: bool = True,
-    scale_long_factor: float = 0.98,
+    scale_long_factor: float = 0.95,
     debug=False,
     keep_cutter_visible: bool = False,
 ):
@@ -2653,6 +2653,8 @@ def create_room_walls(
     window_height_top: float = DEFAULT_WINDOW_HEIGHT_TOP,
     keep_cutters_visible: bool = False,
     translucent: bool = False,
+    debug_save_steps: bool = True,
+    debug_output_dir: Optional[str] = "/home/jkim3191/NavGoProject/GitHub/test_output/debug_wall_creation",
 ):
     """Create walls for each room individually (excluding windows and exterior doors).
 
@@ -2668,11 +2670,21 @@ def create_room_walls(
         window_height_top: Top height of window cutouts (default: DEFAULT_WINDOW_HEIGHT_TOP)
         keep_cutters_visible: If True, keep cutter objects visible for debugging (default: False)
         translucent: If True, assign a translucent wall material (default: False)
+        debug_save_steps: If True, save .blend files at each step for debugging (default: False)
+        debug_output_dir: Directory to save debug .blend files (default: None, uses temp dir)
 
     Returns:
         Number of walls created
     """
     walls_created = 0
+    
+    # Setup debug saving
+    if debug_save_steps:
+        if debug_output_dir is None:
+            debug_output_dir = tempfile.gettempdir()
+        debug_output_path = Path(debug_output_dir).resolve()
+        debug_output_path.mkdir(parents=True, exist_ok=True)
+        logger.info(f"🔍 Debug mode enabled: saving wall creation steps to {debug_output_path}")
 
     window_cutout_polygons: list[tuple[str, list[tuple[float, float]]]] = []
 
@@ -2806,6 +2818,12 @@ def create_room_walls(
         with suppress_blender_logs():
             bpy.ops.object.modifier_apply(modifier=solidify.name)
 
+        # Debug save: after wall creation, before cutouts
+        if debug_save_steps:
+            step_file = debug_output_path / f"step1_wall_created_{room_id}.blend"
+            save_scene(str(step_file), exclude_grid=True)
+            logger.debug(f"Saved: {step_file}")
+
         if translucent:
             # Don't create material if it exists already
             mat_name = "TranslucentWallMaterial"
@@ -2891,6 +2909,12 @@ def create_room_walls(
                                 f"Successfully created window object: {window_result.get('object')}"
                             )
 
+        # Debug save: after window cutouts
+        if debug_save_steps and window_cutouts:
+            step_file = debug_output_path / f"step2_windows_applied_{room_id}.blend"
+            save_scene(str(step_file), exclude_grid=True)
+            logger.debug(f"Saved: {step_file}")
+
         if door_cutouts and interior_door_polygons:
             for idx, (door_id, door_boundary) in enumerate(interior_door_polygons):
                 if not door_boundary:
@@ -2912,7 +2936,6 @@ def create_room_walls(
                                 keep_cutter_visible=keep_cutters_visible,
                             )
 
-                            # Create floor mesh for interior door
                             door_boundary_dicts = [{"x": x, "y": y} for x, y in door_boundary]
                             door_floor_result = _create_floor_mesh(
                                 boundary=door_boundary_dicts,
@@ -2921,6 +2944,12 @@ def create_room_walls(
                                 origin="center"
                             )
                             logger.debug(f"Created floor for interior door {door_id}: {door_floor_result['status']}")
+                            
+                            # Debug save: after door cutout and floor creation
+                            if debug_save_steps:
+                                step_file = debug_output_path / f"step3_door_{door_id}_cutout_floor_{room_id}.blend"
+                                save_scene(str(step_file), exclude_grid=True)
+                                logger.debug(f"Saved: {step_file}")
 
                             if render_doors:
                                 door_result = create_door_from_boundary(
@@ -2947,7 +2976,19 @@ def create_room_walls(
                         # Skip this door if polygon creation fails
                         continue
 
+        # Debug save: final state after all cutouts and objects
+        if debug_save_steps:
+            step_file = debug_output_path / f"step4_final_{room_id}.blend"
+            save_scene(str(step_file), exclude_grid=True)
+            logger.debug(f"Saved: {step_file}")
+
         walls_created += 1
+
+    # Debug save: all walls complete
+    if debug_save_steps:
+        final_file = debug_output_path / "step5_all_walls_complete.blend"
+        save_scene(str(final_file), exclude_grid=True)
+        logger.debug(f"Saved final: {final_file}")
 
     return walls_created
 
