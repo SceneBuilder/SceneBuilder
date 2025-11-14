@@ -12,7 +12,8 @@ import numpy as np
 from mathutils import Vector
 from PIL import Image
 from shapely import affinity
-from shapely.geometry import Point, Polygon
+from shapely.geometry import Point, Polygon, LineString
+
 
 from scene_builder.definition.scene import Room, Vector2
 from scene_builder.utils.geometry import are_boundaries_close
@@ -76,10 +77,9 @@ def _find_adjacent_wall_segments_from_centers_to_edges(rooms: list[Room], thresh
     Returns:
         Dictionary mapping (room_idx, edge_idx) to list of touching segments [(start, end), ...]
     """
-    from shapely.geometry import LineString
     
     adjacent_segments = {}
-    
+    # check only rooms no structures
     for i, room1 in enumerate(rooms):
 
         r1_boundary = room1.get("boundary") if isinstance(room1, dict) else getattr(room1, "boundary", None)
