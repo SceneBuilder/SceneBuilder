@@ -1,7 +1,7 @@
 from __future__ import annotations
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from pydantic_graph import BaseNode, End, Graph, GraphRunContext
 from rich.console import Console
 
@@ -40,7 +40,8 @@ from scene_builder.workflow.states import (
     PlacementState,
     RoomDesignState,
 )
-from scene_builder.validation.models import LintActionTaken, LintIssueTicket
+from scene_builder.validation.resolver import IssueResolutionOutput, IssueResolver
+from scene_builder.validation.tracker import IssueTracker
 from scene_builder.workflow.toolsets import material_toolset, shopping_toolset
 from scene_builder.validation.linter import (
     format_lint_feedback,
@@ -48,13 +49,12 @@ from scene_builder.validation.linter import (
     save_lint_visualization,
 )
 from scene_builder.validation.context import LintingOptions
-from scene_builder.validation.models import LintIssue, LintReport
+from scene_builder.validation.models import LintReport
 
 # Params
 LINT_OPTIONS = LintingOptions(enabled_rules={"floor_penetration", "wall_overlap"})
 
 console = Console()
-obj_db = ObjectDatabase()
 
 
 class DesignLoopRouter(BaseNode[MainState]):
@@ -88,109 +88,8 @@ class MaterialSelection(BaseModel):
     rationale: str
 
 
-class ObjectAdjustment(BaseModel):
-    id: str | None = None
-    position: Vector3 | None = None
-    rotation: Vector3 | None = None
-    scale: Vector3 | None = None
-    remove: bool = False
-
-
-class IssueResolutionOutput(BaseModel):
-    resolved: bool = False
-    action_taken: str
-    rationale: str
-    object_id: str | None = None
-    adjustment: ObjectAdjustment | None = None
-
-
 ISSUE_TRACKER_KEY = "lint_issue_tracker"
 MAX_AUTO_RESOLUTION_ATTEMPTS = 3
-
-
-class IssueTracker(BaseModel):
-    """
-    Manages the state of lint issues, actions, and retries across iterations.
-    """
-
-    tickets: dict[str, LintIssueTicket] = Field(default_factory=dict)
-    actions: list[LintActionTaken] = Field(default_factory=list)
-
-    def _compute_issue_id(self, issue: LintIssue) -> str:
-        """
-        Create a simple, prototype-level ID for a lint issue,
-        assuming only one issue of a given code can exist per object.
-        """
-        object_id = issue.object_id or "room"  # Use 'room' for room-level issues
-        return f"{object_id}_{issue.code}"
-
-    def sync(self, lint_report: LintReport) -> None:
-        """Update the tracker with the latest lint report."""
-        seen: set[str] = set()
-        for issue in lint_report.issues:
-            issue_id = self._compute_issue_id(issue)
-            seen.add(issue_id)
-            ticket = self.tickets.get(issue_id)
-            if ticket is None:
-                self.tickets[issue_id] = LintIssueTicket(
-                    issue_id=issue_id,
-                    object_id=issue.object_id,
-                    code=issue.code,
-                    message=issue.message,
-                    hint=issue.hint,
-                )
-            else:
-                # Mutate existing ticket
-                ticket.status = "open"
-                ticket.object_id = issue.object_id
-                ticket.code = issue.code
-                ticket.message = issue.message
-                ticket.hint = issue.hint
-
-        for issue_id, ticket in self.tickets.items():
-            if issue_id not in seen:
-                ticket.status = "resolved"
-
-    def append_action(
-        self,
-        ticket: LintIssueTicket,
-        summary: str,
-        rationale: str,
-    ) -> None:
-        """Log an action taken for a ticket and persist it to the tracker."""
-        action = LintActionTaken(
-            issue_id=ticket.issue_id,
-            object_id=ticket.object_id,
-            summary=summary,
-            rationale=rationale,
-        )
-        self.actions.append(action)
-        ticket.actions.append(summary)
-
-    def consume_feedback(self) -> str:
-        """Compile any new actions or open issues into a message for the next agent."""
-        lines: list[str] = []
-        new_actions = [action for action in self.actions if not action.delivered]
-
-        if new_actions:
-            lines.append("Actions taken since last turn:")
-            for action in new_actions:
-                lines.append(
-                    f"- [{action.issue_id}] {action.summary} (rationale: {action.rationale})"
-                )
-                action.delivered = True
-
-        open_tickets = [
-            ticket for ticket in self.tickets.values() if ticket.status == "open"
-        ]
-        if open_tickets:
-            lines.append("Outstanding lint issues:")
-            for ticket in open_tickets:
-                target = ticket.object_id or "room"
-                lines.append(
-                    f"- ({ticket.code}) {target}: {ticket.message} (retries: {ticket.retries})"
-                )
-        return "\n".join(lines)
 
 
 def _get_issue_tracker(state: RoomDesignState) -> IssueTracker:
@@ -205,6 +104,33 @@ def _get_issue_tracker(state: RoomDesignState) -> IssueTracker:
     tracker = IssueTracker()
     state.extra_info[ISSUE_TRACKER_KEY] = tracker
     return tracker
+
+
+def apply_resolution_actions(room: Room, actions: list[IssueResolutionOutput]) -> None:
+    """Update ``room`` in place according to resolver outputs."""
+    for action in actions:
+        adjustment = action.adjustment
+        if adjustment is None:
+            continue
+
+        target_id = adjustment.id or action.object_id
+        if target_id is None:
+            continue
+
+        if adjustment.remove:
+            room.objects = [obj for obj in (room.objects or []) if obj.id != target_id]
+            continue
+
+        obj = next((item for item in (room.objects or []) if item.id == target_id), None)
+        if obj is None:
+            continue
+
+        if adjustment.position is not None:
+            obj.position = adjustment.position
+        if adjustment.rotation is not None:
+            obj.rotation = adjustment.rotation
+        if adjustment.scale is not None:
+            obj.scale = adjustment.scale
 
 
 class RoomDesignNode(BaseNode[RoomDesignState]):
@@ -407,12 +333,19 @@ class RoomDesignNode(BaseNode[RoomDesignState]):
 
             # Create a lookup for the *current* issues
             issue_lookup = {
-                tracker._compute_issue_id(issue): issue
+                tracker.compute_issue_id(issue): issue
                 for issue in lint_report.issues
             }
 
-            # automatic issue resolution (single pass)
-            await self._attempt_auto_resolution(ctx, tracker, issue_lookup)
+            resolver = IssueResolver(
+                state=ctx.state,
+                max_attempts=MAX_AUTO_RESOLUTION_ATTEMPTS,
+                console=console,
+            )
+            resolution_results = await resolver.attempt_auto_resolution(
+                tracker, issue_lookup
+            )
+            apply_resolution_actions(ctx.state.room, resolution_results)
 
             # Get feedback for the agent, based *only* on this single pass
             lint_summary = format_lint_feedback(lint_report)
@@ -486,115 +419,6 @@ class RoomDesignNode(BaseNode[RoomDesignState]):
             return End(ctx.state.room)
         else:
             return RoomDesignNode()  # maybe this is the issue? self-returning function?
-
-    async def _attempt_auto_resolution(
-        self,
-        ctx: GraphRunContext[RoomDesignState],
-        tracker: IssueTracker,
-        issue_lookup: dict[str, LintIssue],
-    ) -> None:
-        """
-        Attempts to resolve all currently open tickets ONCE.
-        This is a simplified, non-looping version.
-        """
-        tickets_to_resolve = [
-            ticket
-            for ticket in tracker.tickets.values()
-            if ticket.status == "open"
-            and ticket.retries < MAX_AUTO_RESOLUTION_ATTEMPTS
-        ]
-
-        if not tickets_to_resolve:
-            return
-
-        console.print(
-            f"[bold yellow]Attempting to auto-resolve {len(tickets_to_resolve)} lint issues...[/]"
-        )
-
-        for ticket in tickets_to_resolve:
-            issue = issue_lookup.get(ticket.issue_id)
-            if issue is None:
-                continue
-
-            await self._resolve_ticket(ctx, tracker, ticket, issue)
-
-    async def _resolve_ticket(
-        self,
-        ctx: GraphRunContext[RoomDesignState],
-        tracker: IssueTracker,
-        ticket: LintIssueTicket,
-        issue: LintIssue,
-    ) -> bool:
-        """Invoke the resolution agent for a single ticket and apply any edits."""
-
-        ticket.retries += 1
-        object_state_json = None
-        if ticket.object_id:
-            target = next(
-                obj for obj in ctx.state.room.objects if obj.id == ticket.object_id
-            )
-            object_state_json = target.model_dump_json(indent=2)
-        prompt_parts = [
-            "Resolve the following lint issue in the 3D room design.",
-            f"Room id: {ctx.state.room.id}",
-            f"Issue code: {issue.code}",
-            f"Issue message: {issue.message}",
-        ]
-        if issue.hint:
-            prompt_parts.append(f"Hint: {issue.hint}")
-        prompt_parts.append(f"Attempts so far: {ticket.retries - 1}")
-        if object_state_json:
-            prompt_parts.append("Current object state:")
-            prompt_parts.append(f"```json\n{object_state_json}\n```")
-        else:
-            prompt_parts.append("The issue applies to the overall room context.")
-        if ticket.actions:
-            prompt_parts.append("Recent actions:")
-            prompt_parts.extend(f"- {action}" for action in ticket.actions[-3:])
-        prompt_parts.extend(
-            [
-                "Respond with JSON that matches the IssueResolutionOutput schema:",
-                '{"resolved": bool, "action_taken": str, "rationale": str,',
-                ' "object_id": str | null, "adjustment": {',
-                '   "id": str | null, "position": Vector3 | null,',
-                '   "rotation": Vector3 | null, "scale": Vector3 | null,',
-                '   "remove": bool',
-                " }}",
-            ]
-        )
-        response = await issue_resolution_agent.run(
-            tuple(prompt_parts),
-            output_type=IssueResolutionOutput,
-        )
-        result = response.output
-        if result.object_id:
-            ticket.object_id = result.object_id
-        adjustment = result.adjustment
-        modified = False
-        if adjustment is not None:
-            target_id = adjustment.id or ticket.object_id
-            if adjustment.remove:
-                ctx.state.room.objects = [
-                    obj for obj in ctx.state.room.objects if obj.id != target_id
-                ]
-                modified = True
-            else:
-                obj = next(
-                    item for item in ctx.state.room.objects if item.id == target_id
-                )
-                if adjustment.position is not None:
-                    obj.position = adjustment.position
-                if adjustment.rotation is not None:
-                    obj.rotation = adjustment.rotation
-                if adjustment.scale is not None:
-                    obj.scale = adjustment.scale
-        if result.resolved:
-            ticket.status = "resolved"
-
-        # Log the action regardless of modification
-        tracker.append_action(ticket, result.action_taken, result.rationale)
-        return modified or result.resolved
-
 
 # class RoomDesignVisualFeedback(BaseNode[RoomDesignState]):
 #     # NOTE: see PlacementVisualFeedback in `placement.py` for notes and design decisions.
