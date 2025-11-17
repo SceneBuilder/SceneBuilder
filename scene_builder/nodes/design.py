@@ -1,5 +1,4 @@
 from __future__ import annotations
-import hashlib
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -7,10 +6,15 @@ from pydantic_graph import BaseNode, End, Graph, GraphRunContext
 from rich.console import Console
 
 from scene_builder.config import DEBUG, generation_config
-from scene_builder.database.object import ObjectDatabase
 from scene_builder.decoder.blender import blender
-# from scene_builder.definition.scene import Object, Room, Vector3
-from scene_builder.definition.scene import Object, ObjectBlueprint, Room, Scene, Shell, Vector3
+from scene_builder.definition.scene import (
+    Object,
+    ObjectBlueprint,
+    Room,
+    Scene,
+    Shell,
+    Vector3,
+)
 from scene_builder.logging import logger
 # from scene_builder.nodes.feedback import VisualFeedback
 # from scene_builder.nodes.placement import PlacementNode, VisualFeedback
@@ -104,126 +108,103 @@ ISSUE_TRACKER_KEY = "lint_issue_tracker"
 MAX_AUTO_RESOLUTION_ATTEMPTS = 3
 
 
-def _compute_issue_id(issue) -> str:
-    """Create a stable hash identifier for a lint issue."""
+class IssueTracker(BaseModel):
+    """
+    Manages the state of lint issues, actions, and retries across iterations.
+    """
 
-    base = f"{issue.code}|{issue.object_id or 'room'}|{issue.message}"
-    return hashlib.md5(base.encode("utf-8")).hexdigest()
+    tickets: dict[str, LintIssueTicket] = Field(default_factory=dict)
+    actions: list[LintActionTaken] = Field(default_factory=list)
+
+    def _compute_issue_id(self, issue: LintIssue) -> str:
+        """
+        Create a simple, prototype-level ID for a lint issue,
+        assuming only one issue of a given code can exist per object.
+        """
+        object_id = issue.object_id or "room"  # Use 'room' for room-level issues
+        return f"{object_id}_{issue.code}"
+
+    def sync(self, lint_report: LintReport) -> None:
+        """Update the tracker with the latest lint report."""
+        seen: set[str] = set()
+        for issue in lint_report.issues:
+            issue_id = self._compute_issue_id(issue)
+            seen.add(issue_id)
+            ticket = self.tickets.get(issue_id)
+            if ticket is None:
+                self.tickets[issue_id] = LintIssueTicket(
+                    issue_id=issue_id,
+                    object_id=issue.object_id,
+                    code=issue.code,
+                    message=issue.message,
+                    hint=issue.hint,
+                )
+            else:
+                # Mutate existing ticket
+                ticket.status = "open"
+                ticket.object_id = issue.object_id
+                ticket.code = issue.code
+                ticket.message = issue.message
+                ticket.hint = issue.hint
+
+        for issue_id, ticket in self.tickets.items():
+            if issue_id not in seen:
+                ticket.status = "resolved"
+
+    def append_action(
+        self,
+        ticket: LintIssueTicket,
+        summary: str,
+        rationale: str,
+    ) -> None:
+        """Log an action taken for a ticket and persist it to the tracker."""
+        action = LintActionTaken(
+            issue_id=ticket.issue_id,
+            object_id=ticket.object_id,
+            summary=summary,
+            rationale=rationale,
+        )
+        self.actions.append(action)
+        ticket.actions.append(summary)
+
+    def consume_feedback(self) -> str:
+        """Compile any new actions or open issues into a message for the next agent."""
+        lines: list[str] = []
+        new_actions = [action for action in self.actions if not action.delivered]
+
+        if new_actions:
+            lines.append("Actions taken since last turn:")
+            for action in new_actions:
+                lines.append(
+                    f"- [{action.issue_id}] {action.summary} (rationale: {action.rationale})"
+                )
+                action.delivered = True
+
+        open_tickets = [
+            ticket for ticket in self.tickets.values() if ticket.status == "open"
+        ]
+        if open_tickets:
+            lines.append("Outstanding lint issues:")
+            for ticket in open_tickets:
+                target = ticket.object_id or "room"
+                lines.append(
+                    f"- ({ticket.code}) {target}: {ticket.message} (retries: {ticket.retries})"
+                )
+        return "\n".join(lines)
 
 
-def _issue_tracker(state: RoomDesignState) -> dict[str, object]:
-    """Return the mutable tracker stored in the room design state's extra info."""
-
-    return state.extra_info.setdefault(
-        ISSUE_TRACKER_KEY, {"tickets": {}, "actions": []}
-    )
-
-
-def _as_ticket(value: object) -> LintIssueTicket:
-    """Coerce raw tracker data into a `LintIssueTicket` instance."""
-
-    return value if isinstance(value, LintIssueTicket) else LintIssueTicket(**value)
-
-
-def _as_action(value: object) -> LintActionTaken:
-    """Coerce raw tracker data into a `LintActionTaken` instance."""
-
-    return value if isinstance(value, LintActionTaken) else LintActionTaken(**value)
-
-
-def _sync_issue_tracker(
-    state: RoomDesignState, lint_report: LintReport
-) -> tuple[dict[str, object], dict[str, LintIssueTicket]]:
-    """Update the tracker with the latest lint report and return normalized stores."""
-
-    tracker = _issue_tracker(state)
-    tickets = {
-        issue_id: _as_ticket(raw)
-        for issue_id, raw in tracker.get("tickets", {}).items()
-    }
-    seen: set[str] = set()
-    for issue in lint_report.issues:
-        issue_id = _compute_issue_id(issue)
-        seen.add(issue_id)
-        ticket = tickets.get(issue_id)
-        if ticket is None:
-            ticket = LintIssueTicket(
-                issue_id=issue_id,
-                object_id=issue.object_id,
-                code=issue.code,
-                message=issue.message,
-                hint=issue.hint,
-            )
-            tickets[issue_id] = ticket
-        else:
-            ticket.status = "open"
-            ticket.object_id = issue.object_id
-            ticket.code = issue.code
-            ticket.message = issue.message
-            ticket.hint = issue.hint
-    for issue_id, ticket in tickets.items():
-        if issue_id not in seen:
-            ticket.status = "resolved"
-    tracker["tickets"] = tickets
-    tracker["actions"] = [
-        _as_action(raw) for raw in tracker.get("actions", [])
-    ]
-    return tracker, tickets
-
-
-def _append_action(
-    tracker: dict[str, object],
-    ticket: LintIssueTicket,
-    summary: str,
-    rationale: str,
-) -> None:
-    """Log an action taken for a ticket and persist it to the tracker."""
-
-    action = LintActionTaken(
-        issue_id=ticket.issue_id,
-        object_id=ticket.object_id,
-        summary=summary,
-        rationale=rationale,
-    )
-    tracker.setdefault("actions", []).append(action)
-    ticket.actions.append(summary)
-
-
-def _consume_issue_feedback(state: RoomDesignState) -> str:
-    """Compile any new actions or open issues into a message for the next agent."""
-
+def _get_issue_tracker(state: RoomDesignState) -> IssueTracker:
+    """
+    Retrieves or creates the IssueTracker instance from the state's extra info.
+    """
     tracker = state.extra_info.get(ISSUE_TRACKER_KEY)
-    if not tracker:
-        return ""
-    tracker["tickets"] = {
-        issue_id: _as_ticket(raw)
-        for issue_id, raw in tracker.get("tickets", {}).items()
-    }
-    tracker["actions"] = [
-        _as_action(raw) for raw in tracker.get("actions", [])
-    ]
-    new_actions = [action for action in tracker["actions"] if not action.delivered]
-    lines: list[str] = []
-    if new_actions:
-        lines.append("Actions taken since last turn:")
-        for action in new_actions:
-            lines.append(
-                f"- [{action.issue_id}] {action.summary} (rationale: {action.rationale})"
-            )
-            action.delivered = True
-    open_tickets = [
-        ticket
-        for ticket in tracker["tickets"].values()
-        if ticket.status == "open"
-    ]
-    if open_tickets:
-        lines.append("Outstanding lint issues:")
-        for ticket in open_tickets:
-            target = ticket.object_id or "room"
-            lines.append(
-                f"- ({ticket.code}) {target}: {ticket.message} (retries: {ticket.retries})"
-            )
-    return "\n".join(lines)
+    if isinstance(tracker, IssueTracker):
+        return tracker
+
+    # If it's not an instance (e.g., first run), create one
+    tracker = IssueTracker()
+    state.extra_info[ISSUE_TRACKER_KEY] = tracker
+    return tracker
 
 
 class RoomDesignNode(BaseNode[RoomDesignState]):
@@ -419,26 +400,31 @@ class RoomDesignNode(BaseNode[RoomDesignState]):
             # lint
             lint_report = lint_room(ctx.state.room, options=LINT_OPTIONS)
             ctx.state.last_lint_report = lint_report
-            tracker, tickets_store = _sync_issue_tracker(ctx.state, lint_report)
-            issue_lookup = {_compute_issue_id(issue): issue for issue in lint_report.issues}
+
+            # Get the tracker and sync it with the new report
+            tracker = _get_issue_tracker(ctx.state)
+            tracker.sync(lint_report)
+
+            # Create a lookup for the *current* issues
+            issue_lookup = {
+                tracker._compute_issue_id(issue): issue
+                for issue in lint_report.issues
+            }
+
+            # automatic issue resolution (single pass)
+            await self._attempt_auto_resolution(ctx, tracker, issue_lookup)
+
+            # Get feedback for the agent, based *only* on this single pass
             lint_summary = format_lint_feedback(lint_report)
             lint_viz_path = f"{output_dir}/lint_viz_{placement_run_count}.png"
             save_lint_visualization(room=ctx.state.room, report=lint_report, output_path=lint_viz_path)
+            issue_feedback = tracker.consume_feedback()
+            lint_section = f"Automated lint analysis:\n{lint_summary}"
+            if issue_feedback:
+                lint_section += f"\n\n{issue_feedback}"
+
             if DEBUG:
                 print(f"[Lint] {lint_summary}")
-            lint_section = f"Automated lint analysis for the current placement:\n{lint_summary}"
-
-            # automatic issue resolution
-            while await self._resolve_open_tickets(
-                ctx,
-                tracker,
-                tickets_store,
-                issue_lookup,
-            ):
-                lint_report = lint_room(ctx.state.room)
-                ctx.state.last_lint_report = lint_report
-                tracker, tickets_store = _sync_issue_tracker(ctx.state, lint_report)
-                issue_lookup = {_compute_issue_id(issue): issue for issue in lint_report.issues}
 
             # pass/fail critique
             critique_user_prompt = (
@@ -458,10 +444,23 @@ class RoomDesignNode(BaseNode[RoomDesignState]):
             if DEBUG:
                 print(f"{critique.result=}")
                 print(f"{critique.explanation=}")
+
+            # Prepare feedback for the *next* loop, if needed
             if critique.result == "rejected":
-                feedback = self._compose_feedback(ctx, critique.explanation, lint_summary)
+                feedback_sections = []
+                if critique.explanation:
+                    feedback_sections.append(critique.explanation)
+                if lint_summary:
+                    feedback_sections.append(f"Automated lint analysis:\n{lint_summary}")
+                # We use the *consumed* feedback here so it sees what was tried
+                if issue_feedback:
+                    feedback_sections.append(issue_feedback)
+
+                feedback = "\n\n".join(feedback_sections)
+
             elif critique.result == "approved":
-                break
+                break # Exit the 'while True' placement loop
+
             if generation_config.terminate_early:
                 logger.debug(f"Breaking placement loop for {room.id} to terminate early")
                 break
@@ -488,33 +487,41 @@ class RoomDesignNode(BaseNode[RoomDesignState]):
         else:
             return RoomDesignNode()  # maybe this is the issue? self-returning function?
 
-    async def _resolve_open_tickets(
+    async def _attempt_auto_resolution(
         self,
         ctx: GraphRunContext[RoomDesignState],
-        tracker: dict[str, object],
-        tickets_store: dict[str, LintIssueTicket],
+        tracker: IssueTracker,
         issue_lookup: dict[str, LintIssue],
-    ) -> bool:
-        """Attempt resolution for each open ticket and report if the room changed."""
+    ) -> None:
+        """
+        Attempts to resolve all currently open tickets ONCE.
+        This is a simplified, non-looping version.
+        """
+        tickets_to_resolve = [
+            ticket
+            for ticket in tracker.tickets.values()
+            if ticket.status == "open"
+            and ticket.retries < MAX_AUTO_RESOLUTION_ATTEMPTS
+        ]
 
-        modified = False
-        for issue_id, ticket in tickets_store.items():
-            if ticket.status != "open":
-                continue
-            if ticket.retries >= MAX_AUTO_RESOLUTION_ATTEMPTS:
-                continue
-            issue = issue_lookup.get(issue_id)
+        if not tickets_to_resolve:
+            return
+
+        console.print(
+            f"[bold yellow]Attempting to auto-resolve {len(tickets_to_resolve)} lint issues...[/]"
+        )
+
+        for ticket in tickets_to_resolve:
+            issue = issue_lookup.get(ticket.issue_id)
             if issue is None:
                 continue
-            resolved = await self._resolve_ticket(ctx, tracker, ticket, issue)
-            if resolved:
-                modified = True
-        return modified
+
+            await self._resolve_ticket(ctx, tracker, ticket, issue)
 
     async def _resolve_ticket(
         self,
         ctx: GraphRunContext[RoomDesignState],
-        tracker: dict[str, object],
+        tracker: IssueTracker,
         ticket: LintIssueTicket,
         issue: LintIssue,
     ) -> bool:
@@ -563,12 +570,14 @@ class RoomDesignNode(BaseNode[RoomDesignState]):
         if result.object_id:
             ticket.object_id = result.object_id
         adjustment = result.adjustment
+        modified = False
         if adjustment is not None:
             target_id = adjustment.id or ticket.object_id
             if adjustment.remove:
                 ctx.state.room.objects = [
                     obj for obj in ctx.state.room.objects if obj.id != target_id
                 ]
+                modified = True
             else:
                 obj = next(
                     item for item in ctx.state.room.objects if item.id == target_id
@@ -581,26 +590,10 @@ class RoomDesignNode(BaseNode[RoomDesignState]):
                     obj.scale = adjustment.scale
         if result.resolved:
             ticket.status = "resolved"
-        _append_action(tracker, ticket, result.action_taken, result.rationale)
-        return bool(adjustment) or result.resolved
 
-    def _compose_feedback(
-        self,
-        ctx: GraphRunContext[RoomDesignState],
-        critique_text: str,
-        lint_summary: str,
-    ) -> str:
-        """Assemble critique, lint, and ticket updates into the next feedback block."""
-
-        sections = []
-        if critique_text:
-            sections.append(critique_text)
-        if lint_summary:
-            sections.append(f"Automated lint analysis:\n{lint_summary}")
-        issue_feedback = _consume_issue_feedback(ctx.state)
-        if issue_feedback:
-            sections.append(issue_feedback)
-        return "\n\n".join(section for section in sections if section)
+        # Log the action regardless of modification
+        tracker.append_action(ticket, result.action_taken, result.rationale)
+        return modified or result.resolved
 
 
 # class RoomDesignVisualFeedback(BaseNode[RoomDesignState]):
