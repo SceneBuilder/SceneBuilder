@@ -5,6 +5,9 @@ from __future__ import annotations
 import math
 from typing import Any
 
+import bpy
+from mathutils import Vector
+
 from scene_builder.definition.scene import Scene, Vector2
 from scene_builder.utils.conversions import pydantic_to_dict
 from scene_builder.utils.floorplan import get_dominant_angle
@@ -103,3 +106,46 @@ def recenter_scene(scene: Scene | dict[str, Any], rotate: bool = True) -> dict[s
             pos["y"] = x * sin_a + y * cos_a
 
     return scene_dict
+
+
+def calculate_scene_bounds():
+    """Calculate the bounding box of all visible objects in the scene.
+
+    Returns:
+        tuple: (min_x, max_x, min_y, max_y, min_z, max_z) or None if no objects
+    """
+    objects = [
+        obj
+        for obj in bpy.context.scene.objects
+        if obj.type == "MESH"
+        and obj.visible_get()
+        and not obj.name.startswith("Grid_")
+        and not obj.name.startswith("X_Axis_")
+        and not obj.name.startswith("Y_Axis_")
+    ]
+
+    if not objects:
+        return None
+
+    # Initialize with first object's bounds
+    first_obj = objects[0]
+    bbox_corners = [first_obj.matrix_world @ Vector(corner) for corner in first_obj.bound_box]
+
+    min_x = min(v.x for v in bbox_corners)
+    max_x = max(v.x for v in bbox_corners)
+    min_y = min(v.y for v in bbox_corners)
+    max_y = max(v.y for v in bbox_corners)
+    min_z = min(v.z for v in bbox_corners)
+    max_z = max(v.z for v in bbox_corners)
+
+    # Extend bounds with remaining objects
+    for obj in objects[1:]:
+        bbox_corners = [obj.matrix_world @ Vector(corner) for corner in obj.bound_box]
+        min_x = min(min_x, min(v.x for v in bbox_corners))
+        max_x = max(max_x, max(v.x for v in bbox_corners))
+        min_y = min(min_y, min(v.y for v in bbox_corners))
+        max_y = max(max_y, max(v.y for v in bbox_corners))
+        min_z = min(min_z, min(v.z for v in bbox_corners))
+        max_z = max(max_z, max(v.z for v in bbox_corners))
+
+    return (min_x, max_x, min_y, max_y, min_z, max_z)

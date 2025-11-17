@@ -1,4 +1,4 @@
-import math  # 
+import math
 import random
 from typing import Dict, Iterable, Optional, Sequence, Tuple
 
@@ -38,11 +38,28 @@ def _view3d_context_override() -> Dict[str, object]:
                             "view_layer": view_layer,
                         }
 
-    raise RuntimeError("Could not find a VIEW_3D area to override the context for the Door It operator.")
+    raise RuntimeError("Could not find a VIEW_3D area to override the context for the Window operator.")
 
 
-class DoorItInteriorController:
-    """Convenience wrapper for adjusting Door It! Interior Geometry Nodes parameters."""
+# Window type base actual widths: actual_width = base_actual + (input_width - BASE_INPUT_WIDTH) * WIDTH_SCALE_FACTOR
+# Based on empirical measurements where input Width = 0.410 corresponds to these base actual widths
+# Linear relationship: actual width increases by 0.09m when input width increases by 0.1m
+WINDOW_WIDTH_BASE = {
+    1: 0.585,  # base actual width when input = 0.410
+    2: 0.585,  # base actual width when input = 0.410
+    3: 0.585,  # base actual width when input = 0.410
+    4: 0.585,  # base actual width when input = 0.410
+    5: 0.755,  # base actual width when input = 0.410
+    6: 0.809,  # base actual width when input = 0.410
+    7: 0.935,  # base actual width when input = 0.410
+    8: 0.935,  # base actual width when input = 0.410
+}
+BASE_INPUT_WIDTH = 0.410  # The input width corresponding to base actual widths
+WIDTH_SCALE_FACTOR = 0.9  # Slope: actual_width change / input_width change (0.09m / 0.1m)
+
+
+class WindowController:
+    """Convenience wrapper for adjusting Window Geometry Nodes parameters."""
 
     def __init__(self, obj: Optional[bpy.types.Object] = None, modifier_name: str = "GeometryNodes"):
         self.object = obj or bpy.context.object
@@ -73,6 +90,19 @@ class DoorItInteriorController:
 
         raise KeyError(f"Socket labeled '{label}' not found on modifier '{self.modifier.name}'.")
 
+    def _get_window_type(self) -> int:
+        """Get the current window type from the modifier.
+        
+        Returns:
+            The window type as an integer (1-8).
+            
+        Raises:
+            KeyError: If the Type socket is not found.
+        """
+        item = self._get_interface_item("Type")
+        window_type = int(self.modifier[item.identifier])
+        return window_type
+
     def _set_numeric(self, label: str, value: float) -> float:
         item = self._get_interface_item(label)
         min_value = getattr(item, "min_value", None)
@@ -101,6 +131,13 @@ class DoorItInteriorController:
         self.modifier[item.identifier] = int_value
         return int_value
 
+    def _set_bool(self, label: str, value: bool) -> bool:
+        """Set a boolean value."""
+        item = self._get_interface_item(label)
+        bool_value = bool(value)
+        self.modifier[item.identifier] = bool_value
+        return bool_value
+
     def _randomize_int(self, label: str) -> int:
         item = self._get_interface_item(label)
         min_value = int(getattr(item, "min_value", 0))
@@ -114,13 +151,51 @@ class DoorItInteriorController:
         return choice
 
     def set_width(self, value: float) -> float:
-        """Set the door width socket in meters. Returns the applied value (clamped if needed)."""
-        return self._set_numeric("Width", value)
+        """Set the window width socket in meters (true world width). Returns the applied value.
+        
+        The GeometryNodes "Width" input has a linear relationship with actual width:
+        actual_width = base_actual + (input_width - BASE_INPUT_WIDTH) * WIDTH_SCALE_FACTOR
+        
+        Each window type has a different base actual width but the same scale factor (0.9).
+        This method reverses the formula to calculate the required input width.
+        
+        Args:
+            value: Desired actual window width in meters.
+            
+        Returns:
+            The applied Width input value (after corrections).
+            
+        Raises:
+            ValueError: If window type is invalid or not found in WINDOW_WIDTH_BASE.
+        """
+        # Get current window type
+        window_type = self._get_window_type()
+        
+        # Look up base actual width for this window type
+        if window_type not in WINDOW_WIDTH_BASE:
+            raise ValueError(
+                f"Invalid window type: {window_type}. Valid types are 1-8."
+            )
+        
+        base_actual = WINDOW_WIDTH_BASE[window_type]
+        
+        # Formula: actual_width = base_actual + (input_width - BASE_INPUT_WIDTH) * WIDTH_SCALE_FACTOR
+        # Solving for input_width:
+        # input_width = BASE_INPUT_WIDTH + (actual_width - base_actual) / WIDTH_SCALE_FACTOR
+        # where value = actual_width (desired actual width)
+        input_width = BASE_INPUT_WIDTH + (value - base_actual) / WIDTH_SCALE_FACTOR
+        
+        if input_width < 0.1:
+            input_width = 0.1  # safety clamp
+
+        applied = self._set_numeric("Width", input_width)
+        return applied
 
     def set_height(self, value: float) -> float:
-        """Set the door height socket in meters (true world height). Returns the applied value."""
+        """Set the window height socket in meters (true world height). Returns the applied value."""
         # Convert from real height to GeometryNodes internal height
-        corrected_value = value - 1.07  # empirical offset
+        # Empirical offset: Window It addon adds approximately 0.2m to the height parameter
+        corrected_value = value - 0.2  # empirical offset
         if corrected_value < 0.1:
             corrected_value = 0.1  # safety clamp
         applied = self._set_numeric("Height", corrected_value)
@@ -134,13 +209,13 @@ class DoorItInteriorController:
         """Pick a random valid style index and apply it."""
         return self._randomize_int("Type")
 
-    def set_handle_type(self, value: int) -> int:
-        """Set the handle style index."""
-        return self._set_int("Handle Type", value)
+    def set_open_1(self, value: float) -> float:
+        """Set the first opening amount. Returns the applied value."""
+        return self._set_numeric("Open 1", value)
 
-    def randomize_handle_type(self) -> int:
-        """Pick a random valid handle style index and apply it."""
-        return self._randomize_int("Handle Type")
+    def set_open_2(self, value: float) -> float:
+        """Set the second opening amount. Returns the applied value."""
+        return self._set_numeric("Open 2", value)
 
     def set_material(self, value: int) -> int:
         """Set the material index."""
@@ -150,11 +225,11 @@ class DoorItInteriorController:
         """Pick a random valid material index and apply it."""
         return self._randomize_int("Material")
 
-    def set_paint_color(self, color: Sequence[float]) -> Tuple[float, float, float, float]:
-        """Set the RGBA paint color. Returns the applied color tuple."""
-        item = self._get_interface_item("Paint Color")
+    def set_colour(self, color: Sequence[float]) -> Tuple[float, float, float, float]:
+        """Set the RGBA colour. Returns the applied color tuple."""
+        item = self._get_interface_item("Colour")
         if len(color) not in (3, 4):
-            raise ValueError("Paint color must have 3 (RGB) or 4 (RGBA) components.")
+            raise ValueError("Colour must have 3 (RGB) or 4 (RGBA) components.")
 
         rgba = tuple(float(c) for c in color[:4])
         if len(rgba) == 3:
@@ -163,61 +238,70 @@ class DoorItInteriorController:
         self.modifier[item.identifier] = rgba
         return rgba
 
-    def randomize_paint_color(self, alpha: float = 1.0) -> Tuple[float, float, float, float]:
-        """Assign a random RGB color with the given alpha."""
+    def randomize_colour(self, alpha: float = 1.0) -> Tuple[float, float, float, float]:
+        """Assign a random RGB colour with the given alpha."""
         rgba = (random.random(), random.random(), random.random(), float(alpha))
-        self.set_paint_color(rgba)
+        self.set_colour(rgba)
         return rgba
 
+    def set_flip(self, value: bool) -> bool:
+        """Set the flip state. Returns the applied boolean value."""
+        return self._set_bool("Flip", value)
 
-def apply_interior_door_settings(
+
+def apply_window_settings(
     width: Optional[float] = None,
     height: Optional[float] = None,
-    door_type: Optional[int] = None,
+    window_type: Optional[int] = None,
     randomize_type: bool = True,
-    handle_type: Optional[int] = None,
-    randomize_handle: bool = True,
+    open_1: Optional[float] = None,
+    open_2: Optional[float] = None,
     material: Optional[int] = None,
     randomize_material: bool = True,
-    paint_color: Optional[Sequence[float]] = None,
-    randomize_color: bool = True,
+    colour: Optional[Sequence[float]] = None,
+    randomize_colour: bool = True,
     alpha: float = 1.0,
+    flip: Optional[bool] = None,
     obj: Optional[bpy.types.Object] = None,
     modifier_name: str = "GeometryNodes",
     trigger_rebuild: bool = True,
 ) -> Dict[str, object]:
-    """Apply a batch of settings to the Door It! Interior Geometry Nodes modifier.
+    """Apply a batch of settings to the Window Geometry Nodes modifier.
 
     Returns a dictionary summarizing the values that were applied. If ``trigger_rebuild`` is
     ``True`` the object's dependency graph is updated so the viewport reflects the changes.
     """
-    controller = DoorItInteriorController(obj=obj, modifier_name=modifier_name)
+    controller = WindowController(obj=obj, modifier_name=modifier_name)
     results: Dict[str, object] = {"object": controller.object.name}
 
+    if window_type is not None:
+        results["type"] = controller.set_type(window_type)
+    elif randomize_type:
+        results["type"] = controller.randomize_type()
+
+    # Now set width and height (width calculation depends on window type)
     if width is not None:
         results["width"] = controller.set_width(width)
     if height is not None:
         results["height"] = controller.set_height(height)
 
-    if door_type is not None:
-        results["type"] = controller.set_type(door_type)
-    elif randomize_type:
-        results["type"] = controller.randomize_type()
-
-    if handle_type is not None:
-        results["handle_type"] = controller.set_handle_type(handle_type)
-    elif randomize_handle:
-        results["handle_type"] = controller.randomize_handle_type()
+    if open_1 is not None:
+        results["open_1"] = controller.set_open_1(open_1)
+    if open_2 is not None:
+        results["open_2"] = controller.set_open_2(open_2)
 
     if material is not None:
         results["material"] = controller.set_material(material)
     elif randomize_material:
         results["material"] = controller.randomize_material()
 
-    if paint_color is not None:
-        results["paint_color"] = controller.set_paint_color(paint_color)
-    elif randomize_color:
-        results["paint_color"] = controller.randomize_paint_color(alpha=alpha)
+    if colour is not None:
+        results["colour"] = controller.set_colour(colour)
+    elif randomize_colour:
+        results["colour"] = controller.randomize_colour(alpha=alpha)
+
+    if flip is not None:
+        results["flip"] = controller.set_flip(flip)
 
     if trigger_rebuild:
         obj = controller.object
@@ -241,26 +325,27 @@ def apply_interior_door_settings(
     return results
 
 
-def create_interior_door(
+def create_window(
     name: str,
     location: Sequence[float],
     rotation_angle: float = 0.0,
     width: Optional[float] = None,
     height: Optional[float] = None,
     depth: Optional[float] = None,
-    door_type: Optional[int] = None,
+    window_type: Optional[int] = None,
     randomize_type: bool = False,
-    handle_type: Optional[int] = None,
-    randomize_handle: bool = False,
+    open_1: Optional[float] = None,
+    open_2: Optional[float] = None,
     material: Optional[int] = None,
     randomize_material: bool = False,
-    paint_color: Optional[Sequence[float]] = None,
-    randomize_color: bool = False,
+    colour: Optional[Sequence[float]] = None,
+    randomize_colour: bool = False,
     alpha: float = 1.0,
+    flip: Optional[bool] = None,
     modifier_name: str = "GeometryNodes",
     trigger_rebuild: bool = True,
 ) -> Dict[str, object]:
-    """Create a new Door It! Interior object at ``location`` and configure its parameters.
+    """Create a new Window object at ``location`` and configure its parameters.
 
     If an object with ``name`` already exists in the blend file but is not part of the active
     scene it will be linked in, moved to ``location`` and have the requested settings applied.
@@ -268,7 +353,7 @@ def create_interior_door(
     """
     scene = bpy.context.scene
     if scene is None:
-        raise RuntimeError("No active scene available to create the door.")
+        raise RuntimeError("No active scene available to create the window.")
 
     if len(location) != 3:
         raise ValueError("Location must be a 3-component iterable (x, y, z).")
@@ -281,18 +366,19 @@ def create_interior_door(
         if not in_scene:
             scene.collection.objects.link(existing_obj)
             existing_obj.location = location_vec
-            settings_summary = apply_interior_door_settings(
+            settings_summary = apply_window_settings(
                 width=width,
                 height=height,
-                door_type=door_type,
+                window_type=window_type,
                 randomize_type=randomize_type,
-                handle_type=handle_type,
-                randomize_handle=randomize_handle,
+                open_1=open_1,
+                open_2=open_2,
                 material=material,
                 randomize_material=randomize_material,
-                paint_color=paint_color,
-                randomize_color=randomize_color,
+                colour=colour,
+                randomize_colour=randomize_colour,
                 alpha=alpha,
+                flip=flip,
                 obj=existing_obj,
                 modifier_name=modifier_name,
                 trigger_rebuild=trigger_rebuild,
@@ -318,82 +404,83 @@ def create_interior_door(
 
         if override:
             with bpy.context.temp_override(**override):
-                result = bpy.ops.mesh.add_door()
+                result = bpy.ops.windowit.add_window()
         else:
-            result = bpy.ops.mesh.add_door()
+            result = bpy.ops.windowit.add_window()
 
         if result != {'FINISHED'}:
-            raise RuntimeError(f"Door creation operator returned {result!r}.")
+            raise RuntimeError(f"Window creation operator returned {result!r}.")
     finally:
         cursor.location = previous_cursor_location
 
     new_objects = [obj for obj in bpy.data.objects if obj not in pre_existing_objects]
-    # print(f"{new_objects=}") # DEBUG (don't delete)
     if not new_objects:
-        raise RuntimeError("Door creation operator did not add any objects to the scene.")
+        raise RuntimeError("Window creation operator did not add any objects to the scene.")
 
-    door_object = None
+    window_object = None
     for obj in new_objects:
         if any(mod.type == 'NODES' for mod in obj.modifiers):
-            door_object = obj
+            window_object = obj
             break
 
-    if door_object is None:
+    if window_object is None:
         for obj in new_objects:
-            if obj.name == "Door It! Interior":
-                door_object = obj
+            if "Window" in obj.name or "window" in obj.name.lower():
+                window_object = obj
                 break
 
-    if door_object is None:
+    if window_object is None:
         raise RuntimeError(
-            "Could not locate the Door It! Interior object with a Geometry Nodes modifier among created objects."
+            "Could not locate the Window object with a Geometry Nodes modifier among created objects."
         )
 
-    door_object.location = location_vec
-    door_object.name = name
+    window_object.location = location_vec
+    window_object.name = name
 
-    settings_summary = apply_interior_door_settings(
+    settings_summary = apply_window_settings(
         width=width,
         height=height,
-        door_type=door_type,
+        window_type=window_type,
         randomize_type=randomize_type,
-        handle_type=handle_type,
-        randomize_handle=randomize_handle,
+        open_1=open_1,
+        open_2=open_2,
         material=material,
         randomize_material=randomize_material,
-        paint_color=paint_color,
-        randomize_color=randomize_color,
+        colour=colour,
+        randomize_colour=randomize_colour,
         alpha=alpha,
-        obj=door_object,
+        flip=flip,
+        obj=window_object,
         modifier_name=modifier_name,
         trigger_rebuild=trigger_rebuild,
     )
 
-    door_object.dimensions.x = depth
+    if depth is not None:
+        window_object.dimensions.x = depth
     bpy.context.view_layer.update()
 
-    empty_name = f"DoorIt_Controller_{name}_Arrow"
+    empty_name = f"Window_Controller_{name}_Arrow"
 
-    #  Calculate bottom-center of the door using bounding box
-    bbox = [door_object.matrix_world @ Vector(corner) for corner in door_object.bound_box]
+    #  Calculate bottom-center of the window using bounding box
+    bbox = [window_object.matrix_world @ Vector(corner) for corner in window_object.bound_box]
     min_z = min(v.z for v in bbox)
     avg_x = sum(v.x for v in bbox) / len(bbox)
     avg_y = sum(v.y for v in bbox) / len(bbox)
     empty_initial_location = (avg_x, avg_y, min_z)
 
-    #  Create empty at door's bottom-center
+    #  Create empty at window's bottom-center
     bpy.ops.object.empty_add(type='ARROWS', location=empty_initial_location)
     empty_obj = bpy.context.active_object
     empty_obj.name = empty_name
     empty_obj.empty_display_size = 1.5
 
-    #  Parent the door to the empty
-    door_object.select_set(True)
+    #  Parent the window to the empty
+    window_object.select_set(True)
     empty_obj.select_set(True)
     bpy.context.view_layer.objects.active = empty_obj
     bpy.ops.object.parent_set(type='OBJECT', keep_transform=True)
 
-    #  Move empty to door_boundary centroid (door moves with it due to parenting)
+    #  Move empty to window_boundary centroid (window moves with it due to parenting)
     empty_obj.location = location_vec
 
     #  Apply rotation to empty
@@ -402,7 +489,7 @@ def create_interior_door(
     bpy.context.view_layer.update()
 
     return {
-        "object": door_object.name,
+        "object": window_object.name,
         "controller": empty_name,
         "created": True,
         "settings": settings_summary,
@@ -412,33 +499,35 @@ def create_interior_door(
 if __name__ == "__main__":
     # Example usage: tweak values here and run the script from Blender's text editor.
     SETTINGS = {
-        "width": 1.9144,          # 36 inches in meters
-        "height": 2.7,          # 80 inches in meters
-        "door_type": None,        # Set to an int to force a style, or keep None to randomize
-        "randomize_type": True,   # Ignored when 'door_type' is provided
-        "handle_type": None,      # Handle style index; None to randomize
-        "randomize_handle": True,
-        "material": None,         # Material preset index; None to randomize
+        "width": 1.0,              # meters default when not provided
+        "height": 1.0,             # meters default when not provided
+        "window_type": None,       # Set to an int to force a style, or keep None to randomize
+        "randomize_type": True,    # Ignored when 'window_type' is provided
+        "open_1": None,            # First opening amount; None to leave unchanged
+        "open_2": None,            # Second opening amount; None to leave unchanged
+        "material": None,          # Material preset index; None to randomize
         "randomize_material": True,
-        "paint_color": None,      # Provide (R, G, B[, A]) or leave None to randomize
-        "randomize_color": True,  # Ignored when 'paint_color' is provided
-        "alpha": 1.0,             # Alpha channel for randomized colors
+        "colour": None,            # Provide (R, G, B[, A]) or leave None to randomize
+        "randomize_colour": True,  # Ignored when 'colour' is provided
+        "alpha": 1.0,              # Alpha channel for randomized colours
+        "flip": None,              # Boolean flip state; None to leave unchanged
         "modifier_name": "GeometryNodes",
-        "trigger_rebuild": True,  # Forces a depsgraph update after applying settings
+        "trigger_rebuild": True,   # Forces a depsgraph update after applying settings
     }
 
-    NEW_DOOR = {
-        "name": "DoorIt_Example",
+    NEW_WINDOW = {
+        "name": "Window_Example",
         "location": (0.0, 0.0, 0.0),
-        "rotation_angle": 0.0,  
+        "rotation_angle": 0.0,
 
         **SETTINGS,
     }
 
-    created = create_interior_door(**NEW_DOOR)
-    print("Create door summary:", created)
+    created = create_window(**NEW_WINDOW)
+    print("Create window summary:", created)
 
     if created["created"] is False and bpy.data.objects.get(created["object"]):
-        # Optionally re-run settings on the already existing door.
-        applied = apply_interior_door_settings(obj=bpy.data.objects[created["object"]], **SETTINGS)
-        print("Updated existing Door It! Interior settings:", applied)
+        # Optionally re-run settings on the already existing window.
+        applied = apply_window_settings(obj=bpy.data.objects[created["object"]], **SETTINGS)
+        print("Updated existing Window settings:", applied)
+

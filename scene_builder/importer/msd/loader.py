@@ -7,7 +7,6 @@ TODO: add rounding (safe-rounding) to boundary, to keep scene def files clean an
 """
 
 import io
-import math
 import random
 import re
 from pathlib import Path
@@ -23,16 +22,10 @@ from msd.plot import plot_floor, set_figure
 from PIL import Image
 from rich.console import Console
 from shapely import wkt
-from shapely.geometry import Polygon
 
 from scene_builder.config import MSD_CSV_PATH
 from scene_builder.definition.scene import Room, Scene, Structure, Vector2
-from scene_builder.utils.floorplan import (
-    normalize_floor_plan_orientation,
-    scale_floor_plan,
-    get_dominant_angle,
-)
-from scene_builder.utils.geometry import round_vector2, get_longest_edge_angle
+from scene_builder.utils.geometry import round_vector2
 from scene_builder.utils.room import assign_structures_to_rooms
 
 
@@ -90,6 +83,8 @@ def parse_polygon(geom_string: str) -> list[Vector2]:
         return []
 
     return coords
+
+
 
 
 class MSDLoader:
@@ -365,3 +360,4 @@ class MSDLoader:
             plt.savefig(output_path, bbox_inches="tight", dpi=150)
             plt.close(fig)
             return output_path
+

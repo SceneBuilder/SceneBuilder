@@ -110,6 +110,42 @@ def are_boundaries_close(
     return distance <= max_distance
 
 
+def distance_to_box_2d(
+    point: tuple[float, float] | Vector2,
+    min_corner: tuple[float, float] | Vector2,
+    max_corner: tuple[float, float] | Vector2,
+) -> float:
+    """Return the shortest 2D distance from a point to an axis-aligned bounding box.
+
+    Args:
+        point: 2D point as (x, y) tuple or Vector2
+        min_corner: Minimum corner of bounding box as (x, y) tuple or Vector2
+        max_corner: Maximum corner of bounding box as (x, y) tuple or Vector2
+
+    Returns:
+        Distance in meters
+    """
+    # Extract coordinates - works with tuples, Vector2, or any object with x/y attributes
+    if isinstance(point, tuple):
+        px, py = point
+    else:
+        px, py = point.x, point.y
+
+    if isinstance(min_corner, tuple):
+        min_x, min_y = min_corner
+    else:
+        min_x, min_y = min_corner.x, min_corner.y
+
+    if isinstance(max_corner, tuple):
+        max_x, max_y = max_corner
+    else:
+        max_x, max_y = max_corner.x, max_corner.y
+
+    dx = max(min_x - px, 0, px - max_x)
+    dy = max(min_y - py, 0, py - max_y)
+    return math.sqrt(dx * dx + dy * dy)
+
+
 def polygon_centroid(vertices: list[Vector2]) -> Vector2:
     """Calculate the centroid of a polygon given its boundary vertices.
 
@@ -514,3 +550,66 @@ def save_polygon_image(
     plt.close(fig)
 
     return output_path
+
+
+def get_object_volume(obj) -> float:
+    """Calculate object volume from dimensions.
+
+    Args:
+        obj: Blender object (or any object with dimensions attribute)
+
+    Returns:
+        Volume in cubic meters
+    """
+    d = obj.dimensions
+    return d.x * d.y * d.z
+
+
+def calculate_bounds_2d(
+    vertices_2d: list[tuple[float, float]],
+) -> dict[str, float | bool | int]:
+    """
+    Calculate bounding box dimensions from 2D vertices.
+
+    Args:
+        vertices_2d: List of (x, y) coordinate tuples
+
+    Returns:
+        Dictionary containing min/max coordinates, width, height, and area
+    """
+
+    if not vertices_2d:
+        return {
+            "value": False,
+            "count": 0,
+            "min_x": 0,
+            "max_x": 0,
+            "min_y": 0,
+            "max_y": 0,
+            "width": 0,
+            "height": 0,
+            "area": 0,
+            "has_area": False,
+        }
+
+    x_coords = [x for x, y in vertices_2d]
+    y_coords = [y for x, y in vertices_2d]
+
+    min_x, max_x = min(x_coords), max(x_coords)
+    min_y, max_y = min(y_coords), max(y_coords)
+    width = max_x - min_x
+    height = max_y - min_y
+    area = width * height
+
+    return {
+        "value": True,
+        "count": len(vertices_2d),
+        "min_x": min_x,
+        "max_x": max_x,
+        "min_y": min_y,
+        "max_y": max_y,
+        "width": width,
+        "height": height,
+        "area": area,
+        "has_area": (width > 0 and height > 0),
+    }

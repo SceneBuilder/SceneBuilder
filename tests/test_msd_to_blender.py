@@ -9,21 +9,36 @@ from typing import Optional
 from scene_builder.decoder.blender import blender
 from scene_builder.definition.scene import Scene
 from scene_builder.importer.msd.loader import MSDLoader
-from scene_builder.utils.blender import install_door_it_addon
+from scene_builder.logging import configure_logging
+from scene_builder.utils.blender import install_door_it_addon, install_window_it_addon
+from scene_builder.utils.floorplan import plot_floor_plan
 from scene_builder.utils.room import render_structure_links
 from scene_builder.utils.scene import recenter_scene
+
+# Configure logging level (DEBUG shows all logs, INFO shows less)
+# configure_logging(level="DEBUG")
+# configure_logging(level="INFO")
+# configure_logging(level="WARNING")
+configure_logging(level="ERROR")
 
 
 OUTPUT_DIR = Path("test_output/msd_to_blender")
 
 
-def _enable_addons(enable_doors=True):
+def _enable_addons(enable_doors=True, enable_windows=True):
+    """Enable Blender addons for doors and windows."""
     if enable_doors:
         addon_installed = install_door_it_addon()
         if addon_installed:
             print("✅ Door It! Interior addon enabled - doors will be created")
         else:
             print("⛔️ Door It! Interior addon not available - only cutouts will be created")
+    if enable_windows:
+        addon_installed = install_window_it_addon()
+        if addon_installed:
+            print("✅ Window It! addon enabled - windows will be created")
+        else:
+            print("⛔️ Window It! addon not available - only cutouts will be created")
 
 
 def _collect_building_floors(
@@ -71,11 +86,16 @@ def test_msd_to_blender(
     floor_id: Optional[str] = None,
     align_rotation: bool = True,
     render_links: bool = False,
+    enable_doors: bool = True,
+    enable_windows: bool = True,
+    render_doors: bool = False,
+    render_windows: bool = False,
+    keep_cutters_visible: bool = False,
 ):
     loader = MSDLoader()
 
     if enable_addons:
-        _enable_addons(enable_doors=True)
+        _enable_addons(enable_doors=enable_doors, enable_windows=enable_windows)
 
     # Load the specified or a random building from MSD
     if building_id is None:
@@ -105,6 +125,10 @@ def test_msd_to_blender(
                 rooms=all_rooms,
             )
 
+            floor_plan_viz = OUTPUT_DIR / f"msd_building_{building_id}_floor_{floor_id}_floor_plan.png"
+            plot_floor_plan(all_rooms, str(floor_plan_viz))
+            print(f"   ✓ Floor plan visualization: {floor_plan_viz.name}")
+
             scene_data = recenter_scene(floor_scene, rotate=align_rotation)
             rooms_dict = scene_data.get("rooms", [])
 
@@ -114,12 +138,15 @@ def test_msd_to_blender(
 
             blender.parse_scene_definition(scene_data)
 
-            # Create walls per-room to keep cutouts local and performant
-            walls_created_total = 0
-            for room in rooms_dict:
-                walls_created_total += blender.create_room_walls(
-                    [room], door_cutouts=door_cutout, window_cutouts=window_cutout
-                )
+            # Create walls for entire floorplan at once
+            walls_created_total = blender.create_room_walls(
+                rooms_dict,
+                door_cutouts=door_cutout,
+                window_cutouts=window_cutout,
+                render_doors=render_doors,
+                render_windows=render_windows,
+                keep_cutters_visible=keep_cutters_visible,
+            )
             if walls_created_total > 0:
                 print(f"   ✓ Created {walls_created_total} room walls for floor {floor_id}")
 
@@ -146,6 +173,11 @@ def test_msd_to_blender(
             for apt_id, graph in apt_graphs:
                 apt_scene = loader.apt_graph_to_scene(graph)
 
+                apt_prefix = str(apt_id)[:8]
+                apt_viz = OUTPUT_DIR / f"msd_building_{building_id}_floor_{floor_id}_apt_{apt_prefix}_floor_plan.png"
+                plot_floor_plan(apt_scene.rooms, str(apt_viz))
+                print(f"   ✓ Floor plan visualization: {apt_viz.name}")
+
                 scene_data = recenter_scene(apt_scene, rotate=align_rotation)
                 rooms_dict = scene_data.get("rooms", [])
 
@@ -158,7 +190,12 @@ def test_msd_to_blender(
 
                 blender.parse_scene_definition(scene_data)
                 walls_created = blender.create_room_walls(
-                    rooms_dict, door_cutouts=door_cutout, window_cutouts=window_cutout
+                    rooms_dict,
+                    door_cutouts=door_cutout,
+                    window_cutouts=window_cutout,
+                    render_doors=render_doors,
+                    render_windows=render_windows,
+                    keep_cutters_visible=keep_cutters_visible,
                 )
                 if walls_created > 0:
                     print(f"   ✓ Created {walls_created} room walls for {apt_id}")
@@ -186,13 +223,28 @@ def test_msd_to_blender(
 if __name__ == "__main__":
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
+    # Example: Test with window rendering enabled
     test_msd_to_blender(
         enable_addons=True,
         door_cutout=True,
         window_cutout=True,
         entire_floor=True,
-        building_id=2144,
+        # building_id=2801,
+        # building_id=2144,
+        building_id=1421,
+        # building_id=2802,
         floor_id=None,
         align_rotation=True,
-        render_links=True,
+        render_links=False,
+        enable_doors=False,
+        enable_windows=False,
+        render_doors=False,
+        render_windows=False,
+        keep_cutters_visible=True,
     )
+    # Uncomment to test other configurations:
+    # test_msd_to_blender(render_windows=True)
+    # test_msd_to_blender(door_cutout=False)
+    # test_msd_to_blender(window_cutout=False)
+    # test_msd_to_blender(door_cutout=False, window_cutout=False)
+    # test_msd_to_blender(render_doors=True, render_windows=True)  # Enable both doors and windows
