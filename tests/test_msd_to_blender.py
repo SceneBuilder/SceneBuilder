@@ -226,8 +226,8 @@ if __name__ == "__main__":
     # Example: Test with window rendering enabled
     test_msd_to_blender(
         enable_addons=True,
-        door_cutout=True,
-        window_cutout=True,
+        door_cutout=False,
+        window_cutout=False,
         entire_floor=True,
         # building_id=2801,
         # building_id=2144,

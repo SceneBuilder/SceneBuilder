@@ -36,7 +36,6 @@ from scene_builder.utils.file import get_filename
 from scene_builder.utils.floorplan import (
     _find_adjacent_wall_segments_from_centers_to_edges,
     calculate_bounds_for_objects,
-    classify_door_type,
     find_nearest_wall_point,
     get_longest_edge_angle,
     scale_boundary_for_cutout,
@@ -1021,96 +1020,6 @@ def _create_window_cutout(
 
     # Apply boolean modifier
     bool_mod = wall_obj.modifiers.new(name=f"WindowCut_{window_idx}", type="BOOLEAN")
-    bool_mod.operation = "DIFFERENCE"
-    bool_mod.object = cutter_obj
-
-    bpy.context.view_layer.objects.active = wall_obj
-    bpy.ops.object.modifier_apply(modifier=bool_mod.name)
-
-    if not keep_cutter_visible:
-        bpy.data.objects.remove(cutter_obj, do_unlink=True)
-
-
-def _create_interior_door_cutout(
-    wall_obj,
-    apt_id: str,
-    door_idx: int,
-    door_boundary: list,
-    z_bottom: float = 0.0,
-    z_top: float = 2.1,
-    scale_factor: float = 2.00,
-    scale_short_axis: bool = True,
-    scale_long_axis: bool = True,
-    scale_long_factor: float = 0.98,
-    debug=False,
-    keep_cutter_visible: bool = False,
-):
-    """Create and apply an interior door cutout to a wall object.
-
-    Scales the door boundary by scale_factor and applies a boolean cutout operation.
-
-    Args:
-        wall_obj: Blender wall object to cut
-        apt_id: Apartment ID for naming
-        door_idx: Door index for naming
-        door_boundary: List of (x, y) tuples defining door polygon
-        z_bottom: Bottom Z height of door cutout (default: 0.0)
-        z_top: Top Z height of door cutout (default: 2.1)
-        scale_factor: Factor to scale the shorter axis (default: 2.00)
-        scale_short_axis: If True, scale along the axis orthogonal to the dominant direction (default: True)
-        scale_long_axis: If True, scale along the dominant (longer) direction (default: True)
-        scale_long_factor: Factor to scale the longer axis (default: 0.99)
-        debug: If True, plots door geometry (original scaled, dominant axis) (default: False)
-        keep_cutter_visible: If True, keep the cutter object visible with red color for debugging (default: False)
-    """
-    # Scale the door boundary using geometry function (no Blender dependency)
-    expanded_boundary = scale_boundary_for_cutout(
-        boundary=door_boundary,
-        scale_short_factor=scale_factor,
-        scale_short_axis=scale_short_axis,
-        scale_long_axis=scale_long_axis,
-        scale_long_factor=scale_long_factor,
-        debug=debug,
-        debug_prefix="interior_door",
-        debug_id=f"{apt_id}_{door_idx}",
-    )
-
-    # Create cutter mesh (Blender-specific)
-    cutter_mesh = bpy.data.meshes.new(f"InteriorDoorCutter_{apt_id}_{door_idx}")
-    cutter_obj = bpy.data.objects.new(f"InteriorDoorCutter_{apt_id}_{door_idx}", cutter_mesh)
-    bpy.context.collection.objects.link(cutter_obj)
-
-    bm = bmesh.new()
-    try:
-        # Create bottom and top vertices
-        bottom_verts = [bm.verts.new((x, y, z_bottom)) for x, y in expanded_boundary]
-        top_verts = [bm.verts.new((x, y, z_top)) for x, y in expanded_boundary]
-        bm.verts.ensure_lookup_table()
-
-        # Create faces
-        bm.faces.new(bottom_verts)
-        bm.faces.new(list(reversed(top_verts)))
-
-        # Create side faces
-        num_verts = len(bottom_verts)
-        for i in range(num_verts):
-            next_i = (i + 1) % num_verts
-            bm.faces.new([bottom_verts[i], bottom_verts[next_i], top_verts[next_i], top_verts[i]])
-
-        bm.to_mesh(cutter_mesh)
-        cutter_mesh.update()
-    finally:
-        bm.free()
-
-    bpy.context.view_layer.objects.active = cutter_obj
-    bpy.ops.object.mode_set(mode="EDIT")
-    bpy.ops.mesh.select_all(action="SELECT")
-    bpy.ops.mesh.normals_make_consistent(inside=False)
-    bpy.ops.object.mode_set(mode="OBJECT")
-
-    cutter_obj.display_type = "WIRE" if hasattr(cutter_obj, "display_type") else "SOLID"
-    # Apply boolean modifier
-    bool_mod = wall_obj.modifiers.new(name=f"InteriorDoorCut_{door_idx}", type="BOOLEAN")
     bool_mod.operation = "DIFFERENCE"
     bool_mod.object = cutter_obj
 
@@ -2653,7 +2562,7 @@ def create_room_walls(
     window_height_top: float = DEFAULT_WINDOW_HEIGHT_TOP,
     keep_cutters_visible: bool = False,
     translucent: bool = False,
-    debug_save_steps: bool = True,
+    debug_save_steps: bool = False,
     debug_output_dir: Optional[str] = "/home/jkim3191/NavGoProject/GitHub/test_output/debug_wall_creation",
 ):
     """Create walls for each room individually (excluding windows and exterior doors).
@@ -2689,8 +2598,6 @@ def create_room_walls(
     window_cutout_polygons: list[tuple[str, list[tuple[float, float]]]] = []
 
     exterior_door_cutout_polygons: list[tuple[str, list[tuple[float, float]]]] = []
-
-    interior_door_polygons: list[tuple[str, list[tuple[float, float]]]] = []
 
     # Collect all room boundaries for window positioning
     all_room_boundaries = []
@@ -2731,22 +2638,9 @@ def create_room_walls(
             if window_cutouts and s_type == "window":
                 window_cutout_polygons.append((str(s_id), boundary_xy))
             elif door_cutouts and s_type == "door":
-                try:
-                    door_polygon = Polygon(boundary_xy)
-                    if door_polygon.is_valid and not door_polygon.is_empty:
-                        door_type = classify_door_type(door_polygon, all_room_polygons)
-                        is_interior = door_type == "interior"
-                    else:
-                        is_interior = False
-                except Exception:
-                    is_interior = False
-
-                if not is_interior:
-                    exterior_door_cutout_polygons.append((str(s_id), boundary_xy))
-                    logger.debug(f"Door {s_id}: identified as exterior door")
-                else:
-                    interior_door_polygons.append((str(s_id), boundary_xy))
-                    logger.debug(f"Door {s_id}: identified as interior door")
+                # Only collect exterior doors - interior door cutouts are disabled
+                exterior_door_cutout_polygons.append((str(s_id), boundary_xy))
+                logger.debug(f"Door {s_id}: added to exterior door cutouts")
 
     # Detect adjacent walls to skip
     adjacent_segments = _find_adjacent_wall_segments_from_centers_to_edges(rooms, threshold=0.025)
@@ -2914,67 +2808,6 @@ def create_room_walls(
             step_file = debug_output_path / f"step2_windows_applied_{room_id}.blend"
             save_scene(str(step_file), exclude_grid=True)
             logger.debug(f"Saved: {step_file}")
-
-        if door_cutouts and interior_door_polygons:
-            for idx, (door_id, door_boundary) in enumerate(interior_door_polygons):
-                if not door_boundary:
-                    continue
-
-                if room_polygon:
-                    try:
-                        door_polygon = Polygon(door_boundary)
-                        # Check if door is very close (within 0.1m)
-                        if door_polygon.is_valid and room_polygon.distance(door_polygon) < 0.1:
-                            # Create the cutout in the wall
-                            _create_interior_door_cutout(
-                                wall_obj=obj,
-                                apt_id=str(door_id),
-                                door_idx=idx,
-                                door_boundary=door_boundary,
-                                z_bottom=0.0,
-                                z_top=DEFAULT_DOOR_HEIGHT,
-                                keep_cutter_visible=keep_cutters_visible,
-                            )
-
-                            door_boundary_dicts = [{"x": x, "y": y} for x, y in door_boundary]
-                            door_floor_result = _create_floor_mesh(
-                                boundary=door_boundary_dicts,
-                                room_id=f"interior_door_{door_id}",
-                                floor_thickness_m=0.05,  # Thinner than room floors
-                                origin="center"
-                            )
-                            logger.debug(f"Created floor for interior door {door_id}: {door_floor_result['status']}")
-                            
-                            # Debug save: after door cutout and floor creation
-                            if debug_save_steps:
-                                step_file = debug_output_path / f"step3_door_{door_id}_cutout_floor_{room_id}.blend"
-                                save_scene(str(step_file), exclude_grid=True)
-                                logger.debug(f"Saved: {step_file}")
-
-                            if render_doors:
-                                door_result = create_door_from_boundary(
-                                    door_boundary=door_boundary,
-                                    door_id=str(door_id),
-                                    z_position=0.0,
-                                    door_height=DEFAULT_DOOR_HEIGHT,
-                                    randomize_type=True,
-                                    randomize_handle=True,
-                                    randomize_material=True,
-                                    randomize_color=False,
-                                    paint_color=(1.0, 1.0, 1.0, 1.0),  # White door
-                                )
-
-                                if door_result:
-                                    logger.debug(
-                                        f"Successfully created door object: {door_result.get('object')}"
-                                    )
-                            else:
-                                logger.debug(
-                                    f"Skipping door object creation for door {door_id} (render_doors=False)"
-                                )
-                    except Exception:
-                        # Skip this door if polygon creation fails
-                        continue
 
         # Debug save: final state after all cutouts and objects
         if debug_save_steps:

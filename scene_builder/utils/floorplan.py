@@ -66,6 +66,134 @@ def classify_door_type(
         return "exterior"
 
 ################## debug temporarily ##################
+def _project_point_onto_line_segment(point, line_start, line_end):
+    """Project a point onto a line segment and return the projection point and parameter t.
+    
+    Args:
+        point: Point to project (Vector2)
+        line_start: Start of line segment (Vector2)
+        line_end: End of line segment (Vector2)
+    
+    Returns:
+        Tuple of (projected_point as Vector2, t parameter where 0<=t<=1)
+        t=0 means projection is at line_start, t=1 means at line_end
+    """
+    # Vector from line_start to line_end
+    dx = line_end.x - line_start.x
+    dy = line_end.y - line_start.y
+    
+    # Handle degenerate case (zero-length line)
+    length_squared = dx * dx + dy * dy
+    if length_squared < 1e-10:
+        return line_start, 0.0
+    
+    # Calculate projection parameter t
+    t = ((point.x - line_start.x) * dx + (point.y - line_start.y) * dy) / length_squared
+    
+    # Clamp t to [0, 1] to stay within segment
+    t = max(0.0, min(1.0, t))
+    
+    # Calculate projected point
+    proj_x = line_start.x + t * dx
+    proj_y = line_start.y + t * dy
+    
+    return Vector2(x=proj_x, y=proj_y), t
+
+
+def _find_room_edges_touching_interior_doors(rooms: list[Room], threshold: float = 0.025):
+    """Find room wall edges that are adjacent to interior door boundaries.
+    
+    Uses door-centric approach: iterates through each door edge and projects its endpoints
+    onto nearby room edges to ensure accurate segment lengths that match the door edge.
+    
+    Args:
+        rooms: List of Room objects with boundary and structure data
+        threshold: Distance threshold for considering edges touching doors (in meters)
+    
+    Returns:
+        Dictionary mapping (room_idx, edge_idx) to list of touching door segments [(start, end), ...]
+    """
+    interior_doors = []
+    for room in rooms:
+        if room.structure:
+            for struct in room.structure:
+                if struct.type == "door" and struct.boundary and len(struct.boundary) >= 3:
+                    door_boundary = []
+                    for v in struct.boundary:
+                        if isinstance(v, dict):
+                            door_boundary.append(Vector2(x=v["x"], y=v["y"]))
+                        else:
+                            door_boundary.append(v)
+                    
+                    try:
+                        boundary_xy = [(v.x, v.y) for v in door_boundary]
+                        door_polygon = Polygon(boundary_xy)
+                        if door_polygon.is_valid and not door_polygon.is_empty:
+                            room_polygons = []
+                            for r in rooms:
+                                if r.boundary and len(r.boundary) >= 3:
+                                    try:
+                                        rb = [Vector2(x=v["x"], y=v["y"]) if isinstance(v, dict) else v for v in r.boundary]
+                                        rb_xy = [(v.x, v.y) for v in rb]
+                                        room_poly = Polygon(rb_xy)
+                                        if room_poly.is_valid and not room_poly.is_empty:
+                                            room_polygons.append(room_poly)
+                                    except Exception:
+                                        continue
+                            
+                            door_type = classify_door_type(door_polygon, room_polygons)
+                            if door_type == "interior":
+                                interior_doors.append(door_boundary)
+                    except Exception:
+                        continue
+    
+    if not interior_doors:
+        return {}
+    
+    door_touching_segments = {}
+    
+    for door_boundary in interior_doors:
+        for door_edge_idx in range(len(door_boundary)):
+            d1 = door_boundary[door_edge_idx]
+            d2 = door_boundary[(door_edge_idx + 1) % len(door_boundary)]
+            
+            door_edge_line = LineString([(d1.x, d1.y), (d2.x, d2.y)])
+            
+            for room_idx, room in enumerate(rooms):
+                r_boundary = room.get("boundary") if isinstance(room, dict) else getattr(room, "boundary", None)
+                if not r_boundary or len(r_boundary) < 3:
+                    continue
+                
+                for edge_idx in range(len(r_boundary)):
+                    p1 = r_boundary[edge_idx]
+                    p2 = r_boundary[(edge_idx + 1) % len(r_boundary)]
+                    
+                    if isinstance(p1, dict):
+                        p1 = Vector2(x=p1["x"], y=p1["y"])
+                    if isinstance(p2, dict):
+                        p2 = Vector2(x=p2["x"], y=p2["y"])
+                    
+                    room_edge_line = LineString([(p1.x, p1.y), (p2.x, p2.y)])
+                    
+                    if room_edge_line.distance(door_edge_line) > threshold:
+                        continue
+                    
+                    proj1, t1 = _project_point_onto_line_segment(d1, p1, p2)
+                    proj2, t2 = _project_point_onto_line_segment(d2, p1, p2)
+                    
+                    dist1 = math.sqrt((proj1.x - d1.x)**2 + (proj1.y - d1.y)**2)
+                    dist2 = math.sqrt((proj2.x - d2.x)**2 + (proj2.y - d2.y)**2)
+                    
+                    if dist1 <= threshold and dist2 <= threshold:
+                        edge_key = (room_idx, edge_idx)
+                        if edge_key not in door_touching_segments:
+                            door_touching_segments[edge_key] = []
+                        
+                        door_touching_segments[edge_key].append((proj1, proj2))
+    
+    return door_touching_segments
+
+
 # this is centers to edges, not edges to edges
 def _find_adjacent_wall_segments_from_centers_to_edges(rooms: list[Room], threshold: float = 0.025):
     """Find segments of room walls that are adjacent to other room walls.
@@ -147,9 +275,10 @@ def _find_adjacent_wall_segments_from_centers_to_edges(rooms: list[Room], thresh
 def plot_floor_plan(
     rooms: list[Room], 
     output_path: str = "floor_plan.png",
-    show_doors: bool = False,
+    show_doors: bool = True,
     show_windows: bool = False,
-    show_adjacent_walls: bool = True,
+    show_adjacent_walls: bool = False,
+    show_door_touching_edges: bool = True,
     adjacency_threshold: float = 0.05
 ):
     """Plot floor plan showing room boundaries with adjacent wall segments in green.
@@ -162,6 +291,7 @@ def plot_floor_plan(
         show_doors: If True, show interior doors in red
         show_windows: If True, show windows in yellow
         show_adjacent_walls: If True, show adjacent wall segments in green
+        show_door_touching_edges: If True, show room edges touching interior doors in magenta
         adjacency_threshold: Distance threshold for considering walls adjacent (default: 0.05m)
     """
     fig, ax = plt.subplots(figsize=(12, 12))
@@ -171,6 +301,11 @@ def plot_floor_plan(
     if show_adjacent_walls:
         adjacent_segments = _find_adjacent_wall_segments_from_centers_to_edges(rooms, adjacency_threshold)
     
+    # Find door-touching edges if enabled
+    door_touching_segments = []
+    if show_door_touching_edges:
+        door_touching_segments = _find_room_edges_touching_interior_doors(rooms, adjacency_threshold)
+    
     # Plot rooms
     for room_idx, room in enumerate(rooms):
         if room.boundary and len(room.boundary) >= 3:
@@ -179,22 +314,24 @@ def plot_floor_plan(
                 p1 = room.boundary[i]
                 p2 = room.boundary[(i + 1) % len(room.boundary)]
                 
-                # Check if this segment has adjacent portions
                 edge_key = (room_idx, i)
+                
+                # Plot the base edge in blue
+                ax.plot([p1.x, p2.x], [p1.y, p2.y], 'b-', linewidth=1)
+                
+                # Check if this edge has adjacent room walls (green overlay)
                 if edge_key in adjacent_segments:
-                    # This edge has adjacent portions - plot them separately
                     touching_portions = adjacent_segments[edge_key]
-                    
-                    # Plot the entire edge first in blue
-                    ax.plot([p1.x, p2.x], [p1.y, p2.y], 'b-', linewidth=1)
-                    
-                    # Then overlay green for touching portions
                     for seg_start, seg_end in touching_portions:
                         ax.plot([seg_start.x, seg_end.x], [seg_start.y, seg_end.y], 
-                               'g-', linewidth=2, zorder=10)
-                else:
-                    # No adjacent walls, just plot in blue
-                    ax.plot([p1.x, p2.x], [p1.y, p2.y], 'b-', linewidth=1)
+                               'g-', linewidth=1, zorder=10)
+                
+                # Check if this edge touches interior doors (magenta overlay, higher z-order)
+                if edge_key in door_touching_segments:
+                    touching_portions = door_touching_segments[edge_key]
+                    for seg_start, seg_end in touching_portions:
+                        ax.plot([seg_start.x, seg_end.x], [seg_start.y, seg_end.y], 
+                               'm-', linewidth=1, zorder=11)
             
             # Fill the room
             x = [v.x for v in room.boundary] + [room.boundary[0].x]
@@ -224,7 +361,7 @@ def plot_floor_plan(
                         x = [v.x for v in struct.boundary] + [struct.boundary[0].x]
                         y = [v.y for v in struct.boundary] + [struct.boundary[0].y]
                         
-                        # Only plot interior doors (red) if enabled
+                        # Only plot interior doors (same color as room boundaries) if enabled
                         if show_doors and struct.type == "door":
                             try:
                                 boundary_xy = [(v.x, v.y) for v in struct.boundary]
@@ -232,13 +369,13 @@ def plot_floor_plan(
                                 if door_polygon.is_valid and not door_polygon.is_empty:
                                     door_type = classify_door_type(door_polygon, all_room_polygons)
                                     if door_type == "interior":
-                                        ax.plot(x, y, color='red', linewidth=2)
-                                        ax.fill(x, y, color='red', alpha=0.7)
+                                        ax.plot(x, y, color='blue', linewidth=1)
+                                        ax.fill(x, y, color='lightblue', alpha=0.3)
                             except Exception:
                                 continue
                         # Plot all windows (yellow) if enabled
                         elif show_windows and struct.type == "window":
-                            ax.plot(x, y, color='yellow', linewidth=2)
+                            ax.plot(x, y, color='yellow', linewidth=1)
                             ax.fill(x, y, color='yellow', alpha=0.7)
     
     ax.set_aspect('equal')
