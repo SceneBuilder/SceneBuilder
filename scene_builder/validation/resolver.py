@@ -121,6 +121,7 @@ class IssueResolver:
             prompt_parts.extend(f"- {action}" for action in ticket.actions[-3:])
         prompt_parts.extend(
             [
+                "Rotations are recorded in degrees and rotation adjustments are applied as offsets to the current transform.",
                 "Respond with JSON that matches the IssueResolutionOutput schema:",
                 '{"resolved": bool, "action_desc": str, "rationale": str,',
                 ' "object_id": str | null, "adjustment": {',

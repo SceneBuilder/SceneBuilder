@@ -126,9 +126,19 @@ def apply_resolution_actions(room: Room, actions: list[IssueResolutionOutput]) -
             continue
 
         if adjustment.position is not None:
-            obj.position = adjustment.position
+            # Treat positional adjustments as offsets to avoid snapping to origin.
+            obj.position = Vector3(
+                x=obj.position.x + adjustment.position.x,
+                y=obj.position.y + adjustment.position.y,
+                z=obj.position.z + adjustment.position.z,
+            )
         if adjustment.rotation is not None:
-            obj.rotation = adjustment.rotation
+            # Treat rotation adjustments as offsets (degrees).
+            obj.rotation = Vector3(
+                x=obj.rotation.x + adjustment.rotation.x,
+                y=obj.rotation.y + adjustment.rotation.y,
+                z=obj.rotation.z + adjustment.rotation.z,
+            )
         if adjustment.scale is not None:
             obj.scale = adjustment.scale
 
