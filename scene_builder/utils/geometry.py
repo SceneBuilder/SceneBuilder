@@ -68,6 +68,25 @@ def get_longest_edge_angle(polygon: Polygon | list[Vector2]) -> float:
     return angle
 
 
+def longest_edge_direction(polygon: Polygon | list[Vector2]) -> tuple[float, float] | None:
+    """Return a unit direction vector for the polygon's longest edge.
+
+    Uses ``get_longest_edge_angle`` to avoid duplicating edge-walk logic.
+    """
+    try:
+        angle_deg = get_longest_edge_angle(polygon)
+    except (TypeError, ValueError):
+        return None
+
+    angle_rad = math.radians(angle_deg)
+    dx = math.cos(angle_rad)
+    dy = math.sin(angle_rad)
+    length = math.hypot(dx, dy)
+    if length == 0.0:
+        return None
+    return (dx / length, dy / length)
+
+
 def boundary_to_geometry(boundary: Iterable[Vector2] | None) -> BaseGeometry | None:
     """Convert a boundary definition into an appropriate Shapely geometry."""
     if not boundary:
