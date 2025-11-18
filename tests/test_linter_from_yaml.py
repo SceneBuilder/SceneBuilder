@@ -12,15 +12,20 @@ from scene_builder.nodes.design import apply_resolution_actions
 from scene_builder.utils.conversions import pydantic_from_yaml
 from scene_builder.validation import (
     AABB,
+    LintingOptions,
     LintSeverity,
     format_lint_feedback,
     lint_room,
     lint_scene,
     save_lint_visualization,
 )
+from scene_builder.validation.rules import WallOverlapRule
 from scene_builder.validation.resolver import IssueResolver
 from scene_builder.validation.tracker import IssueTracker
 from scene_builder.workflow.states import RoomDesignState
+
+# params
+linting_options = LintingOptions(rules=(WallOverlapRule(),))
 
 # single
 # TEST_CASE = "test_single_room_design_workflow_bar"
@@ -61,7 +66,7 @@ def test_lint_scene_from_yaml_file():
         print(format_lint_feedback(report))
 
 
-def test_auto_resolution_from_yaml_file():
+def test_auto_resolution_from_yaml_file(options=None):
     """
     Tests automatic lint resolution in isolation.
 
@@ -76,7 +81,7 @@ def test_auto_resolution_from_yaml_file():
 
     # Lint and log/visualize state (before)
     parse_room_definition(room)
-    report = lint_room(room)
+    report = lint_room(room, options=options)
     rprint("[bold magenta]Before resolution:[/]")
     rprint(format_lint_feedback(report))
 
@@ -87,6 +92,7 @@ def test_auto_resolution_from_yaml_file():
         report,
         output_base.with_name(f"{output_base.name}_lint_before.png")
     )  # fmt:skip
+    blender.save_scene(f"{output_base}_before.blend")
 
     # Set up issue tracker and run auto resolution
     tracker = IssueTracker()
@@ -110,12 +116,14 @@ def test_auto_resolution_from_yaml_file():
         updated_report,
         output_base.with_name(f"{output_base.name}_lint_after.png"),
     )
+    blender.save_scene(f"{output_base}_after.blend")
 
 
 if __name__ == "__main__":
-    test_lint_room_from_yaml_file()
+    # test_lint_room_from_yaml_file()
     # test_lint_scene_from_yaml_file()
     # test_auto_resolution_from_yaml_file()
+    test_auto_resolution_from_yaml_file(linting_options)
 
     # # Allow running this test module directly
     # raise SystemExit(pytest.main([str(Path(__file__).resolve())]))
