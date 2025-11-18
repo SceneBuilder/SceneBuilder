@@ -7,6 +7,8 @@ from typing import Any, Iterable, Literal
 
 from pydantic import BaseModel, Field
 
+from scene_builder.definition.scene import Vector3
+
 
 class LintSeverity(str, Enum):
     """Severity levels for lint findings."""
@@ -101,4 +103,29 @@ class AABB(BaseModel):
     def bottom(self) -> float:
         return self.min_corner[2]
 
+
+class ObjectAdjustment(BaseModel):
+    """
+    Patch-style edits for a single object.
+
+    We ask the agent for a minimal diff instead of a full Object to avoid accidental
+    clobbering of unchanged fields and to make destructive intents (e.g., removal)
+    explicit. This keeps application logic simple and safer: if an attribute is absent,
+    we leave it untouched.
+    """
+
+    id: str | None = None
+    position: Vector3 | None = None
+    rotation: Vector3 | None = None
+    scale: Vector3 | None = None
+    remove: bool = False
+
+
+class IssueResolutionOutput(BaseModel):
+    resolved: bool = False
+    action_desc: str
+    rationale: str
+    object_id: str | None = None
+    adjustment: ObjectAdjustment | None = None
+    ticket_id: str | None = None
 

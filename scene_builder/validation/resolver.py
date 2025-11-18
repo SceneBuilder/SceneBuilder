@@ -6,45 +6,22 @@ import logging
 import re
 from pathlib import Path
 
-from pydantic import BaseModel
 from rich.console import Console
 
-from scene_builder.definition.scene import Vector3
 from scene_builder.decoder.blender import blender
 from scene_builder.utils.pai import transform_paths_to_binary
-from scene_builder.validation.models import LintIssue, LintIssueTicket
+from scene_builder.validation.heuristics import HEURISTIC_RESOLVERS
+from scene_builder.validation.models import (
+    IssueResolutionOutput,
+    LintIssue,
+    LintIssueTicket,
+)
 from scene_builder.validation.tracker import IssueTracker
 from scene_builder.workflow.agents import issue_resolution_agent
 from scene_builder.workflow.states import RoomDesignState
 
 
 logger = logging.getLogger(__name__)
-
-
-class ObjectAdjustment(BaseModel):
-    """
-    Patch-style edits for a single object.
-
-    We ask the agent for a minimal diff instead of a full Object to avoid accidental
-    clobbering of unchanged fields and to make destructive intents (e.g., removal)
-    explicit. This keeps application logic simple and safer: if an attribute is absent,
-    we leave it untouched.
-    """
-
-    id: str | None = None
-    position: Vector3 | None = None
-    rotation: Vector3 | None = None
-    scale: Vector3 | None = None
-    remove: bool = False
-
-
-class IssueResolutionOutput(BaseModel):
-    resolved: bool = False
-    action_desc: str
-    rationale: str
-    object_id: str | None = None
-    adjustment: ObjectAdjustment | None = None
-    ticket_id: str | None = None
 
 
 class IssueResolver:
@@ -99,7 +76,7 @@ class IssueResolver:
         ticket: LintIssueTicket,
         issue: LintIssue,
     ) -> IssueResolutionOutput | None:
-        """Invoke the resolution agent for a single ticket and return the proposed action."""
+        """Invoke a heuristic or agent to resolve a single ticket and return the proposed action."""
         ticket.retries += 1
         object_state_json = None
         if ticket.object_id:
@@ -109,6 +86,17 @@ class IssueResolver:
             )
             if target is not None:
                 object_state_json = target.model_dump_json(indent=2)
+
+        heuristic = HEURISTIC_RESOLVERS.get(issue.code)
+        if heuristic is not None:
+            result = heuristic(self.state, ticket, issue)
+            if result is not None:
+                if result.object_id:
+                    ticket.object_id = result.object_id
+                ticket.status = "resolved"
+                tracker.append_action(ticket, result.action_desc, result.rationale)
+                result.ticket_id = ticket.issue_id
+                return result
 
         prompt_parts = [
             "Resolve the following lint issue in the 3D room design.",
