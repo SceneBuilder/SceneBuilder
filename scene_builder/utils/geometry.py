@@ -35,7 +35,7 @@ def convert_to_listvec2(polygon: list[Vector2]):
     return [Vector2(x=x, y=y) for x, y in list(polygon.exterior.coords)[:-1]]
 
 
-def get_longest_edge_angle(polygon: Polygon | list[Vector2]) -> float:
+def longest_edge_angle(polygon: Polygon | list[Vector2]) -> float:
     """
     Calculate the angle (degrees) of the longest edge in a polygon.
 
@@ -71,10 +71,10 @@ def get_longest_edge_angle(polygon: Polygon | list[Vector2]) -> float:
 def longest_edge_direction(polygon: Polygon | list[Vector2]) -> tuple[float, float] | None:
     """Return a unit direction vector for the polygon's longest edge.
 
-    Uses ``get_longest_edge_angle`` to avoid duplicating edge-walk logic.
+    Uses ``longest_edge_angle`` to avoid duplicating edge-walk logic.
     """
     try:
-        angle_deg = get_longest_edge_angle(polygon)
+        angle_deg = longest_edge_angle(polygon)
     except (TypeError, ValueError):
         return None
 

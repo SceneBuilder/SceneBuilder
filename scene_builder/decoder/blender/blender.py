@@ -38,7 +38,7 @@ from scene_builder.utils.floorplan import (
     calculate_bounds_for_objects,
     classify_door_type,
     find_nearest_wall_point,
-    get_longest_edge_angle,
+    longest_edge_angle,
     scale_boundary_for_cutout,
 )
 from scene_builder.utils.geometry import calculate_bounds_2d, distance_to_box_2d, polygon_centroid
@@ -940,7 +940,6 @@ def _create_floor_mesh(
     return result
 
 
-
 def _create_window_cutout(
     wall_obj,
     apt_id: str,
@@ -1160,7 +1159,7 @@ def create_door_from_boundary(
     centroid = door_poly.centroid
     centroid_coords = (centroid.x, centroid.y)
 
-    rotation_angle = get_longest_edge_angle(door_poly)
+    rotation_angle = longest_edge_angle(door_poly)
 
     # Rotate polygon to axis-aligned orientation
     aligned_poly = affinity.rotate(
@@ -1247,7 +1246,7 @@ def create_window_from_boundary(
     centroid_coords = (centroid.x, centroid.y)
     window_center = Vector2(x=centroid.x, y=centroid.y)
 
-    rotation_angle = get_longest_edge_angle(window_poly)
+    rotation_angle = longest_edge_angle(window_poly)
 
     # Rotate polygon to axis-aligned orientation
     aligned_poly = affinity.rotate(
@@ -2654,7 +2653,9 @@ def create_room_walls(
     keep_cutters_visible: bool = False,
     translucent: bool = False,
     debug_save_steps: bool = True,
-    debug_output_dir: Optional[str] = "/home/jkim3191/NavGoProject/GitHub/test_output/debug_wall_creation",
+    debug_output_dir: Optional[
+        str
+    ] = "/home/jkim3191/NavGoProject/GitHub/test_output/debug_wall_creation",
 ):
     """Create walls for each room individually (excluding windows and exterior doors).
 
@@ -2677,7 +2678,7 @@ def create_room_walls(
         Number of walls created
     """
     walls_created = 0
-    
+
     # Setup debug saving
     if debug_save_steps:
         if debug_output_dir is None:
@@ -2798,7 +2799,9 @@ def create_room_walls(
             # Skip this edge if it's adjacent to another room
             edge_key = (room_idx, i)
             if edge_key in adjacent_segments:
-                logger.debug(f"Skipping wall edge {i} for room {room_id} (adjacent to another room)")
+                logger.debug(
+                    f"Skipping wall edge {i} for room {room_id} (adjacent to another room)"
+                )
                 continue
 
             face = bm.faces.new(
@@ -2941,13 +2944,18 @@ def create_room_walls(
                                 boundary=door_boundary_dicts,
                                 room_id=f"interior_door_{door_id}",
                                 floor_thickness_m=0.05,  # Thinner than room floors
-                                origin="center"
+                                origin="center",
                             )
-                            logger.debug(f"Created floor for interior door {door_id}: {door_floor_result['status']}")
-                            
+                            logger.debug(
+                                f"Created floor for interior door {door_id}: {door_floor_result['status']}"
+                            )
+
                             # Debug save: after door cutout and floor creation
                             if debug_save_steps:
-                                step_file = debug_output_path / f"step3_door_{door_id}_cutout_floor_{room_id}.blend"
+                                step_file = (
+                                    debug_output_path
+                                    / f"step3_door_{door_id}_cutout_floor_{room_id}.blend"
+                                )
                                 save_scene(str(step_file), exclude_grid=True)
                                 logger.debug(f"Saved: {step_file}")
 
