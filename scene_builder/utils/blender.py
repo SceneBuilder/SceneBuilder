@@ -162,3 +162,103 @@ def enable_window_it_addon() -> bool:
     except Exception as e:
         logger.debug(f"Window It! addon not available: {e}")
         return False
+
+
+def configure_gpu_backend(backend="OPTIX"):
+    """
+    Configures Blender's system preferences to use a specific GPU backend.
+
+    This function enables the specified backend (e.g., 'OPTIX', 'HIP', 'CUDA')
+    and activates all corresponding GPU devices, while disabling the CPU.
+
+    Args:
+        backend (str): The Cycles compute device type to use.
+                       One of: 'OPTIX', 'HIP', 'CUDA', 'METAL', 'NONE'.
+                       Defaults to 'OPTIX'.
+    """
+    logger.info(f"Configuring System Preferences for {backend}")
+
+    # Get Cycles preferences
+    prefs = bpy.context.preferences.addons["cycles"].preferences
+
+    # Set the compute device type
+    prefs.compute_device_type = backend
+
+    # Force a device list update
+    prefs.get_devices()
+
+    # Loop over devices and enable GPUs, disable CPU
+    enabled_gpus = 0
+    for device in prefs.devices:
+        if device.type == backend:
+            device.use = True
+            logger.info(f"Enabling GPU: {device.name}")
+            enabled_gpus += 1
+        else:
+            # Disable all other devices (including CPU)
+            device.use = False
+            if device.type == "CPU":
+                logger.info(f"Disabling CPU: {device.name}")
+
+    logger.info(f"Successfully enabled {enabled_gpus} {backend} device(s).")
+
+
+def optimize_scene_for_gpu(scene=None, noise_threshold=0.05, max_bounces=8):
+    """
+    Optimizes the current scene's Cycles settings for fast GPU rendering.
+
+    This function sets the device to 'GPU Compute' and tunes sampling,
+    light paths, and performance settings for a good speed/quality balance.
+
+    Args:
+        scene (bpy.types.Scene, optional): The scene to modify.
+            If None, defaults to bpy.context.scene.
+        noise_threshold (float, optional): The target noise level.
+            Lower is cleaner but slower. Defaults to 0.05.
+        max_bounces (int, optional): The total max light bounces.
+            Defaults to 8.
+    """
+    logger.info("Optimizing Scene for Fast GPU Rendering")
+
+    if scene is None:
+        scene = bpy.context.scene
+
+    # Set render engine to Cycles and device to GPU
+    scene.render.engine = "CYCLES"
+    scene.cycles.device = "GPU"
+
+    cycles = scene.cycles
+
+    # Sampling
+    cycles.use_adaptive_sampling = True
+    cycles.noise_threshold = noise_threshold
+    cycles.samples = 4096  # High max samples, letting noise threshold stop it
+
+    # Denoising
+    cycles.use_denoising = True
+
+    # Smartly select the best denoiser
+    # OptiX denoiser is fastest *if* OptiX is the system backend
+    system_backend = bpy.context.preferences.addons["cycles"].preferences.compute_device_type
+    if system_backend == "OPTIX":
+        cycles.denoiser = "OPTIX"
+    else:
+        # OpenImageDenoise is the best universal fallback
+        cycles.denoiser = "OPENIMAGEDENOISE"
+
+    logger.info(f"Set denoiser to: {cycles.denoiser}")
+
+    # Light Paths
+    cycles.max_bounces = max_bounces
+    cycles.glossy_bounces = 4  # Good default
+    cycles.transmission_bounces = 4  # Good default
+
+    # Disable caustics for a big speedup
+    cycles.caustics_reflective = False
+    cycles.caustics_refractive = False
+
+    # Performance
+    cycles.use_tiling = False  # Faster for modern GPUs
+    cycles.persistent_data = True  # Good for rendering animations
+
+    logger.info(f"Scene '{scene.name}' optimized with {noise_threshold} noise threshold.")
