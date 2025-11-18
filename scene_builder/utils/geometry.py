@@ -1,7 +1,7 @@
 """Geometry utility functions for scene building."""
 
-from pathlib import Path
 import math
+from pathlib import Path
 from typing import Iterable
 
 import matplotlib.pyplot as plt
@@ -108,6 +108,53 @@ def are_boundaries_close(
     if distance is None:
         return False
     return distance <= max_distance
+
+
+def nearest_boundary_segment_orientation(
+    polygon: Polygon,
+    target: BaseGeometry,
+) -> tuple[tuple[float, float], tuple[float, float], tuple[float, float]] | None:
+    """Return the exterior segment nearest to ``target`` and its direction/normal.
+
+    The direction vector runs from the segment start to end and is normalized.
+    The normal is a unit vector pointing outward based on the exterior ring
+    winding (CCW → left-hand normal, CW → right-hand normal).
+    """
+    if polygon.is_empty or target.is_empty:
+        return None
+
+    coords = list(polygon.exterior.coords)
+    if len(coords) < 2:
+        return None
+
+    closest: tuple[tuple[float, float], tuple[float, float]] | None = None
+    min_distance = math.inf
+
+    for idx in range(len(coords) - 1):
+        start = coords[idx]
+        end = coords[idx + 1]
+        segment = LineString([start, end])
+        distance = segment.distance(target)
+        if distance < min_distance:
+            min_distance = distance
+            closest = (start, end)
+
+    if closest is None:
+        return None
+
+    (x1, y1), (x2, y2) = closest
+    dx = x2 - x1
+    dy = y2 - y1
+    length = math.hypot(dx, dy)
+    if length == 0.0:
+        return None
+
+    direction = (dx / length, dy / length)
+    normal = (
+        (direction[1], -direction[0]) if polygon.exterior.is_ccw else (-direction[1], direction[0])
+    )
+
+    return (x1, y1), (x2, y2), direction, normal
 
 
 def distance_to_box_2d(
@@ -241,7 +288,7 @@ def _perpendicular_distance(point: Vector2, line_start: Vector2, line_end: Vecto
 
     # Calculate perpendicular distance using cross product formula
     numerator = abs(dx * (line_start.y - point.y) - (line_start.x - point.x) * dy)
-    denominator = (dx ** 2 + dy ** 2) ** 0.5
+    denominator = (dx**2 + dy**2) ** 0.5
 
     return numerator / denominator
 
@@ -312,7 +359,7 @@ def _vw_simplify(vertices: list[Vector2], epsilon: float) -> list[Vector2]:
     # Each entry: (index, vertex, area)
     indexed_vertices = []
     for i, v in enumerate(vertices):
-        indexed_vertices.append([i, v, float('inf')])
+        indexed_vertices.append([i, v, float("inf")])
 
     # Calculate initial areas for each vertex
     for i in range(1, len(indexed_vertices) - 1):
@@ -324,7 +371,7 @@ def _vw_simplify(vertices: list[Vector2], epsilon: float) -> list[Vector2]:
     # Iteratively remove vertices with smallest area
     while len(indexed_vertices) > 3:
         # Find vertex with minimum area
-        min_area = float('inf')
+        min_area = float("inf")
         min_idx = -1
 
         for i in range(1, len(indexed_vertices) - 1):
@@ -343,7 +390,11 @@ def _vw_simplify(vertices: list[Vector2], epsilon: float) -> list[Vector2]:
         if min_idx > 0 and min_idx < len(indexed_vertices):
             prev_v = indexed_vertices[min_idx - 1][1]
             curr_v = indexed_vertices[min_idx][1]
-            next_v = indexed_vertices[(min_idx + 1) % len(indexed_vertices)][1] if min_idx + 1 < len(indexed_vertices) else indexed_vertices[0][1]
+            next_v = (
+                indexed_vertices[(min_idx + 1) % len(indexed_vertices)][1]
+                if min_idx + 1 < len(indexed_vertices)
+                else indexed_vertices[0][1]
+            )
 
             if min_idx < len(indexed_vertices) - 1:
                 indexed_vertices[min_idx][2] = _triangle_area(prev_v, curr_v, next_v)
@@ -399,10 +450,7 @@ def remove_collinear_points(vertices: list[Vector2], epsilon: float = 1e-10) -> 
 
 
 def simplify_polygon(
-    vertices: list[Vector2],
-    epsilon: float = 1e-10,
-    strategy: str = "rdp",
-    verbose: bool = False
+    vertices: list[Vector2], epsilon: float = 1e-10, strategy: str = "rdp", verbose: bool = False
 ) -> list[Vector2]:
     """Simplify a polygon using specified algorithm.
 
@@ -534,7 +582,7 @@ def save_polygon_image(
                 xytext=(5, 5),
                 textcoords="offset points",
                 fontsize=10,
-                color="darkred"
+                color="darkred",
             )
 
     # Set equal aspect ratio and add grid
