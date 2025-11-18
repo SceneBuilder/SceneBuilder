@@ -30,7 +30,11 @@ from scene_builder.definition.scene import Object, Room, Scene, Vector2, find_sh
 from scene_builder.importer import objaverse_importer, test_asset_importer
 from scene_builder.logging import logger
 from scene_builder.tools.material_applicator import texture_floor_mesh
-from scene_builder.utils.blender import SceneSwitcher
+from scene_builder.utils.blender import (
+    SceneSwitcher,
+    configure_gpu_backend,
+    optimize_scene_for_gpu,
+)
 from scene_builder.utils.conversions import pydantic_to_dict
 from scene_builder.utils.file import get_filename
 from scene_builder.utils.floorplan import (
@@ -1636,7 +1640,7 @@ def _configure_output_image(format: str, resolution: int):
     bpy.context.scene.render.resolution_percentage = 100
 
 
-def _configure_render_settings(engine: str = None, samples: int = 256, enable_gpu: bool = False):
+def _configure_render_settings(engine: str = None, samples: int = 256, enable_gpu: bool = True):
     """Selects a compatible render engine and configures render settings."""
 
     available_engines = ["BLENDER_EEVEE", "BLENDER_WORKBENCH", "CYCLES"]
@@ -1680,20 +1684,8 @@ def _configure_render_settings(engine: str = None, samples: int = 256, enable_gp
 
     # Enable GPU rendering for Cycles if requested
     if enable_gpu and bpy.context.scene.render.engine == "CYCLES":
-        try:
-            # NOTE: seems to fail here
-            prefs = bpy.context.preferences.addons["cycles"].preferences
-            prefs.compute_device_type = "CUDA"  # Try CUDA first
-            bpy.context.scene.cycles.device = "GPU"
-        except Exception:
-            # Fallback if CUDA not available or addon not found
-            try:
-                prefs = bpy.context.preferences.addons["cycles"].preferences
-                prefs.compute_device_type = "OPENCL"
-                bpy.context.scene.cycles.device = "GPU"
-            except Exception:
-                # GPU acceleration not available, continue with CPU
-                pass
+        configure_gpu_backend()
+        optimize_scene_for_gpu(bpy.context.scene)
 
 
 def _setup_top_down_camera(auto_zoom: bool = True, margin: float = 2.0):
