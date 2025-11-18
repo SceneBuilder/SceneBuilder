@@ -1,9 +1,12 @@
 import asyncio
+import os
 from pathlib import Path
 
 import pytest
 from rich import print as rprint
 
+from scene_builder.config import DEBUG
+from scene_builder.logging import configure_logging
 from scene_builder.decoder.blender import blender
 from scene_builder.decoder.blender.blender import parse_room_definition, parse_scene_definition
 from scene_builder.definition.plan import RoomPlan
@@ -30,11 +33,15 @@ linting_options = LintingOptions(rules=(WallOverlapRule(),))
 # single
 # TEST_CASE = "test_single_room_design_workflow_bar"
 TEST_CASE = "test_single_room_design_workflow_classroom"
+# TEST_CASE = "test_single_room_design_workflow_garage"
+# TEST_CASE = "test_single_room_design_workflow_gym"
 
 # multi
 # TEST_CASE = "test_multi_room_design_workflow_recording_studio"
 
 TEST_ROOM_PATH = Path(__file__).resolve().parents[1] / "test_output" / f"{TEST_CASE}.yaml"
+
+configure_logging("INFO" if not DEBUG else "DEBUG")
 
 
 def test_lint_room_from_yaml_file():
@@ -101,6 +108,22 @@ def test_auto_resolution_from_yaml_file(options=None):
     state = RoomDesignState(room=room, room_plan=RoomPlan(room_description="test"))
     resolver = IssueResolver(state=state, max_attempts=1, console=None)
     results = asyncio.run(resolver.attempt_auto_resolution(tracker, issue_lookup))
+    if DEBUG:
+        rprint("[bold cyan]Auto-resolution actions:[/]")
+        for res in results:
+            rprint(
+                {
+                    "resolved": res.resolved,
+                    "object_id": res.object_id,
+                    "action": res.action_desc,
+                    "rationale": res.rationale,
+                    "adjustment": res.adjustment,
+                }
+            )
+        if tracker.actions:
+            rprint("[bold cyan]Tracker actions:[/]")
+            for action in tracker.actions:
+                rprint(action.model_dump())
     apply_resolution_actions(room, results)
 
     # Lint and log/visualize state (after)
@@ -122,8 +145,8 @@ def test_auto_resolution_from_yaml_file(options=None):
 if __name__ == "__main__":
     # test_lint_room_from_yaml_file()
     # test_lint_scene_from_yaml_file()
-    # test_auto_resolution_from_yaml_file()
-    test_auto_resolution_from_yaml_file(linting_options)
+    test_auto_resolution_from_yaml_file()
+    # test_auto_resolution_from_yaml_file(linting_options)
 
     # # Allow running this test module directly
     # raise SystemExit(pytest.main([str(Path(__file__).resolve())]))
