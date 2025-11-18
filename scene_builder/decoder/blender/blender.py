@@ -1821,6 +1821,7 @@ def _setup_egocentric_camera(
     fallback_distance: float = 5.0,
     default_height: float = 1.6,
     track_target: Optional[bpy.types.Object] = None,
+    preserve_existing: bool = False,
 ):
     """Sets up a perspective camera from a first-person viewpoint.
 
@@ -1828,9 +1829,10 @@ def _setup_egocentric_camera(
     continuously points at that object instead of computing orientation manually.
     """
 
-    for obj in bpy.context.scene.objects:
-        if obj.type == "CAMERA":
-            bpy.data.objects.remove(obj, do_unlink=True)
+    if not preserve_existing:
+        for obj in bpy.context.scene.objects:
+            if obj.type == "CAMERA":
+                bpy.data.objects.remove(obj, do_unlink=True)
 
     bounds = calculate_scene_bounds()
 
@@ -2259,27 +2261,6 @@ def _ensure_preview_camera(scene: bpy.types.Scene) -> bpy.types.Object:
     return camera
 
 
-def _position_preview_camera(
-    camera: bpy.types.Object, center: Vector, radius: float, angle_degrees: float
-):
-    distance = max(radius * 2.2, 2.0)
-    height = max(center.z + radius * 0.6, center.z + 0.5)
-    angle = math.radians(angle_degrees)
-
-    camera.location = Vector(
-        (
-            center.x + math.cos(angle) * distance,
-            center.y + math.sin(angle) * distance,
-            height,
-        )
-    )
-
-    # NOTE: direction handling is offloaded to `_apply_camera_track()`.
-    # If no tracking constraints exist, raise a warning
-    if not any(c.type == "LOCKED_TRACK" for c in getattr(camera, "constraints", [])):
-        logger.warning("Direction constraint not found for preview camera")
-
-
 def _render_preview_rotation(
     scene: bpy.types.Scene,
     augmentor: _ObjectAugmentor,
@@ -2297,22 +2278,41 @@ def _render_preview_rotation(
         return None
 
     original_camera = scene.camera
-    preview_camera = _ensure_preview_camera(scene)
 
     saved_paths: list[Path] = []
 
-    scene.camera = preview_camera
+    # Reuse the egocentric camera framing for preview rotation
+    track_target = None
+    if augmentor.has_targets:
+        track_target = augmentor._target_pairs[0][1]
+
+    _setup_egocentric_camera(track_target=track_target, preserve_existing=True)
+    preview_camera = bpy.context.scene.camera
     augmentor.update_camera(preview_camera)
 
-    # Track the target object if exists
-    if augmentor.has_targets:
-        first_target = augmentor._target_pairs[0][1]
-        _apply_camera_track(preview_camera, first_target)
+    # Temporarily spin targets around Z for each requested angle
+    original_rotations = {
+        obj.name: obj.rotation_euler.copy()
+        for _, obj in augmentor._target_pairs
+        if hasattr(obj, "rotation_euler")
+    }
 
     for angle in angles:
-        _position_preview_camera(preview_camera, center, radius, angle)
+        for _, obj in augmentor._target_pairs:
+            base_rot = original_rotations.get(obj.name)
+            if base_rot is None:
+                continue
+            rot = base_rot.copy()
+            rot.z = base_rot.z + math.radians(angle)
+            obj.rotation_euler = rot
         angle_path = f"{output_path}_rot_{angle:03d}.{image_format.lower()}"
         saved_paths.append(render_to_file(angle_path))
+
+    # Restore original orientations
+    for _, obj in augmentor._target_pairs:
+        base_rot = original_rotations.get(obj.name)
+        if base_rot is not None:
+            obj.rotation_euler = base_rot
 
     # Restore camera to original
     scene.camera = original_camera

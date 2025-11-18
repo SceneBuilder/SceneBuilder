@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import logging
+import re
+from pathlib import Path
 
 from pydantic import BaseModel
 from rich.console import Console
 
 from scene_builder.definition.scene import Vector3
+from scene_builder.decoder.blender import blender
+from scene_builder.utils.pai import transform_paths_to_binary
 from scene_builder.validation.models import LintIssue, LintIssueTicket
 from scene_builder.validation.tracker import IssueTracker
 from scene_builder.workflow.agents import issue_resolution_agent
@@ -115,11 +119,15 @@ class IssueResolver:
         if issue.hint:
             prompt_parts.append(f"Hint: {issue.hint}")
         prompt_parts.append(f"Attempts so far: {ticket.retries - 1}")
+        visuals = self._render_issue_visuals(issue)
         if object_state_json:
             prompt_parts.append("Current object state:")
             prompt_parts.append(f"```json\n{object_state_json}\n```")
         else:
             prompt_parts.append("The issue applies to the overall room context.")
+        if visuals:
+            prompt_parts.append("Relevant visuals:")
+            prompt_parts.extend(visuals)
         if ticket.actions:
             prompt_parts.append("Recent actions:")
             prompt_parts.extend(f"- {action}" for action in ticket.actions[-3:])
@@ -158,3 +166,33 @@ class IssueResolver:
         result.ticket_id = ticket.issue_id
 
         return result
+
+    def _render_issue_visuals(self, issue: LintIssue) -> list[object]:
+        """
+        Render object-focused visuals (optionally with augmentations) to guide the resolver.
+        Returns a list of BinaryContent or similar media-friendly payloads.
+        """
+        object_id = issue.object_id
+        if object_id is None:
+            return []
+
+        targets = [oid for oid in re.split(r"[;,\s]+", object_id) if oid]
+        output_dir = Path("test_output/auto_resolver") / self.state.room.id
+        output_dir.mkdir(parents=True, exist_ok=True)
+        augmentations = issue.data.get("requested_augmentations") if issue.data else None
+        augmentations += ["highlight", "show_id"]  # DEBUG?
+
+        # blender.parse_room_definition(self.state.room, with_walls="translucent")
+        render_path = blender.create_object_visualization(
+            scene=self.state.room.id,
+            output_dir=str(output_dir),
+            target_objects=targets,
+            augmentations=augmentations or [],
+            view="egocentric",
+            show_grid=True,
+        )
+
+        if render_path is None:
+            return []
+
+        return transform_paths_to_binary([render_path])

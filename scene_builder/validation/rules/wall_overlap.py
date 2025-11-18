@@ -61,16 +61,8 @@ class WallOverlapRule(LintRule):
             if inside and (clearance <= 0.0 or distance_to_boundary >= clearance):
                 continue
 
-            message = f"Object {lint_obj.id}'s footprint intersects the room boundary by {distance_to_boundary:.3f} m."
+            is_piercing, orthogonal_delta = is_long_edge_piercing_wall(polygon, footprint)
 
-            is_piercing, orthogonal_delta = is_long_edge_piercing_wall
-            if is_piercing:
-                hint = (
-                    "The object's long edge seems to pierce through the wall, suggesting incorrect yaw angle.\n"
-                    "Use `preview_rotation` augmentation to confirm whether this is the case."
-                )
-            else:
-                hint = f"Move {lint_obj.id} inward by {(distance_to_boundary):.3f} m."
             min_x, min_y, max_x, max_y = lint_obj.footprint.bounds
             data: dict[str, object] = {
                 "footprint_bounds": (min_x, min_y, max_x, max_y),
@@ -79,6 +71,18 @@ class WallOverlapRule(LintRule):
             }
             if boundary_payload is not None:
                 data["room_boundary"] = boundary_payload
+            if is_piercing:
+                data["requested_augmentations"] = ["preview_rotation"]
+
+            message = f"Object {lint_obj.id}'s footprint intersects the room boundary by {distance_to_boundary:.3f} m."
+
+            if is_piercing:
+                hint = (
+                    "The object's long edge seems to pierce through the wall, suggesting incorrect yaw angle.\n"
+                    "Use `preview_rotation` augmentation to confirm whether this is the case."
+                )
+            else:
+                hint = f"Move {lint_obj.id} inward by {(distance_to_boundary):.3f} m."
 
             yield LintIssue(
                 code=self.code,
