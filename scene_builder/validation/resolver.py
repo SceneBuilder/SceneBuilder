@@ -8,7 +8,9 @@ from pathlib import Path
 
 from rich.console import Console
 
+from scene_builder.config import DEBUG
 from scene_builder.decoder.blender import blender
+# from scene_builder.logging import configure_logging, logger
 from scene_builder.utils.pai import transform_paths_to_binary
 from scene_builder.validation.heuristics import HEURISTIC_RESOLVERS
 from scene_builder.validation.models import (
@@ -114,6 +116,14 @@ class IssueResolver:
         else:
             prompt_parts.append("The issue applies to the overall room context.")
         if visuals:
+            # If preview_rotation was requested, tell the agent how to read the frames.
+            if issue.data and "requested_augmentations" in issue.data:
+                if "preview_rotation" in issue.data["requested_augmentations"]:
+                    prompt_parts.append(
+                        "Attached rotation preview (frames ordered: top-left 0°, "
+                        "top-right 90°, bottom-left 180°, bottom-right 270°). "
+                        "Inspect the images before replying."
+                    )
             prompt_parts.append("Relevant visuals:")
             prompt_parts.extend(visuals)
         if ticket.actions:
@@ -169,7 +179,8 @@ class IssueResolver:
         output_dir = Path("test_output/auto_resolver") / self.state.room.id
         output_dir.mkdir(parents=True, exist_ok=True)
         augmentations = issue.data.get("requested_augmentations") if issue.data else None
-        augmentations += ["highlight", "show_id"]  # DEBUG?
+        if augmentations:
+            augmentations += ["highlight", "show_id"]  # DEBUG?
 
         # blender.parse_room_definition(self.state.room, with_walls="translucent")
         render_path = blender.create_object_visualization(
