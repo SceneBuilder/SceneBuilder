@@ -65,7 +65,6 @@ def classify_door_type(
     else:
         return "exterior"
 
-################## debug temporarily ##################
 def _project_point_onto_line_segment(point, line_start, line_end):
     """Project a point onto a line segment and return the projection point and parameter t.
     
@@ -100,6 +99,69 @@ def _project_point_onto_line_segment(point, line_start, line_end):
     return Vector2(x=proj_x, y=proj_y), t
 
 
+def _split_edge_by_door_segments(edge_start, edge_end, door_segments):
+    """Split an edge into door-touching and non-touching segments.
+    
+    Args:
+        edge_start: Start point of the edge (Vector2)
+        edge_end: End point of the edge (Vector2)
+        door_segments: List of door touching segments as [(start, end), ...]
+    
+    Returns:
+        List of tuples: [(segment_start, segment_end, is_door_opening), ...]
+        where is_door_opening=True means this segment touches a door
+    """
+    if not door_segments:
+        return [(edge_start, edge_end, False)]
+    
+    door_ranges = []
+    for seg_start, seg_end in door_segments:
+        _, t_start = _project_point_onto_line_segment(seg_start, edge_start, edge_end)
+        _, t_end = _project_point_onto_line_segment(seg_end, edge_start, edge_end)
+        if t_start > t_end:
+            t_start, t_end = t_end, t_start
+        door_ranges.append((t_start, t_end))
+    
+    door_ranges.sort()
+    merged_ranges = []
+    for t_start, t_end in door_ranges:
+        if merged_ranges and t_start <= merged_ranges[-1][1]:
+            merged_ranges[-1] = (merged_ranges[-1][0], max(merged_ranges[-1][1], t_end))
+        else:
+            merged_ranges.append((t_start, t_end))
+    
+    result_segments = []
+    current_t = 0.0
+    
+    for door_t_start, door_t_end in merged_ranges:
+        # Add solid segment before door (if any)
+        if current_t < door_t_start:
+            seg_start = _interpolate_point(edge_start, edge_end, current_t)
+            seg_end = _interpolate_point(edge_start, edge_end, door_t_start)
+            result_segments.append((seg_start, seg_end, False))
+        
+        seg_start = _interpolate_point(edge_start, edge_end, door_t_start)
+        seg_end = _interpolate_point(edge_start, edge_end, door_t_end)
+        result_segments.append((seg_start, seg_end, True))
+        
+        current_t = door_t_end
+    
+    if current_t < 1.0:
+        seg_start = _interpolate_point(edge_start, edge_end, current_t)
+        seg_end = edge_end
+        result_segments.append((seg_start, seg_end, False))
+    
+    return result_segments
+
+# let's not move this function since it's for def _split_edge_by_door_segments specifically
+def _interpolate_point(start, end, t):
+    """Interpolate between two points using parameter t (0 to 1)."""
+    return Vector2(
+        x=start.x + t * (end.x - start.x),
+        y=start.y + t * (end.y - start.y)
+    )
+
+
 def _find_room_edges_touching_interior_doors(rooms: list[Room], threshold: float = 0.025):
     """Find room wall edges that are adjacent to interior door boundaries.
     
@@ -115,11 +177,14 @@ def _find_room_edges_touching_interior_doors(rooms: list[Room], threshold: float
     """
     interior_doors = []
     for room in rooms:
-        if room.structure:
-            for struct in room.structure:
-                if struct.type == "door" and struct.boundary and len(struct.boundary) >= 3:
+        r_structure = room.get("structure") if isinstance(room, dict) else getattr(room, "structure", None)
+        if r_structure:
+            for struct in r_structure:
+                s_type = struct.get("type") if isinstance(struct, dict) else getattr(struct, "type", None)
+                s_boundary = struct.get("boundary") if isinstance(struct, dict) else getattr(struct, "boundary", None)
+                if s_type == "door" and s_boundary and len(s_boundary) >= 3:
                     door_boundary = []
-                    for v in struct.boundary:
+                    for v in s_boundary:
                         if isinstance(v, dict):
                             door_boundary.append(Vector2(x=v["x"], y=v["y"]))
                         else:
@@ -131,9 +196,10 @@ def _find_room_edges_touching_interior_doors(rooms: list[Room], threshold: float
                         if door_polygon.is_valid and not door_polygon.is_empty:
                             room_polygons = []
                             for r in rooms:
-                                if r.boundary and len(r.boundary) >= 3:
+                                r_boundary = r.get("boundary") if isinstance(r, dict) else getattr(r, "boundary", None)
+                                if r_boundary and len(r_boundary) >= 3:
                                     try:
-                                        rb = [Vector2(x=v["x"], y=v["y"]) if isinstance(v, dict) else v for v in r.boundary]
+                                        rb = [Vector2(x=v["x"], y=v["y"]) if isinstance(v, dict) else v for v in r_boundary]
                                         rb_xy = [(v.x, v.y) for v in rb]
                                         room_poly = Polygon(rb_xy)
                                         if room_poly.is_valid and not room_poly.is_empty:

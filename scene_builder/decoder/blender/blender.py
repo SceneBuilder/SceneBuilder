@@ -35,6 +35,8 @@ from scene_builder.utils.conversions import pydantic_to_dict
 from scene_builder.utils.file import get_filename
 from scene_builder.utils.floorplan import (
     _find_adjacent_wall_segments_from_centers_to_edges,
+    _find_room_edges_touching_interior_doors,
+    _split_edge_by_door_segments,
     calculate_bounds_for_objects,
     find_nearest_wall_point,
     get_longest_edge_angle,
@@ -2599,7 +2601,6 @@ def create_room_walls(
 
     exterior_door_cutout_polygons: list[tuple[str, list[tuple[float, float]]]] = []
 
-    # Collect all room boundaries for window positioning
     all_room_boundaries = []
     all_room_polygons = []
     for room in rooms:
@@ -2642,8 +2643,8 @@ def create_room_walls(
                 exterior_door_cutout_polygons.append((str(s_id), boundary_xy))
                 logger.debug(f"Door {s_id}: added to exterior door cutouts")
 
-    # Detect adjacent walls to skip
     adjacent_segments = _find_adjacent_wall_segments_from_centers_to_edges(rooms, threshold=0.025)
+    door_touching_segments = _find_room_edges_touching_interior_doors(rooms, threshold=0.025)
 
     for room_idx, room in enumerate(rooms):
         r_category = room.get("category")
@@ -2657,13 +2658,15 @@ def create_room_walls(
         if not r_boundary or len(r_boundary) < 3:
             continue
 
-        # Support Vector2 objects or dict-like points
         boundary_points = []
+        boundary_vec2 = []
         for p in r_boundary:
             if hasattr(p, "x"):
                 boundary_points.append((p.x, p.y))
+                boundary_vec2.append(p)
             else:
                 boundary_points.append((p["x"], p["y"]))
+                boundary_vec2.append(Vector2(x=p["x"], y=p["y"]))
 
         room_id = getattr(room, "id", None)
         if room_id is None and isinstance(room, dict):
@@ -2689,16 +2692,57 @@ def create_room_walls(
         for i in range(num_verts):
             next_i = (i + 1) % num_verts
 
-            # Skip this edge if it's adjacent to another room
             edge_key = (room_idx, i)
             if edge_key in adjacent_segments:
                 logger.debug(f"Skipping wall edge {i} for room {room_id} (adjacent to another room)")
                 continue
-
-            face = bm.faces.new(
-                [bottom_verts[i], bottom_verts[next_i], top_verts[next_i], top_verts[i]]
-            )
-            face.normal_update()
+            
+            door_segments = door_touching_segments.get(edge_key, [])
+            
+            edge_start = boundary_vec2[i]
+            edge_end = boundary_vec2[next_i]
+            sub_segments = _split_edge_by_door_segments(edge_start, edge_end, door_segments)
+            
+            for seg_start, seg_end, is_door_opening in sub_segments:
+                if is_door_opening:
+                    header_bottom_verts = [
+                        bm.verts.new((seg_start.x, seg_start.y, DEFAULT_DOOR_HEIGHT)),
+                        bm.verts.new((seg_end.x, seg_end.y, DEFAULT_DOOR_HEIGHT))
+                    ]
+                    header_top_verts = [
+                        bm.verts.new((seg_start.x, seg_start.y, wall_height)),
+                        bm.verts.new((seg_end.x, seg_end.y, wall_height))
+                    ]
+                    bm.verts.ensure_lookup_table()
+                    
+                    face = bm.faces.new([
+                        header_bottom_verts[0],
+                        header_bottom_verts[1],
+                        header_top_verts[1],
+                        header_top_verts[0]
+                    ])
+                    face.normal_update()
+                else:
+                    wall_bottom_verts = [
+                        bm.verts.new((seg_start.x, seg_start.y, 0)),
+                        bm.verts.new((seg_end.x, seg_end.y, 0))
+                    ]
+                    wall_top_verts = [
+                        bm.verts.new((seg_start.x, seg_start.y, wall_height)),
+                        bm.verts.new((seg_end.x, seg_end.y, wall_height))
+                    ]
+                    bm.verts.ensure_lookup_table()
+                    
+                    face = bm.faces.new([
+                        wall_bottom_verts[0],
+                        wall_bottom_verts[1],
+                        wall_top_verts[1],
+                        wall_top_verts[0]
+                    ])
+                    face.normal_update()
+            
+            if door_segments:
+                logger.debug(f"Created segmented wall for edge {i} of room {room_id}: {len(sub_segments)} segments, {sum(1 for _, _, is_door in sub_segments if is_door)} door openings")
 
         bm.to_mesh(mesh)
         bm.free()
@@ -2768,7 +2812,7 @@ def create_room_walls(
                                     randomize_type=True,
                                     randomize_material=True,
                                     randomize_colour=False,
-                                    colour=(0.8, 0.9, 1.0, 1.0),  # Light blue window
+                                    colour=(0.8, 0.9, 1.0, 1.0),  
                                 )
 
                     except Exception:
@@ -2795,7 +2839,7 @@ def create_room_walls(
                             randomize_type=True,
                             randomize_material=True,
                             randomize_colour=False,
-                            colour=(0.8, 0.9, 1.0, 1.0),  # Light blue window
+                            colour=(0.8, 0.9, 1.0, 1.0), 
                         )
 
                         if window_result:
