@@ -87,6 +87,31 @@ def longest_edge_direction(polygon: Polygon | list[Vector2]) -> tuple[float, flo
     return (dx / length, dy / length)
 
 
+def misalignment_angle(angle_deg: float) -> float:
+    """Fold an angle toward parallelism (0° means parallel/anti-parallel, 90° means orthogonal)."""
+    angle_norm = abs(angle_deg) % 360.0
+    if angle_norm > 180.0:
+        angle_norm = 360.0 - angle_norm
+    return min(angle_norm, 180.0 - angle_norm)
+
+
+def angle_between_unit_vectors(
+    a: tuple[float, float],
+    b: tuple[float, float],
+) -> float | None:
+    """Return the angle between two (ideally unit) 2D vectors in degrees."""
+    ax, ay = a
+    bx, by = b
+    len_a = math.hypot(ax, ay)
+    len_b = math.hypot(bx, by)
+    if len_a == 0.0 or len_b == 0.0:
+        return None
+
+    dot = (ax * bx + ay * by) / (len_a * len_b)
+    dot = max(-1.0, min(1.0, dot))  # clamp for numerical stability
+    return math.degrees(math.acos(dot))
+
+
 def boundary_to_geometry(boundary: Iterable[Vector2] | None) -> BaseGeometry | None:
     """Convert a boundary definition into an appropriate Shapely geometry."""
     if not boundary:
