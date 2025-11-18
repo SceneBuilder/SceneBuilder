@@ -53,6 +53,11 @@ model = GoogleModel("gemini-2.5-pro")
 #     provider=OpenAIProvider(base_url=VLLM_BASE_URL),
 # )
 
+fast_model = OpenAIChatModel(
+    "openrouter/sherlock-dash-alpha",
+    provider=openrouter_provider,
+)
+
 obj_db = ObjectDatabase()
 
 generic_agent = Agent(
@@ -121,7 +126,8 @@ room_design_agent = Agent(
 )
 
 issue_resolution_agent = Agent(
-    model,
+    # model,
+    fast_model,
     system_prompt=ISSUE_RESOLUTION_AGENT_PROMPT,
 )
 
