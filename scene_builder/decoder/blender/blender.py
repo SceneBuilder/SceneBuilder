@@ -62,7 +62,6 @@ DEFAULT_WINDOW_DEPTH = 0.05  # Window thickness into wall (meters)
 
 OBJECT_PREVIEW_CAMERA_NAME = "ObjectPreviewCamera"
 OBJECT_LABEL_MATERIAL_NAME = "ObjectLabelMaterial"
-OBJECT_HIGHLIGHT_PASS_INDEX = 101
 
 
 @dataclass
@@ -1554,7 +1553,7 @@ def _configure_output_image(format: str, resolution: int):
 def _configure_render_settings(engine: str = None, samples: int = 256, enable_gpu: bool = True):
     """Selects a compatible render engine and configures render settings."""
 
-    available_engines = ["BLENDER_EEVEE", "BLENDER_WORKBENCH", "CYCLES"]
+    available_engines = ["BLENDER_EEVEE_NEXT", "EEVEE", "BLENDER_WORKBENCH", "CYCLES"]
     # try:
     #     engine_prop = bpy.context.scene.render.bl_rna.properties["engine"]
     #     available_engines = [item.identifier for item in engine_prop.enum_items]
@@ -1960,8 +1959,6 @@ class _ObjectAugmentor:
         self.target_ids = target_ids
         self.augmentations = augmentations
         self._target_pairs = self._resolve_targets()
-        self._original_pass_indices: dict[str, int] = {}
-        self._view_layer_state: bool | None = None
         self._text_objects: list[bpy.types.Object] = []
 
     @property
@@ -1982,25 +1979,18 @@ class _ObjectAugmentor:
             seen.add(blender_obj.name)
         return resolved
 
-    def prepare_highlight(self, view_layer: bpy.types.ViewLayer) -> int | None:
+    def prepare_highlight(self) -> list[str]:
         if "highlight" not in self.augmentations:
-            return None
+            return []
 
         mesh_objects: list[bpy.types.Object] = []
         for _, obj in self._target_pairs:
             mesh_objects.extend(_collect_mesh_descendants(obj))
 
         if not mesh_objects:
-            return None
+            return []
 
-        self._view_layer_state = view_layer.use_pass_object_index
-        view_layer.use_pass_object_index = True
-
-        for mesh in mesh_objects:
-            self._original_pass_indices[mesh.name] = mesh.pass_index
-            mesh.pass_index = OBJECT_HIGHLIGHT_PASS_INDEX
-
-        return OBJECT_HIGHLIGHT_PASS_INDEX
+        return [mesh.name for mesh in mesh_objects]
 
     def create_labels(self, camera: bpy.types.Object | None):
         if "show_id" not in self.augmentations or camera is None:
@@ -2049,14 +2039,6 @@ class _ObjectAugmentor:
         return center, 1.0
 
     def cleanup(self):
-        for name, original_index in self._original_pass_indices.items():
-            obj = bpy.data.objects.get(name)
-            if obj:
-                obj.pass_index = original_index
-
-        if self._view_layer_state is not None:
-            bpy.context.view_layer.use_pass_object_index = self._view_layer_state
-
         for label in list(self._text_objects):
             obj = bpy.data.objects.get(label.name)
             if obj:
@@ -2267,8 +2249,7 @@ def create_object_visualization(
         )
 
         with suppress_blender_logs():
-            # _configure_render_settings()  # OG
-            _configure_render_settings(engine="CYCLES")  # ALT
+            _configure_render_settings(engine="BLENDER_EEVEE_NEXT")
             _configure_output_image(format, resolution)
 
             if view == "top_down":
@@ -2288,11 +2269,11 @@ def create_object_visualization(
                 _create_grid()
 
         scene_obj = bpy.context.scene
-        highlight_index = augmentor.prepare_highlight(bpy.context.view_layer)
+        highlight_targets = augmentor.prepare_highlight()
 
         with suppress_blender_logs():
             setup_lighting_foundation(scene_obj, background_color=background_color)
-            setup_post_processing(scene_obj, highlight_pass_index=highlight_index)
+            setup_post_processing(scene_obj, highlight_targets=highlight_targets)
 
         augmentor.create_labels(scene_obj.camera)
 
@@ -2337,13 +2318,14 @@ def setup_lighting_foundation(
 ):
     """Sets up global illumination and world environment lighting."""
     print("Setting up foundation lighting...")
-    scene.render.engine = "CYCLES"
-    cycles_settings = scene.cycles
+    # Only tweak Cycles settings when that engine is active; otherwise retain caller's engine.
+    if scene.render.engine == "CYCLES":
+        cycles_settings = scene.cycles
 
-    # Configure GI bounces
-    cycles_settings.max_bounces = 6
-    cycles_settings.diffuse_bounces = 4
-    cycles_settings.glossy_bounces = 4
+        # Configure GI bounces
+        cycles_settings.max_bounces = 6
+        cycles_settings.diffuse_bounces = 4
+        cycles_settings.glossy_bounces = 4
 
     # Set up the world environment
     world = scene.world
@@ -2429,22 +2411,29 @@ def setup_lighting_foundation(
 
 def setup_post_processing(
     scene: bpy.types.Scene,
-    highlight_pass_index: int | None = None,
+    highlight_targets: list[str] | None = None,
     highlight_color: tuple[float, float, float, float] = (1.0, 0.65, 0.1, 1.0),
     enable_glare: bool = True,
 ):
     """Configures color management and compositor nodes for the final look.
 
-    Uses an ID Mask + Blur + Subtract + Multiply + Glare chain for object highlights,
+    Uses a Cryptomatte + Blur + Subtract + Multiply + Glare chain for object highlights,
     avoiding unsupported Dilate/Erode modes across Blender versions.
     """
     print("Setting up post-processing...")
     scene.view_settings.view_transform = "AgX"
     scene.view_settings.look = "AgX - Medium High Contrast"
 
-    # Enable object index pass if highlighting
+    highlight_targets = highlight_targets or []
+
+    # Enable cryptomatte object pass if highlighting
     view_layer = bpy.context.view_layer
-    view_layer.use_pass_object_index = highlight_pass_index is not None
+    use_highlight = bool(highlight_targets)
+    view_layer.use_pass_cryptomatte_object = use_highlight
+    if use_highlight:
+        # Depth > 2 helps robustness when multiple objects share a hash bucket
+        view_layer.pass_cryptomatte_depth = max(getattr(view_layer, "pass_cryptomatte_depth", 6), 6)
+        view_layer.use_pass_cryptomatte_accurate = True
     view_layer.update()
 
     # Ensure compositing is enabled
@@ -2482,14 +2471,33 @@ def setup_post_processing(
     final_socket = base_socket
 
     # Highlight chain if requested
-    if highlight_pass_index is not None:
-        id_mask = nodes.new("CompositorNodeIDMask")
-        id_mask.index = int(highlight_pass_index)
-        # Slightly cleaner edges
+    if use_highlight:
+        crypto = nodes.new("CompositorNodeCryptomatteV2")
+        crypto.location = (0, -200)
         try:
-            id_mask.use_antialiasing = True
+            crypto.scene = scene
         except Exception:
             pass
+        try:
+            crypto.layer = bpy.context.view_layer
+        except Exception:
+            try:
+                crypto.layer_name = bpy.context.view_layer.name
+            except Exception:
+                pass
+
+        unique_targets: list[str] = []
+        seen_ids: set[str] = set()
+        for identifier in highlight_targets:
+            if not identifier or identifier in seen_ids:
+                continue
+            unique_targets.append(identifier)
+            seen_ids.add(identifier)
+
+        if unique_targets:
+            crypto.matte_id = ", ".join(unique_targets)
+
+        matte_socket = crypto.outputs.get("Matte")
 
         blur = nodes.new("CompositorNodeBlur")
         blur.filter_type = "GAUSS"
@@ -2517,11 +2525,11 @@ def setup_post_processing(
         add_mix.blend_type = "ADD"
         add_mix.inputs[0].default_value = 1.0
 
-        # Wire up highlight chain
-        links.new(rlayers.outputs["IndexOB"], id_mask.inputs["ID value"])
-        links.new(id_mask.outputs["Alpha"], blur.inputs["Image"])
-        links.new(blur.outputs["Image"], sub.inputs[1])
-        links.new(id_mask.outputs["Alpha"], sub.inputs[2])
+        # Wire up highlight chain (using matte as mask)
+        if matte_socket is not None:
+            links.new(matte_socket, blur.inputs["Image"])
+            links.new(blur.outputs["Image"], sub.inputs[1])
+            links.new(matte_socket, sub.inputs[2])
         links.new(sub.outputs["Image"], color_mix.inputs[1])
         links.new(color_mix.outputs["Image"], glow.inputs["Image"])
 
