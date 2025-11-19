@@ -2563,30 +2563,28 @@ def setup_post_processing(
     if use_highlight:
         crypto = nodes.new("CompositorNodeCryptomatteV2")
         crypto.location = (0, -200)
+        try:
+            crypto.scene = scene
+        except Exception:
+            pass
+        try:
+            crypto.layer = bpy.context.view_layer
+        except Exception:
+            try:
+                crypto.layer_name = bpy.context.view_layer.name
+            except Exception:
+                pass
 
-        # Wire Render Layers to Cryptomatte
-        links.new(rlayers.outputs["Image"], crypto.inputs["Image"])
-        for output_name, input_name in zip(
-            ["CryptoObject00", "CryptoObject01", "CryptoObject02"],
-            ["Crypto 00", "Crypto 01", "Crypto 02"],
-        ):
-            if output_name in rlayers.outputs and input_name in crypto.inputs:
-                links.new(rlayers.outputs[output_name], crypto.inputs[input_name])
-
-        # Populate mattes from targets
+        unique_targets: list[str] = []
+        seen_ids: set[str] = set()
         for identifier in highlight_targets:
-            added = False
-            add_matte = getattr(crypto, "add_matte", None)
-            if callable(add_matte):
-                try:
-                    add_matte(identifier)
-                    added = True
-                except Exception:
-                    logger.warning(f"Failed to add cryptomatte ID '{identifier}' via add_matte()")
-            if not added:
-                matte_input = crypto.inputs.get("Matte ID")
-                if matte_input is not None and hasattr(matte_input, "default_value"):
-                    matte_input.default_value = identifier
+            if not identifier or identifier in seen_ids:
+                continue
+            unique_targets.append(identifier)
+            seen_ids.add(identifier)
+
+        if unique_targets:
+            crypto.matte_id = ", ".join(unique_targets)
 
         matte_socket = crypto.outputs.get("Matte")
 
