@@ -263,11 +263,11 @@ def _find_room_edges_touching_interior_doors(rooms: list[Room], threshold: float
 # this is centers to edges, not edges to edges
 def _find_adjacent_wall_segments_from_centers_to_edges(rooms: list[Room], threshold: float = 0.025):
     """Find segments of room walls that are adjacent to other room walls.
-    
+
     Args:
         rooms: List of Room objects or dicts with boundary data
         threshold: Distance threshold for considering walls adjacent (in meters)
-    
+
     Returns:
         Dictionary mapping (room_idx, edge_idx) to list of touching segments [(start, end), ...]
     """
@@ -275,71 +275,80 @@ def _find_adjacent_wall_segments_from_centers_to_edges(rooms: list[Room], thresh
     adjacent_segments = {}
     # check only rooms no structures
     for i, room1 in enumerate(rooms):
-
-        r1_boundary = room1.get("boundary") if isinstance(room1, dict) else getattr(room1, "boundary", None)
+        r1_boundary = (
+            room1.get("boundary") if isinstance(room1, dict) else getattr(room1, "boundary", None)
+        )
         if not r1_boundary or len(r1_boundary) < 3:
             continue
-            
+
         for edge_idx in range(len(r1_boundary)):
             p1 = r1_boundary[edge_idx]
             p2 = r1_boundary[(edge_idx + 1) % len(r1_boundary)]
-            
+
             # Convert to Vector2 if dict
             if isinstance(p1, dict):
                 p1 = Vector2(x=p1["x"], y=p1["y"])
             if isinstance(p2, dict):
                 p2 = Vector2(x=p2["x"], y=p2["y"])
-            
+
             touching_portions = []
-            
+
             # Compare with all other rooms
             for j, room2 in enumerate(rooms):
                 if i == j:  # Skip same room
                     continue
-                
-                r2_boundary = room2.get("boundary") if isinstance(room2, dict) else getattr(room2, "boundary", None)
+
+                r2_boundary = (
+                    room2.get("boundary")
+                    if isinstance(room2, dict)
+                    else getattr(room2, "boundary", None)
+                )
                 if not r2_boundary or len(r2_boundary) < 3:
                     continue
-                
+
                 # Convert to Vector2 if needed for are_boundaries_close
-                r1_boundary_vec2 = [Vector2(x=v["x"], y=v["y"]) if isinstance(v, dict) else v for v in r1_boundary]
-                r2_boundary_vec2 = [Vector2(x=v["x"], y=v["y"]) if isinstance(v, dict) else v for v in r2_boundary]
+                r1_boundary_vec2 = [
+                    Vector2(x=v["x"], y=v["y"]) if isinstance(v, dict) else v for v in r1_boundary
+                ]
+                r2_boundary_vec2 = [
+                    Vector2(x=v["x"], y=v["y"]) if isinstance(v, dict) else v for v in r2_boundary
+                ]
                 if not are_boundaries_close(r1_boundary_vec2, r2_boundary_vec2, threshold):
                     continue
-                
+
                 for edge2_idx in range(len(r2_boundary)):
                     q1 = r2_boundary[edge2_idx]
                     q2 = r2_boundary[(edge2_idx + 1) % len(r2_boundary)]
-                    
+
                     # Convert to Vector2 if dict
                     if isinstance(q1, dict):
                         q1 = Vector2(x=q1["x"], y=q1["y"])
                     if isinstance(q2, dict):
                         q2 = Vector2(x=q2["x"], y=q2["y"])
-                    
+
                     edge2 = LineString([(q1.x, q1.y), (q2.x, q2.y)])
-                    
+
                     # Calculate center point of edge1
                     center1_x = (p1.x + p2.x) / 2
                     center1_y = (p1.y + p2.y) / 2
                     center1_point = Point(center1_x, center1_y)
-                    
+
                     # Check if edge1's center is close to edge2
                     distance = center1_point.distance(edge2)
-                    
+
                     if distance <= threshold:
                         # edge1's center is close to edge2 - mark entire edge1 as touching
                         touching_portions.append((p1, p2))
                         break  # No need to check other edges of room2
-            
+
             if touching_portions:
                 adjacent_segments[(i, edge_idx)] = touching_portions
-    
+
     return adjacent_segments
 
 
 def plot_floor_plan(
-    rooms: list[Room], 
+    rooms: list[Room],
     output_path: str = "floor_plan.png",
     show_doors: bool = True,
     show_windows: bool = False,
@@ -348,9 +357,9 @@ def plot_floor_plan(
     adjacency_threshold: float = 0.05
 ):
     """Plot floor plan showing room boundaries with adjacent wall segments in green.
-    
+
     Note: Adjacent wall detection only considers room boundaries, NOT door/window structures.
-    
+
     Args:
         rooms: List of Room objects to plot
         output_path: Path to save the plot image
@@ -361,7 +370,7 @@ def plot_floor_plan(
         adjacency_threshold: Distance threshold for considering walls adjacent (default: 0.05m)
     """
     fig, ax = plt.subplots(figsize=(12, 12))
-    
+
     # Find adjacent wall segments if enabled
     adjacent_segments = []
     if show_adjacent_walls:
@@ -402,8 +411,8 @@ def plot_floor_plan(
             # Fill the room
             x = [v.x for v in room.boundary] + [room.boundary[0].x]
             y = [v.y for v in room.boundary] + [room.boundary[0].y]
-            ax.fill(x, y, color='lightblue', alpha=0.3)
-    
+            ax.fill(x, y, color="lightblue", alpha=0.3)
+
     # Plot interior doors and windows if enabled
     if show_doors or show_windows:
         # Build list of all room polygons for door classification (only if needed)
@@ -418,7 +427,7 @@ def plot_floor_plan(
                             all_room_polygons.append(room_polygon)
                     except Exception:
                         continue
-        
+
         # Plot interior doors and windows
         for room in rooms:
             if room.structure:
@@ -449,53 +458,59 @@ def plot_floor_plan(
     plt.close()
     print(f"Saved floor plan to {output_path}")
 
+
 ################## debug temporarily ##################
 def find_nearest_wall_point(window_center: Vector2, room_boundaries: list) -> Optional[Vector2]:
     """Find the nearest point on any room boundary (wall) from window center.
-    
+
     Args:
         window_center: Center point of the window
         room_boundaries: List of room boundary polygons (each as list of Vector2 or tuples)
-        
+
     Returns:
         Nearest point on wall as Vector2, or None if no boundaries found
     """
     nearest_point = None
-    min_distance = float('inf')
-    
+    min_distance = float("inf")
+
     for boundary in room_boundaries:
         if not boundary or len(boundary) < 3:
             continue
-            
+
         # Check each edge of the boundary
         for i in range(len(boundary)):
             # Handle both Vector2 and tuple formats
             p1 = boundary[i]
             p2 = boundary[(i + 1) % len(boundary)]
-            
+
             if isinstance(p1, (list, tuple)):
                 p1 = Vector2(x=p1[0], y=p1[1])
             if isinstance(p2, (list, tuple)):
                 p2 = Vector2(x=p2[0], y=p2[1])
-            
+
             # Calculate closest point on this edge
             dx = p2.x - p1.x
             dy = p2.y - p1.y
-            
+
             if dx == 0 and dy == 0:
                 closest = p1
             else:
-                t = ((window_center.x - p1.x) * dx + (window_center.y - p1.y) * dy) / (dx * dx + dy * dy)
+                t = ((window_center.x - p1.x) * dx + (window_center.y - p1.y) * dy) / (
+                    dx * dx + dy * dy
+                )
                 t = max(0, min(1, t))
                 closest = Vector2(x=p1.x + t * dx, y=p1.y + t * dy)
-            
-            distance = math.sqrt((closest.x - window_center.x)**2 + (closest.y - window_center.y)**2)
-            
+
+            distance = math.sqrt(
+                (closest.x - window_center.x) ** 2 + (closest.y - window_center.y) ** 2
+            )
+
             if distance < min_distance:
                 min_distance = distance
                 nearest_point = closest
-    
+
     return nearest_point
+
 
 def scale_boundary_for_cutout(
     boundary: list,
@@ -596,7 +611,10 @@ def scale_boundary_for_cutout(
         elif not scale_short_axis and not scale_long_axis:
             # Uniform scaling if neither axis-specific scaling is requested
             scaled_poly = affinity.scale(
-                boundary_poly, xfact=scale_short_factor, yfact=scale_short_factor, origin=centroid_coords
+                boundary_poly,
+                xfact=scale_short_factor,
+                yfact=scale_short_factor,
+                origin=centroid_coords,
             )
 
         # TEMP: visualization for debugging orthogonal scaling
@@ -624,9 +642,12 @@ def scale_boundary_for_cutout(
                 solid_capstyle="round",
                 zorder=2,
                 label=(
-                    "scaled (short + long axis)" if (scale_short_axis and scale_long_axis)
-                    else "scaled (short axis)" if scale_short_axis
-                    else "scaled (long axis)" if scale_long_axis
+                    "scaled (short + long axis)"
+                    if (scale_short_axis and scale_long_axis)
+                    else "scaled (short axis)"
+                    if scale_short_axis
+                    else "scaled (long axis)"
+                    if scale_long_axis
                     else "scaled (uniform)"
                 ),
             )
@@ -645,7 +666,9 @@ def scale_boundary_for_cutout(
 
             debug_dir = Path(__file__).resolve().parents[1] / "importer" / "msd" / "image_save"
             debug_dir.mkdir(parents=True, exist_ok=True)
-            debug_filename = f"{debug_prefix}_{debug_id}.png" if debug_id else f"{debug_prefix}_debug.png"
+            debug_filename = (
+                f"{debug_prefix}_{debug_id}.png" if debug_id else f"{debug_prefix}_debug.png"
+            )
             debug_path = debug_dir / debug_filename
 
             plt.savefig(debug_path, format="png", dpi=150)
@@ -668,7 +691,7 @@ def scale_boundary_for_cutout(
     return expanded_boundary
 
 
-def get_longest_edge_angle(polygon: Polygon | list[Vector2]) -> float:
+def longest_edge_angle(polygon: Polygon | list[Vector2]) -> float:
     """
     Calculate the angle of the longest edge in a polygon.
     Useful for determining the orientation of rectangular features like doors or windows.
@@ -930,7 +953,9 @@ def normalize_floor_plan_orientation(
     return rooms, correction_angle
 
 
-def calculate_bounds_for_objects(objects: list) -> tuple[float, float, float, float, float, float] | None:
+def calculate_bounds_for_objects(
+    objects: list,
+) -> tuple[float, float, float, float, float, float] | None:
     """Calculate bounding box for a list of Blender objects.
 
     Args:

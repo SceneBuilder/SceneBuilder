@@ -20,7 +20,7 @@ class LintingOptions:
     """Configuration options for lint execution."""
 
     floor_height: float = 0.0
-    wall_clearance: float = 0.05
+    wall_clearance: float = 0.00
     overlap_tolerance: float = 1e-3
     floor_tolerance: float = 0.01
     enabled_rules: set[str] | None = None

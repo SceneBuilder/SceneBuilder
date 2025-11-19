@@ -28,9 +28,9 @@ def configure_logging(level="INFO", sink=sys.stderr, format="{level: <9} {messag
     Returns:
         The configured logger instance.
     """
-    # Remove default handler and add custom one with specified format and level
-    logger.remove()
-    logger.add(sink, format=format, level=level)
+    # # Remove default handler and add custom one with specified format and level
+    # logger.remove()
+    # logger.add(sink, format=format, level=level)
     
     if enable_logfire:
         logfire.configure(

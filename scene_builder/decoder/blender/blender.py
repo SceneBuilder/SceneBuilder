@@ -30,7 +30,11 @@ from scene_builder.definition.scene import Object, Room, Scene, Vector2, find_sh
 from scene_builder.importer import objaverse_importer, test_asset_importer
 from scene_builder.logging import logger
 from scene_builder.tools.material_applicator import texture_floor_mesh
-from scene_builder.utils.blender import SceneSwitcher
+from scene_builder.utils.blender import (
+    SceneSwitcher,
+    configure_gpu_backend,
+    optimize_scene_for_gpu,
+)
 from scene_builder.utils.conversions import pydantic_to_dict
 from scene_builder.utils.file import get_filename
 from scene_builder.utils.floorplan import (
@@ -39,7 +43,7 @@ from scene_builder.utils.floorplan import (
     _split_edge_by_door_segments,
     calculate_bounds_for_objects,
     find_nearest_wall_point,
-    get_longest_edge_angle,
+    longest_edge_angle,
     scale_boundary_for_cutout,
 )
 from scene_builder.utils.geometry import calculate_bounds_2d, distance_to_box_2d, polygon_centroid
@@ -941,7 +945,6 @@ def _create_floor_mesh(
     return result
 
 
-
 def _create_window_cutout(
     wall_obj,
     apt_id: str,
@@ -1071,7 +1074,7 @@ def create_door_from_boundary(
     centroid = door_poly.centroid
     centroid_coords = (centroid.x, centroid.y)
 
-    rotation_angle = get_longest_edge_angle(door_poly)
+    rotation_angle = longest_edge_angle(door_poly)
 
     # Rotate polygon to axis-aligned orientation
     aligned_poly = affinity.rotate(
@@ -1158,7 +1161,7 @@ def create_window_from_boundary(
     centroid_coords = (centroid.x, centroid.y)
     window_center = Vector2(x=centroid.x, y=centroid.y)
 
-    rotation_angle = get_longest_edge_angle(window_poly)
+    rotation_angle = longest_edge_angle(window_poly)
 
     # Rotate polygon to axis-aligned orientation
     aligned_poly = affinity.rotate(
@@ -1548,7 +1551,7 @@ def _configure_output_image(format: str, resolution: int):
     bpy.context.scene.render.resolution_percentage = 100
 
 
-def _configure_render_settings(engine: str = None, samples: int = 256, enable_gpu: bool = False):
+def _configure_render_settings(engine: str = None, samples: int = 256, enable_gpu: bool = True):
     """Selects a compatible render engine and configures render settings."""
 
     available_engines = ["BLENDER_EEVEE", "BLENDER_WORKBENCH", "CYCLES"]
@@ -1592,20 +1595,8 @@ def _configure_render_settings(engine: str = None, samples: int = 256, enable_gp
 
     # Enable GPU rendering for Cycles if requested
     if enable_gpu and bpy.context.scene.render.engine == "CYCLES":
-        try:
-            # NOTE: seems to fail here
-            prefs = bpy.context.preferences.addons["cycles"].preferences
-            prefs.compute_device_type = "CUDA"  # Try CUDA first
-            bpy.context.scene.cycles.device = "GPU"
-        except Exception:
-            # Fallback if CUDA not available or addon not found
-            try:
-                prefs = bpy.context.preferences.addons["cycles"].preferences
-                prefs.compute_device_type = "OPENCL"
-                bpy.context.scene.cycles.device = "GPU"
-            except Exception:
-                # GPU acceleration not available, continue with CPU
-                pass
+        configure_gpu_backend()
+        optimize_scene_for_gpu(bpy.context.scene)
 
 
 def _setup_top_down_camera(auto_zoom: bool = True, margin: float = 2.0):
@@ -1733,6 +1724,7 @@ def _setup_egocentric_camera(
     fallback_distance: float = 5.0,
     default_height: float = 1.6,
     track_target: Optional[bpy.types.Object] = None,
+    preserve_existing: bool = False,
 ):
     """Sets up a perspective camera from a first-person viewpoint.
 
@@ -1740,9 +1732,10 @@ def _setup_egocentric_camera(
     continuously points at that object instead of computing orientation manually.
     """
 
-    for obj in bpy.context.scene.objects:
-        if obj.type == "CAMERA":
-            bpy.data.objects.remove(obj, do_unlink=True)
+    if not preserve_existing:
+        for obj in bpy.context.scene.objects:
+            if obj.type == "CAMERA":
+                bpy.data.objects.remove(obj, do_unlink=True)
 
     bounds = calculate_scene_bounds()
 
@@ -2171,27 +2164,6 @@ def _ensure_preview_camera(scene: bpy.types.Scene) -> bpy.types.Object:
     return camera
 
 
-def _position_preview_camera(
-    camera: bpy.types.Object, center: Vector, radius: float, angle_degrees: float
-):
-    distance = max(radius * 2.2, 2.0)
-    height = max(center.z + radius * 0.6, center.z + 0.5)
-    angle = math.radians(angle_degrees)
-
-    camera.location = Vector(
-        (
-            center.x + math.cos(angle) * distance,
-            center.y + math.sin(angle) * distance,
-            height,
-        )
-    )
-
-    # NOTE: direction handling is offloaded to `_apply_camera_track()`.
-    # If no tracking constraints exist, raise a warning
-    if not any(c.type == "LOCKED_TRACK" for c in getattr(camera, "constraints", [])):
-        logger.warning("Direction constraint not found for preview camera")
-
-
 def _render_preview_rotation(
     scene: bpy.types.Scene,
     augmentor: _ObjectAugmentor,
@@ -2209,22 +2181,41 @@ def _render_preview_rotation(
         return None
 
     original_camera = scene.camera
-    preview_camera = _ensure_preview_camera(scene)
 
     saved_paths: list[Path] = []
 
-    scene.camera = preview_camera
+    # Reuse the egocentric camera framing for preview rotation
+    track_target = None
+    if augmentor.has_targets:
+        track_target = augmentor._target_pairs[0][1]
+
+    _setup_egocentric_camera(track_target=track_target, preserve_existing=True)
+    preview_camera = bpy.context.scene.camera
     augmentor.update_camera(preview_camera)
 
-    # Track the target object if exists
-    if augmentor.has_targets:
-        first_target = augmentor._target_pairs[0][1]
-        _apply_camera_track(preview_camera, first_target)
+    # Temporarily spin targets around Z for each requested angle
+    original_rotations = {
+        obj.name: obj.rotation_euler.copy()
+        for _, obj in augmentor._target_pairs
+        if hasattr(obj, "rotation_euler")
+    }
 
     for angle in angles:
-        _position_preview_camera(preview_camera, center, radius, angle)
+        for _, obj in augmentor._target_pairs:
+            base_rot = original_rotations.get(obj.name)
+            if base_rot is None:
+                continue
+            rot = base_rot.copy()
+            rot.z = base_rot.z + math.radians(angle)
+            obj.rotation_euler = rot
         angle_path = f"{output_path}_rot_{angle:03d}.{image_format.lower()}"
         saved_paths.append(render_to_file(angle_path))
+
+    # Restore original orientations
+    for _, obj in augmentor._target_pairs:
+        base_rot = original_rotations.get(obj.name)
+        if base_rot is not None:
+            obj.rotation_euler = base_rot
 
     # Restore camera to original
     scene.camera = original_camera
@@ -2565,7 +2556,9 @@ def create_room_walls(
     keep_cutters_visible: bool = False,
     translucent: bool = False,
     debug_save_steps: bool = False,
-    debug_output_dir: Optional[str] = "/home/jkim3191/NavGoProject/GitHub/test_output/debug_wall_creation",
+    debug_output_dir: Optional[
+        str
+    ] = "/home/jkim3191/NavGoProject/GitHub/test_output/debug_wall_creation",
 ):
     """Create walls for each room individually (excluding windows and exterior doors).
 
@@ -2588,7 +2581,7 @@ def create_room_walls(
         Number of walls created
     """
     walls_created = 0
-    
+
     # Setup debug saving
     if debug_save_steps:
         if debug_output_dir is None:
@@ -2694,55 +2687,63 @@ def create_room_walls(
 
             edge_key = (room_idx, i)
             if edge_key in adjacent_segments:
-                logger.debug(f"Skipping wall edge {i} for room {room_id} (adjacent to another room)")
+                logger.debug(
+                    f"Skipping wall edge {i} for room {room_id} (adjacent to another room)"
+                )
                 continue
-            
+
             door_segments = door_touching_segments.get(edge_key, [])
-            
+
             edge_start = boundary_vec2[i]
             edge_end = boundary_vec2[next_i]
             sub_segments = _split_edge_by_door_segments(edge_start, edge_end, door_segments)
-            
+
             for seg_start, seg_end, is_door_opening in sub_segments:
                 if is_door_opening:
                     header_bottom_verts = [
                         bm.verts.new((seg_start.x, seg_start.y, DEFAULT_DOOR_HEIGHT)),
-                        bm.verts.new((seg_end.x, seg_end.y, DEFAULT_DOOR_HEIGHT))
+                        bm.verts.new((seg_end.x, seg_end.y, DEFAULT_DOOR_HEIGHT)),
                     ]
                     header_top_verts = [
                         bm.verts.new((seg_start.x, seg_start.y, wall_height)),
-                        bm.verts.new((seg_end.x, seg_end.y, wall_height))
+                        bm.verts.new((seg_end.x, seg_end.y, wall_height)),
                     ]
                     bm.verts.ensure_lookup_table()
-                    
-                    face = bm.faces.new([
-                        header_bottom_verts[0],
-                        header_bottom_verts[1],
-                        header_top_verts[1],
-                        header_top_verts[0]
-                    ])
+
+                    face = bm.faces.new(
+                        [
+                            header_bottom_verts[0],
+                            header_bottom_verts[1],
+                            header_top_verts[1],
+                            header_top_verts[0],
+                        ]
+                    )
                     face.normal_update()
                 else:
                     wall_bottom_verts = [
                         bm.verts.new((seg_start.x, seg_start.y, 0)),
-                        bm.verts.new((seg_end.x, seg_end.y, 0))
+                        bm.verts.new((seg_end.x, seg_end.y, 0)),
                     ]
                     wall_top_verts = [
                         bm.verts.new((seg_start.x, seg_start.y, wall_height)),
-                        bm.verts.new((seg_end.x, seg_end.y, wall_height))
+                        bm.verts.new((seg_end.x, seg_end.y, wall_height)),
                     ]
                     bm.verts.ensure_lookup_table()
-                    
-                    face = bm.faces.new([
-                        wall_bottom_verts[0],
-                        wall_bottom_verts[1],
-                        wall_top_verts[1],
-                        wall_top_verts[0]
-                    ])
+
+                    face = bm.faces.new(
+                        [
+                            wall_bottom_verts[0],
+                            wall_bottom_verts[1],
+                            wall_top_verts[1],
+                            wall_top_verts[0],
+                        ]
+                    )
                     face.normal_update()
-            
+
             if door_segments:
-                logger.debug(f"Created segmented wall for edge {i} of room {room_id}: {len(sub_segments)} segments, {sum(1 for _, _, is_door in sub_segments if is_door)} door openings")
+                logger.debug(
+                    f"Created segmented wall for edge {i} of room {room_id}: {len(sub_segments)} segments, {sum(1 for _, _, is_door in sub_segments if is_door)} door openings"
+                )
 
         bm.to_mesh(mesh)
         bm.free()
@@ -2812,7 +2813,7 @@ def create_room_walls(
                                     randomize_type=True,
                                     randomize_material=True,
                                     randomize_colour=False,
-                                    colour=(0.8, 0.9, 1.0, 1.0),  
+                                    colour=(0.8, 0.9, 1.0, 1.0),
                                 )
 
                     except Exception:
@@ -2839,7 +2840,7 @@ def create_room_walls(
                             randomize_type=True,
                             randomize_material=True,
                             randomize_colour=False,
-                            colour=(0.8, 0.9, 1.0, 1.0), 
+                            colour=(0.8, 0.9, 1.0, 1.0),
                         )
 
                         if window_result:

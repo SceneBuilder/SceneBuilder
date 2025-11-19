@@ -898,7 +898,7 @@ if __name__ == "__main__":
     # test_partial_room_completion()
 
     # Test single room design workflow
-    # test_single_room_design_workflow("classroom")
+    test_single_room_design_workflow("classroom")
     # test_single_room_design_workflow("garage")
     # test_single_room_design_workflow("kitchen")
     # test_single_room_design_workflow("bedroom")
@@ -937,4 +937,4 @@ if __name__ == "__main__":
     # test_multi_room_design_workflow("local_museum")
     # test_multi_room_design_workflow("luxury_spa")
     # test_multi_room_design_workflow("boutique_hotel_lobby")
-    test_multi_room_design_workflow("recording_studio")
+    # test_multi_room_design_workflow("recording_studio")

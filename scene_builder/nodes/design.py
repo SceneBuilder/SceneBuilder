@@ -1,15 +1,20 @@
 from __future__ import annotations
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from pydantic_graph import BaseNode, End, Graph, GraphRunContext
 from rich.console import Console
 
 from scene_builder.config import DEBUG, generation_config
-from scene_builder.database.object import ObjectDatabase
 from scene_builder.decoder.blender import blender
-# from scene_builder.definition.scene import Object, Room, Vector3
-from scene_builder.definition.scene import Object, ObjectBlueprint, Room, Scene, Shell, Vector3
+from scene_builder.definition.scene import (
+    Object,
+    ObjectBlueprint,
+    Room,
+    Scene,
+    Shell,
+    Vector3,
+)
 from scene_builder.logging import logger
 # from scene_builder.nodes.feedback import VisualFeedback
 # from scene_builder.nodes.placement import PlacementNode, VisualFeedback
@@ -22,19 +27,34 @@ from scene_builder.nodes.placement import (
 from scene_builder.utils.pai import transform_paths_to_binary
 from scene_builder.utils.pydantic import save_yaml
 from scene_builder.workflow.agents import (
+    issue_resolution_agent,
     room_design_agent,
     sequencing_agent,
     shopping_agent,
 )
 # from scene_builder.workflow.graphs import placement_graph # hopefully no circular import... -> BRUH.
 # from scene_builder.workflow.states import PlacementState, RoomDesignState
-from scene_builder.workflow.states import CritiqueAction, PlacementState, RoomDesignState, MainState
+from scene_builder.workflow.states import (
+    CritiqueAction,
+    MainState,
+    PlacementState,
+    RoomDesignState,
+)
+from scene_builder.validation.resolver import IssueResolutionOutput, IssueResolver
+from scene_builder.validation.tracker import IssueTracker
 from scene_builder.workflow.toolsets import material_toolset, shopping_toolset
-from scene_builder.validation.linter import format_lint_feedback, lint_room
+from scene_builder.validation.linter import (
+    format_lint_feedback,
+    lint_room,
+    save_lint_visualization,
+)
+from scene_builder.validation.context import LintingOptions
 from scene_builder.validation.models import LintReport
 
+# Params
+LINT_OPTIONS = LintingOptions(enabled_rules={"floor_penetration", "wall_overlap"})
+
 console = Console()
-obj_db = ObjectDatabase()
 
 
 class DesignLoopRouter(BaseNode[MainState]):
@@ -62,9 +82,65 @@ class RDAInitialResponse(BaseModel):
 class MaterialAction(BaseModel):
     action: Literal["change", "keep"]
 
+
 class MaterialSelection(BaseModel):
     material_id: str
     rationale: str
+
+
+ISSUE_TRACKER_KEY = "lint_issue_tracker"
+MAX_AUTO_RESOLUTION_ATTEMPTS = 3
+
+
+def _get_issue_tracker(state: RoomDesignState) -> IssueTracker:
+    """
+    Retrieves or creates the IssueTracker instance from the state's extra info.
+    """
+    tracker = state.extra_info.get(ISSUE_TRACKER_KEY)
+    if isinstance(tracker, IssueTracker):
+        return tracker
+
+    # If it's not an instance (e.g., first run), create one
+    tracker = IssueTracker()
+    state.extra_info[ISSUE_TRACKER_KEY] = tracker
+    return tracker
+
+
+def apply_resolution_actions(room: Room, actions: list[IssueResolutionOutput]) -> None:
+    """Update ``room`` in place according to resolver outputs."""
+    for action in actions:
+        adjustment = action.adjustment
+        if adjustment is None:
+            continue
+
+        target_id = adjustment.id or action.object_id
+        if target_id is None:
+            continue
+
+        if adjustment.remove:
+            room.objects = [obj for obj in (room.objects or []) if obj.id != target_id]
+            continue
+
+        obj = next((item for item in (room.objects or []) if item.id == target_id), None)
+        if obj is None:
+            continue
+
+        if adjustment.position is not None:
+            # Treat positional adjustments as offsets to avoid snapping to origin.
+            obj.position = Vector3(
+                x=obj.position.x + adjustment.position.x,
+                y=obj.position.y + adjustment.position.y,
+                z=obj.position.z + adjustment.position.z,
+            )
+        if adjustment.rotation is not None:
+            # Treat rotation adjustments as offsets (degrees).
+            obj.rotation = Vector3(
+                x=obj.rotation.x + adjustment.rotation.x,
+                y=obj.rotation.y + adjustment.rotation.y,
+                z=obj.rotation.z + adjustment.rotation.z,
+            )
+        if adjustment.scale is not None:
+            obj.scale = adjustment.scale
 
 
 class RoomDesignNode(BaseNode[RoomDesignState]):
@@ -128,6 +204,7 @@ class RoomDesignNode(BaseNode[RoomDesignState]):
         # if response.output.decision == "finalize":
         #     return End(ctx.state.room)
 
+        ### wall/shell material change ###
         # Inspect current floor shell (if any) for context
         floor_shell = None
         try:
@@ -225,6 +302,7 @@ class RoomDesignNode(BaseNode[RoomDesignState]):
         #       conditional routing of this sort. 
         feedback = None
         placement_run_count = 0
+        ### thin inner loop ###
         while True:
             placement_user_prompt = (
                 "Please design the room by placing objects into the room, by writing the `object` data with position, rotation, and scale.",
@@ -247,18 +325,51 @@ class RoomDesignNode(BaseNode[RoomDesignState]):
             # post-placement render
             # Rebuild room after placement with translucent walls for feedback
             blender.parse_room_definition(room, with_walls="translucent")
-            lint_report = lint_room(ctx.state.room)
-            ctx.state.last_lint_report = lint_report
-            lint_summary = format_lint_feedback(lint_report)
-            if DEBUG:
-                print(f"[Lint] {lint_summary}")
             top_down_render = blender.visualize(scene=room.id, output_dir=output_dir, show_grid=True)
             isometric_render = blender.visualize(
                 scene=room.id, output_dir=output_dir, view="isometric", show_grid=True
             )
-            renders = transform_paths_to_binary([top_down_render, isometric_render])
-            lint_section = f"Automated lint analysis for the current placement:\n{lint_summary}"
+            renders = transform_paths_to_binary(
+                [top_down_render, isometric_render]
+            )
 
+            # lint
+            lint_report = lint_room(ctx.state.room, options=LINT_OPTIONS)
+            ctx.state.last_lint_report = lint_report
+
+            # Get the tracker and sync it with the new report
+            tracker = _get_issue_tracker(ctx.state)
+            tracker.sync(lint_report)
+
+            # Create a lookup for the *current* issues
+            issue_lookup = {
+                tracker.compute_issue_id(issue): issue
+                for issue in lint_report.issues
+            }
+
+            resolver = IssueResolver(
+                state=ctx.state,
+                max_attempts=MAX_AUTO_RESOLUTION_ATTEMPTS,
+                console=console,
+            )
+            resolution_results = await resolver.attempt_auto_resolution(
+                tracker, issue_lookup
+            )
+            apply_resolution_actions(ctx.state.room, resolution_results)
+
+            # Get feedback for the agent, based *only* on this single pass
+            lint_summary = format_lint_feedback(lint_report)
+            lint_viz_path = f"{output_dir}/lint_viz_{placement_run_count}.png"
+            save_lint_visualization(room=ctx.state.room, report=lint_report, output_path=lint_viz_path)
+            issue_feedback = tracker.consume_feedback()
+            lint_section = f"Automated lint analysis:\n{lint_summary}"
+            if issue_feedback:
+                lint_section += f"\n\n{issue_feedback}"
+
+            if DEBUG:
+                print(f"[Lint] {lint_summary}")
+
+            # pass/fail critique
             critique_user_prompt = (
                 "Updated renders:",
                 *renders,
@@ -276,17 +387,97 @@ class RoomDesignNode(BaseNode[RoomDesignState]):
             if DEBUG:
                 print(f"{critique.result=}")
                 print(f"{critique.explanation=}")
+
+            # Prepare feedback for the *next* loop, if needed
             if critique.result == "rejected":
-                feedback = critique.explanation
-                if lint_report.issues:
-                    feedback = f"{feedback}\n\nAutomated lint analysis:\n{lint_summary}"
+                feedback_sections = []
+                if critique.explanation:
+                    feedback_sections.append(critique.explanation)
+                if lint_summary:
+                    feedback_sections.append(f"Automated lint analysis:\n{lint_summary}")
+                # We use the *consumed* feedback here so it sees what was tried
+                if issue_feedback:
+                    feedback_sections.append(issue_feedback)
+
+                feedback = "\n\n".join(feedback_sections)
+
             elif critique.result == "approved":
-                break
+                break # Exit the 'while True' placement loop
+
             if generation_config.terminate_early:
                 logger.debug(f"Breaking placement loop for {room.id} to terminate early")
                 break
             placement_run_count += 1
-        
+
+        ### LOG ###
+        # Save room definition
+        if DEBUG:
+            room_yaml_path = f"{output_dir}/room_step_{ctx.state.run_count}.yaml"
+            save_yaml(ctx.state.room, room_yaml_path)
+            # logger.debug(f"Saved room definition to {room_yaml_path}")
+
+        ### Return ###
+        # TODO: if DEBUG, make it dump (latest) state & .blend to a file at every turn. or maybe all turns. for web viz.
+        ctx.state.run_count += 1  # (TEMP?)
+        ctx.state.message_history = critique_response.all_messages()  # TODO: confirm this is correct
+        # if ctx.state.run_count >= 2:  # TEMP: test that it ends successfully
+        #     return End(ctx.state.room)
+        # if ctx.state.run_count > 5 and generation_config.terminate_early:  # DEBUG
+        if ctx.state.run_count > 2 and generation_config.terminate_early:  # DEBUG
+            return End(ctx.state.room)
+        elif ctx.state.run_count > 1 and rda_initial_response.output.complete:
+            return End(ctx.state.room)
+        else:
+            return RoomDesignNode()  # maybe this is the issue? self-returning function?
+
+# class RoomDesignVisualFeedback(BaseNode[RoomDesignState]):
+#     # NOTE: see PlacementVisualFeedback in `placement.py` for notes and design decisions.
+#     # NOTE: I think this node must take care of room design termination management (e.g., invoking it).
+#     async def run(self, ctx: GraphRunContext[RoomDesignState]) -> RoomDesignNode:
+#         blender.parse_room_definition(ctx.state.room)
+#         top_down_render = blender.create_scene_visualization(output_dir="test_output")
+#         isometric_render = blender.create_scene_visualization(
+#             output_dir="test_output", view="isometric"
+#         )
+#         ctx.state.viz.append(top_down_render)
+#         ctx.state.viz.append(isometric_render)
+#         return RoomDesignNode()
+
+
+room_design_graph = Graph(
+    nodes=[
+        DesignLoopRouter,  # TEMP
+        RoomDesignNode,
+        # RoomDesignVisualFeedback,
+    ],
+    state_type=Room,
+)
+
+# NOTES
+"""
+There are two models of the room design process that can be thought of, as of now:
+
+1) The RoomDesignNode selects a single object to add into the room (using ShoppingAgent), and calls
+   PlacementNode to place the object. This simple loop is repeated, along with VisualFeedback and
+   RoomPlan as a reference, so that RoomDesignNode can find a stopping point, when it finds it satisfactory.
+
+2) The RoomDesignNode selects what objects to add into the room (using ShoppingAgent), and then calls
+   RoomBuildNode, which interactively commands the PlacementNode along with VisualFeedback and RoomPlan,
+   and is capable of invoking edits of existing object placements, and generating multiple room layout candidates,
+   to be fed into a quantitative scorer for score-based winner-takes-all pooling. 
+   
+   The RoomBuildNode can ask to "go back to the drawing board", giving back control to the design node to invite
+   additional objects into the ShoppingCart, or do so when it empties the given ShoppingCart, or finds the room
+   sufficiently occupied where placement of more objects is not necessary. 
+   
+   The RoomDesignNode can perform additional tasks, such as generating GenAI-based candidate layout generation
+   in the form of images, to effectively serve as the inspiration ("inspo") of downstream designers/placers. 
+   
+   This suggests to allow a more organic flow of placement, editing, designing, and imagining, and
+   may yield a higher quality scene overall. 
+
+"""
+
 
         ### Inter-Agent Collaboration Logic v1 (old) ###
         # # rda2sha_prompt = "Please tell the `ShoppingAgent` what you would like to achieve in the next design step."
@@ -398,7 +589,6 @@ class RoomDesignNode(BaseNode[RoomDesignState]):
         # )
 
         # # PROBLEM(?): placement_graph runs for extended periods and places multiple objects.
-
         # placement_subgraph_response = await placement_graph.run(
         #     PlacementNode(), state=placement_state
         # )
@@ -415,28 +605,8 @@ class RoomDesignNode(BaseNode[RoomDesignState]):
         # TODO: if deciding to continue, choose what to place next.
         ### END ###
 
-        ### LOG ###
-        # Save room definition
-        if DEBUG:
-            room_yaml_path = f"{output_dir}/room_step_{ctx.state.run_count}.yaml"
-            save_yaml(ctx.state.room, room_yaml_path)
-            # logger.debug(f"Saved room definition to {room_yaml_path}")
 
-        ### Return ###
-        # TODO: if DEBUG, make it dump (latest) state & .blend to a file at every turn. or maybe all turns. for web viz.
-        ctx.state.run_count += 1  # (TEMP?)
-        ctx.state.message_history = critique_response.all_messages()  # TODO: confirm this is correct
-        # if ctx.state.run_count >= 2:  # TEMP: test that it ends successfully
-        #     return End(ctx.state.room)
-        # if ctx.state.run_count > 5 and generation_config.terminate_early:  # DEBUG
-        if ctx.state.run_count > 2 and generation_config.terminate_early:  # DEBUG
-            return End(ctx.state.room)
-        elif ctx.state.run_count > 1 and rda_initial_response.output.complete:
-            return End(ctx.state.room)
-        else:
-            return RoomDesignNode()  # maybe this is the issue? self-returning function?
-    
-    
+
         # NOTE: don't return `UpdateScene` directly; return a room to caller (DesignLoopRouter)
         #       and let it take care of coalescing it with the entire Scene.
 
@@ -451,52 +621,3 @@ class RoomDesignNode(BaseNode[RoomDesignState]):
         #       Honestly, can be a cool part of the paper.
 
         # return UpdateScene()
-
-
-# class RoomDesignVisualFeedback(BaseNode[RoomDesignState]):
-#     # NOTE: see PlacementVisualFeedback in `placement.py` for notes and design decisions.
-#     # NOTE: I think this node must take care of room design termination management (e.g., invoking it).
-#     async def run(self, ctx: GraphRunContext[RoomDesignState]) -> RoomDesignNode:
-#         blender.parse_room_definition(ctx.state.room)
-#         top_down_render = blender.create_scene_visualization(output_dir="test_output")
-#         isometric_render = blender.create_scene_visualization(
-#             output_dir="test_output", view="isometric"
-#         )
-#         ctx.state.viz.append(top_down_render)
-#         ctx.state.viz.append(isometric_render)
-#         return RoomDesignNode()
-
-
-room_design_graph = Graph(
-    nodes=[
-        DesignLoopRouter,  # TEMP
-        RoomDesignNode,
-        # RoomDesignVisualFeedback,
-    ],
-    state_type=Room,
-)
-
-# NOTES
-"""
-There are two models of the room design process that can be thought of, as of now:
-
-1) The RoomDesignNode selects a single object to add into the room (using ShoppingAgent), and calls
-   PlacementNode to place the object. This simple loop is repeated, along with VisualFeedback and
-   RoomPlan as a reference, so that RoomDesignNode can find a stopping point, when it finds it satisfactory.
-
-2) The RoomDesignNode selects what objects to add into the room (using ShoppingAgent), and then calls
-   RoomBuildNode, which interactively commands the PlacementNode along with VisualFeedback and RoomPlan,
-   and is capable of invoking edits of existing object placements, and generating multiple room layout candidates,
-   to be fed into a quantitative scorer for score-based winner-takes-all pooling. 
-   
-   The RoomBuildNode can ask to "go back to the drawing board", giving back control to the design node to invite
-   additional objects into the ShoppingCart, or do so when it empties the given ShoppingCart, or finds the room
-   sufficiently occupied where placement of more objects is not necessary. 
-   
-   The RoomDesignNode can perform additional tasks, such as generating GenAI-based candidate layout generation
-   in the form of images, to effectively serve as the inspiration ("inspo") of downstream designers/placers. 
-   
-   This suggests to allow a more organic flow of placement, editing, designing, and imagining, and
-   may yield a higher quality scene overall. 
-
-"""
