@@ -30,3 +30,9 @@ def blender_size_provider(obj: Object) -> AABB | None:
     """Return Blender-derived world-space bounds for ``obj`` if available."""
 
     return bounds_from_blender(obj.id)
+
+
+def verify_overlap_with_blender(object_a_id: str, object_b_id: str) -> bool | None:
+    """Return True if Blender reports a mesh intersection for the objects."""
+
+    return blender.objects_overlap(object_a_id, object_b_id)

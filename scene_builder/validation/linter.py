@@ -12,7 +12,10 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Polygon as MplPolygon
 from shapely.geometry import box
 
-from scene_builder.decoder.blender.data_bridge import blender_size_provider
+from scene_builder.decoder.blender.data_bridge import (
+    blender_size_provider,
+    verify_overlap_with_blender,
+)
 from scene_builder.definition.scene import Object, Room, Scene
 from scene_builder.utils.geometry import convert_to_shapely
 
@@ -28,6 +31,12 @@ from scene_builder.validation.rules.base import LintRule
 
 # Providers return world-space axis-aligned bounding boxes for objects.
 SizeProvider = Callable[[Object], AABB | None]
+
+
+def _blender_overlap_verifier(obj_a: LintableObjectData, obj_b: LintableObjectData) -> bool | None:
+    """Default Blender-backed overlap verifier for linting."""
+
+    return verify_overlap_with_blender(obj_a.id, obj_b.id)
 
 
 def _prepare_context(room: Room, provider: SizeProvider) -> LintContext:
@@ -73,6 +82,12 @@ def lint_room(
 
     if options is None:
         options = LintingOptions()
+
+    if options.overlap_verifier is None:
+        if options.use_blender_overlap is False:
+            pass  # explicitly disabled
+        elif size_provider is blender_size_provider or options.use_blender_overlap is True:
+            options.overlap_verifier = _blender_overlap_verifier
 
     context = _prepare_context(room, size_provider)
 

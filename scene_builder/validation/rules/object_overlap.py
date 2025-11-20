@@ -23,6 +23,11 @@ class ObjectOverlapRule(LintRule):
             if area <= options.overlap_tolerance:
                 continue
 
+            if options.overlap_verifier is not None:
+                overlap_confirmed = options.overlap_verifier(obj_a, obj_b)
+                if overlap_confirmed is False:
+                    continue
+
             overlap_area = float(area)
             message = (
                 f"Objects {obj_a.id} and {obj_b.id} overlap."
@@ -42,4 +47,3 @@ class ObjectOverlapRule(LintRule):
                 )
             )
         return issues
-

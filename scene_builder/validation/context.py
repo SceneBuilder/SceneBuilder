@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 from shapely.geometry import Polygon
 
@@ -13,6 +13,8 @@ from scene_builder.validation.models import AABB
 
 if TYPE_CHECKING:  # pragma: no cover - typing support only
     from scene_builder.validation.rules.base import LintRule
+
+OverlapVerifier = Callable[["LintableObjectData", "LintableObjectData"], bool | None]
 
 
 @dataclass(slots=True)
@@ -25,6 +27,8 @@ class LintingOptions:
     floor_tolerance: float = 0.01
     enabled_rules: set[str] | None = None
     rules: tuple["LintRule", ...] = field(default_factory=lambda: DEFAULT_RULES)
+    overlap_verifier: OverlapVerifier | None = None
+    use_blender_overlap: bool | None = None
 
 
 @dataclass(slots=True)
@@ -82,4 +86,3 @@ DEFAULT_RULES: tuple["LintRule", ...] = (
     DominatesRoomRule(),
     ObjectOverlapRule(),
 )
-

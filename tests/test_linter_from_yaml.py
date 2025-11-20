@@ -29,6 +29,7 @@ from scene_builder.workflow.states import RoomDesignState
 
 # params
 linting_options = LintingOptions(rules=(WallOverlapRule(),))
+# linting_options = LintingOptions(use_blender_overlap=False)
 
 # single
 # TEST_CASE = "test_single_room_design_workflow_bar"
@@ -128,7 +129,7 @@ def test_auto_resolution_from_yaml_file(options=None):
 
     # Lint and log/visualize state (after)
     parse_room_definition(room)
-    updated_report = lint_room(room)
+    updated_report = lint_room(room, options=options)
     rprint("[bold magenta]After lint feedback:[/]")
     rprint(format_lint_feedback(updated_report))
 
@@ -145,8 +146,8 @@ def test_auto_resolution_from_yaml_file(options=None):
 if __name__ == "__main__":
     # test_lint_room_from_yaml_file()
     # test_lint_scene_from_yaml_file()
-    test_auto_resolution_from_yaml_file()
-    # test_auto_resolution_from_yaml_file(linting_options)
+    # test_auto_resolution_from_yaml_file()
+    test_auto_resolution_from_yaml_file(linting_options)
 
     # # Allow running this test module directly
     # raise SystemExit(pytest.main([str(Path(__file__).resolve())]))

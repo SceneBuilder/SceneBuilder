@@ -15,6 +15,7 @@ import yaml
 from matplotlib import pyplot as plt
 from PIL import Image
 from mathutils import Vector
+from mathutils.bvhtree import BVHTree
 from mathutils.geometry import tessellate_polygon
 from scipy.spatial.transform import Rotation
 from shapely import affinity
@@ -76,6 +77,14 @@ class BlenderObjectState:
     scale: Tuple[float, float, float]
 
 
+@dataclass
+class ObjectBVHCache:
+    """Cached BVH tree keyed by the object's transform signature."""
+
+    transform_signature: Tuple[Tuple[float, float, float], Tuple[float, float, float], Tuple[float, float, float]]
+    tree: BVHTree
+
+
 class BlenderSceneTracker:
     """Tracks created objects by ID with readable position/rotation data."""
 
@@ -84,6 +93,8 @@ class BlenderSceneTracker:
         self._objects: Dict[str, BlenderObjectState] = {}
         # Cache: Key: source_id, Value: blender_name of the Empty parent
         self._source_cache: Dict[str, str] = {}
+        # Cache: Key: object_id, Value: cached BVH data keyed by transform
+        self._bvh_cache: Dict[str, ObjectBVHCache] = {}
 
     def object_exists_unchanged(self, object_id: str, pos: dict, rot: dict) -> bool:
         """Check if object exists with exact same position/rotation."""
@@ -124,11 +135,13 @@ class BlenderSceneTracker:
             rotation=(rot["x"], rot["y"], rot["z"]),
             scale=(scale["x"], scale["y"], scale["z"]),
         )
+        self._bvh_cache.pop(object_id, None)
 
     def clear_all(self):
         """Clear all tracked objects."""
         self._objects.clear()
         self._source_cache.clear()
+        self._bvh_cache.clear()
         # logger.debug("Cleared all object tracking")
 
     def get_object_count(self) -> int:
@@ -176,6 +189,21 @@ class BlenderSceneTracker:
         self._source_cache[source_id] = blender_name
         logger.debug(f"Cached source_id '{source_id}' -> Empty '{blender_name}'")
 
+    def get_bvh_cache(self, object_id: str) -> Optional[ObjectBVHCache]:
+        """Return cached BVH data for ``object_id`` if it exists."""
+
+        return self._bvh_cache.get(object_id)
+
+    def store_bvh_cache(self, object_id: str, cache: ObjectBVHCache) -> None:
+        """Persist BVH cache entries for ``object_id``."""
+
+        self._bvh_cache[object_id] = cache
+
+    def invalidate_bvh_cache(self, object_id: str) -> None:
+        """Remove any cached BVH data for ``object_id``."""
+
+        self._bvh_cache.pop(object_id, None)
+
 
 # Global scene tracker instance
 _scene_tracker = BlenderSceneTracker()
@@ -191,6 +219,14 @@ def get_tracked_object_state(object_id: str) -> Optional[BlenderObjectState]:
     """Return the tracked state for ``object_id`` if present."""
 
     return _scene_tracker.get_object_state(object_id)
+
+
+def _object_transform_signature(state: BlenderObjectState) -> Tuple[
+    Tuple[float, float, float], Tuple[float, float, float], Tuple[float, float, float]
+]:
+    """Return a tuple capturing the tracked transform for ``state``."""
+
+    return (state.position, state.rotation, state.scale)
 
 
 def get_object_bounds(
@@ -225,6 +261,48 @@ def _iter_mesh_descendants(root_obj):
         if getattr(current, "type", None) == "MESH":
             yield current
         stack.extend(getattr(current, "children", []) or [])
+
+
+def _build_object_bvh(blender_obj) -> BVHTree | None:
+    """Construct a BVH that spans every mesh under ``blender_obj``."""
+
+    depsgraph = bpy.context.evaluated_depsgraph_get()
+    vertices: list[Vector] = []
+    polygons: list[tuple[int, ...]] = []
+    vertex_offset = 0
+
+    for mesh_obj in _iter_mesh_descendants(blender_obj):
+        eval_obj = mesh_obj.evaluated_get(depsgraph)
+        mesh_data = eval_obj.to_mesh()
+        if mesh_data is None:
+            continue
+
+        vertex_count = len(mesh_data.vertices)
+        if vertex_count == 0:
+            eval_obj.to_mesh_clear()
+            continue
+
+        matrix_world = eval_obj.matrix_world
+        vertices.extend(matrix_world @ vertex.co for vertex in mesh_data.vertices)
+
+        for poly in mesh_data.polygons:
+            if len(poly.vertices) < 3:
+                continue
+            indices = [vertex_offset + idx for idx in poly.vertices]
+            if len(indices) == 3:
+                polygons.append(tuple(indices))
+            else:
+                anchor = indices[0]
+                for i in range(1, len(indices) - 1):
+                    polygons.append((anchor, indices[i], indices[i + 1]))
+
+        eval_obj.to_mesh_clear()
+        vertex_offset += vertex_count
+
+    if not polygons:
+        return None
+
+    return BVHTree.FromPolygons(vertices, polygons)
 
 
 def _compute_object_bounds(
@@ -262,6 +340,44 @@ def _compute_object_bounds(
         (float(min_world.x), float(min_world.y), float(min_world.z)),
         (float(max_world.x), float(max_world.y), float(max_world.z)),
     )
+
+
+def _get_or_build_object_bvh(object_id: str) -> BVHTree | None:
+    """Return a cached BVH for ``object_id`` or build a new one."""
+
+    state = _scene_tracker.get_object_state(object_id)
+    if state is None:
+        return None
+
+    signature = _object_transform_signature(state)
+    cache = _scene_tracker.get_bvh_cache(object_id)
+    if cache and cache.transform_signature == signature:
+        return cache.tree
+
+    blender_obj = bpy.data.objects.get(state.blender_name)
+    if blender_obj is None:
+        _scene_tracker.invalidate_bvh_cache(object_id)
+        return None
+
+    tree = _build_object_bvh(blender_obj)
+    if tree is None:
+        _scene_tracker.invalidate_bvh_cache(object_id)
+        return None
+
+    _scene_tracker.store_bvh_cache(object_id, ObjectBVHCache(signature, tree))
+    return tree
+
+
+def objects_overlap(object_a_id: str, object_b_id: str) -> bool | None:
+    """Return True when Blender's BVH reports an intersection."""
+
+    tree_a = _get_or_build_object_bvh(object_a_id)
+    tree_b = _get_or_build_object_bvh(object_b_id)
+    if tree_a is None or tree_b is None:
+        return None
+
+    intersections = tree_a.overlap(tree_b)
+    return bool(intersections)
 
 
 @contextmanager
