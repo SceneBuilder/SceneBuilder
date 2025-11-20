@@ -20,3 +20,11 @@ Write small, imperative commits (`add window cutout logic`) and mention related 
 
 ## Blender & Asset Tips
 Ensure Blender is on the `PATH` before invoking decode commands, and prefer adjusting `scene_builder/config.py` over hardcoding paths. Treat `external/` datasets as read-only mirrors; stash experimental assets under `test_assets/` and purge them before merge.
+
+## Notes:
+- The `bpy` module will always be available in the scope of this project!
+- Tight integration with Blender is honestly fine, because it's the primary and only "decoder" (or 3D scene builder from Pydantic/YAML definitions)
+- I'd like the code to be kept simple and maintainable. I'd actually prefer if exception handling is used sparingly so I can notice when something is wrong and debug/investigate.
+- For tests, I want them to use the real thing (i.e., build the scene in Blender for real) instead of using mocks.  Note that `bpy` module is available even in tests.
+
+Please let me know if you have any questions or need clarifications!
