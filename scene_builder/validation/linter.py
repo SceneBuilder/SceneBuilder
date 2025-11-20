@@ -8,6 +8,7 @@ from collections.abc import Callable, Iterable
 from itertools import cycle
 from pathlib import Path
 
+import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 from matplotlib.patches import Polygon as MplPolygon
 from shapely.geometry import box
@@ -31,6 +32,15 @@ from scene_builder.validation.rules.base import LintRule
 
 # Providers return world-space axis-aligned bounding boxes for objects.
 SizeProvider = Callable[[Object], AABB | None]
+
+_RAINBOW = plt.get_cmap("rainbow")
+_FIXED_CODE_COLORS: dict[str, str] = {
+    # Sampled from rainbow colormap to approximate requested hues.
+    "floor_penetration": mcolors.to_hex(_RAINBOW(0.08)),  # brown-ish
+    "wall_overlap": mcolors.to_hex(_RAINBOW(0.72)),  # violet/purple
+    "dominates_room": mcolors.to_hex(_RAINBOW(0.9)),  # pink
+    "object_overlap": mcolors.to_hex(_RAINBOW(0.12)),  # orange
+}
 
 
 def _blender_overlap_verifier(obj_a: LintableObjectData, obj_b: LintableObjectData) -> bool | None:
@@ -162,7 +172,7 @@ def format_lint_feedback(report: LintReport) -> str:
         target = f" on object '{issue.object_id}'" if issue.object_id else ""
         line = f"- [{issue.severity.value.upper()}] {issue.code}{target}: {issue.message}"
         if issue.hint:
-            line += f" Hint: {issue.hint}"
+            line += f" \nHint: {issue.hint}"
         lines.append(line)
 
     return "\n".join(lines)
@@ -271,7 +281,9 @@ def save_lint_visualization(
         )
 
         for issue in issues:
-            color = code_colors.setdefault(issue.code, next(color_cycle))
+            color = code_colors.setdefault(
+                issue.code, _FIXED_CODE_COLORS.get(issue.code, next(color_cycle))
+            )
             outline = MplPolygon(
                 list(zip(x, y)),
                 closed=True,
