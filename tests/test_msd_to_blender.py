@@ -223,11 +223,10 @@ def test_msd_to_blender(
 if __name__ == "__main__":
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Example: Test with window rendering enabled
     test_msd_to_blender(
         enable_addons=True,
-        door_cutout=False,
-        window_cutout=False,
+        door_cutout=True,  
+        window_cutout=True, 
         entire_floor=True,
         # building_id=2801,
         # building_id=2144,
@@ -240,7 +239,7 @@ if __name__ == "__main__":
         enable_windows=False,
         render_doors=False,
         render_windows=False,
-        keep_cutters_visible=True,
+        keep_cutters_visible=False,
     )
     # Uncomment to test other configurations:
     # test_msd_to_blender(render_windows=True)

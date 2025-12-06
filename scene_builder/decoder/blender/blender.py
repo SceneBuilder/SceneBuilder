@@ -40,7 +40,9 @@ from scene_builder.utils.file import get_filename
 from scene_builder.utils.floorplan import (
     _find_adjacent_wall_segments_from_centers_to_edges,
     _find_room_edges_touching_interior_doors,
+    _find_room_edges_touching_windows,
     _split_edge_by_door_segments,
+    _split_edge_by_window_segments,
     calculate_bounds_for_objects,
     find_nearest_wall_point,
     longest_edge_angle,
@@ -2598,7 +2600,6 @@ def create_room_walls(
         debug_output_path.mkdir(parents=True, exist_ok=True)
         logger.info(f"🔍 Debug mode enabled: saving wall creation steps to {debug_output_path}")
 
-    window_cutout_polygons: list[tuple[str, list[tuple[float, float]]]] = []
 
     exterior_door_cutout_polygons: list[tuple[str, list[tuple[float, float]]]] = []
 
@@ -2637,15 +2638,14 @@ def create_room_walls(
                 else:
                     boundary_xy.append((p["x"], p["y"]))
 
-            if window_cutouts and s_type == "window":
-                window_cutout_polygons.append((str(s_id), boundary_xy))
-            elif door_cutouts and s_type == "door":
+            if door_cutouts and s_type == "door":
                 # Only collect exterior doors - interior door cutouts are disabled
                 exterior_door_cutout_polygons.append((str(s_id), boundary_xy))
                 logger.debug(f"Door {s_id}: added to exterior door cutouts")
 
     adjacent_segments = _find_adjacent_wall_segments_from_centers_to_edges(rooms, threshold=0.025)
-    door_touching_segments = _find_room_edges_touching_interior_doors(rooms, threshold=0.025)
+    door_touching_segments = _find_room_edges_touching_interior_doors(rooms, threshold=0.025) if door_cutouts else {}
+    window_touching_segments = _find_room_edges_touching_windows(rooms, threshold=0.025) if window_cutouts else {}
 
     for room_idx, room in enumerate(rooms):
         r_category = room.get("category")
@@ -2701,13 +2701,27 @@ def create_room_walls(
                 continue
 
             door_segments = door_touching_segments.get(edge_key, [])
+            window_segments = window_touching_segments.get(edge_key, [])
 
             edge_start = boundary_vec2[i]
             edge_end = boundary_vec2[next_i]
-            sub_segments = _split_edge_by_door_segments(edge_start, edge_end, door_segments)
-
-            for seg_start, seg_end, is_door_opening in sub_segments:
+            
+            door_split_segments = _split_edge_by_door_segments(edge_start, edge_end, door_segments)
+            
+            final_segments = []
+            for seg_start, seg_end, is_door_opening in door_split_segments:
                 if is_door_opening:
+                    final_segments.append((seg_start, seg_end, "door"))
+                else:
+                    window_split = _split_edge_by_window_segments(seg_start, seg_end, window_segments)
+                    for w_start, w_end, is_window_opening in window_split:
+                        if is_window_opening:
+                            final_segments.append((w_start, w_end, "window"))
+                        else:
+                            final_segments.append((w_start, w_end, "wall"))
+
+            for seg_start, seg_end, seg_type in final_segments:
+                if seg_type == "door":
                     header_bottom_verts = [
                         bm.verts.new((seg_start.x, seg_start.y, DEFAULT_DOOR_HEIGHT)),
                         bm.verts.new((seg_end.x, seg_end.y, DEFAULT_DOOR_HEIGHT)),
@@ -2727,7 +2741,51 @@ def create_room_walls(
                         ]
                     )
                     face.normal_update()
+                    
+                elif seg_type == "window" and window_cutouts:
+
+                    sill_bottom_verts = [
+                        bm.verts.new((seg_start.x, seg_start.y, 0)),
+                        bm.verts.new((seg_end.x, seg_end.y, 0)),
+                    ]
+                    sill_top_verts = [
+                        bm.verts.new((seg_start.x, seg_start.y, window_height_bottom)),
+                        bm.verts.new((seg_end.x, seg_end.y, window_height_bottom)),
+                    ]
+                    bm.verts.ensure_lookup_table()
+                    
+                    sill_face = bm.faces.new(
+                        [
+                            sill_bottom_verts[0],
+                            sill_bottom_verts[1],
+                            sill_top_verts[1],
+                            sill_top_verts[0],
+                        ]
+                    )
+                    sill_face.normal_update()
+                    
+                    header_bottom_verts = [
+                        bm.verts.new((seg_start.x, seg_start.y, window_height_top)),
+                        bm.verts.new((seg_end.x, seg_end.y, window_height_top)),
+                    ]
+                    header_top_verts = [
+                        bm.verts.new((seg_start.x, seg_start.y, wall_height)),
+                        bm.verts.new((seg_end.x, seg_end.y, wall_height)),
+                    ]
+                    bm.verts.ensure_lookup_table()
+                    
+                    header_face = bm.faces.new(
+                        [
+                            header_bottom_verts[0],
+                            header_bottom_verts[1],
+                            header_top_verts[1],
+                            header_top_verts[0],
+                        ]
+                    )
+                    header_face.normal_update()
+                    
                 else:
+                    # Regular wall segment (full height)
                     wall_bottom_verts = [
                         bm.verts.new((seg_start.x, seg_start.y, 0)),
                         bm.verts.new((seg_end.x, seg_end.y, 0)),
@@ -2748,9 +2806,11 @@ def create_room_walls(
                     )
                     face.normal_update()
 
-            if door_segments:
+            if door_segments or window_segments:
+                num_doors = sum(1 for _, _, t in final_segments if t == "door")
+                num_windows = sum(1 for _, _, t in final_segments if t == "window")
                 logger.debug(
-                    f"Created segmented wall for edge {i} of room {room_id}: {len(sub_segments)} segments, {sum(1 for _, _, is_door in sub_segments if is_door)} door openings"
+                    f"Created segmented wall for edge {i} of room {room_id}: {len(final_segments)} segments, {num_doors} door openings, {num_windows} window openings"
                 )
 
         bm.to_mesh(mesh)
@@ -2783,82 +2843,46 @@ def create_room_walls(
             if not any(m and m.name == mat_name for m in obj.data.materials):
                 obj.data.materials.append(wall_material)
 
-        room_polygon = Polygon(boundary_points)
 
-        if window_cutouts and window_cutout_polygons:
-            for idx, (cutout_id, cutout_boundary) in enumerate(window_cutout_polygons):
-                if not cutout_boundary:
-                    continue
-
-                # Only apply window cutout if it intersects with this room's boundary
-                if room_polygon:
-                    try:
-                        cutout_polygon = Polygon(cutout_boundary)
-                        # Check if cutout intersects with room or is very close (within 0.1m)
-                        if cutout_polygon.is_valid and (
-                            cutout_polygon.intersects(room_polygon)
-                            or room_polygon.distance(cutout_polygon) < 0.1
-                        ):
-                            _create_window_cutout(
-                                wall_obj=obj,
-                                apt_id=str(cutout_id),
-                                window_idx=idx,
-                                window_boundary=cutout_boundary,
-                                z_bottom=window_height_bottom,
-                                z_top=window_height_top,
-                                keep_cutter_visible=keep_cutters_visible,
+        if render_windows:
+            room_polygon = Polygon(boundary_points)
+            r_structure = room.get("structure") if isinstance(room, dict) else getattr(room, "structure", None)
+            if r_structure:
+                for struct in r_structure:
+                    s_type = struct.get("type") if isinstance(struct, dict) else getattr(struct, "type", None)
+                    s_boundary = struct.get("boundary") if isinstance(struct, dict) else getattr(struct, "boundary", None)
+                    s_id = struct.get("id") if isinstance(struct, dict) else getattr(struct, "id", None)
+                    
+                    if s_type == "window" and s_boundary and len(s_boundary) >= 3:
+                        window_boundary_xy = []
+                        for p in s_boundary:
+                            if hasattr(p, "x"):
+                                window_boundary_xy.append((p.x, p.y))
+                            else:
+                                window_boundary_xy.append((p["x"], p["y"]))
+                        
+                        try:
+                            window_result = create_window_from_boundary(
+                                window_boundary=window_boundary_xy,
+                                window_id=str(s_id),
+                                z_position=window_height_bottom,
+                                window_height_bottom=window_height_bottom,
+                                window_height_top=window_height_top,
+                                room_boundaries=all_room_boundaries,
+                                randomize_type=True,
+                                randomize_material=True,
+                                randomize_colour=False,
+                                colour=(0.8, 0.9, 1.0, 1.0),
                             )
-
-                            # Create the actual window object at this boundary if rendering is enabled
-                            if render_windows:
-                                window_result = create_window_from_boundary(
-                                    window_boundary=cutout_boundary,
-                                    window_id=str(cutout_id),
-                                    z_position=window_height_bottom,
-                                    window_height_bottom=window_height_bottom,
-                                    window_height_top=window_height_top,
-                                    room_boundaries=all_room_boundaries,
-                                    randomize_type=True,
-                                    randomize_material=True,
-                                    randomize_colour=False,
-                                    colour=(0.8, 0.9, 1.0, 1.0),
+                            if window_result:
+                                logger.debug(
+                                    f"Successfully created window object: {window_result.get('object')}"
                                 )
+                        except Exception as e:
+                            logger.debug(f"Failed to create window object for {s_id}: {e}")
 
-                    except Exception:
-                        continue
-                else:
-                    _create_window_cutout(
-                        wall_obj=obj,
-                        apt_id=str(cutout_id),
-                        window_idx=idx,
-                        window_boundary=cutout_boundary,
-                        z_bottom=window_height_bottom,
-                        z_top=window_height_top,
-                        keep_cutter_visible=keep_cutters_visible,
-                    )
-
-                    if render_windows:
-                        window_result = create_window_from_boundary(
-                            window_boundary=cutout_boundary,
-                            window_id=str(cutout_id),
-                            z_position=window_height_bottom,
-                            window_height_bottom=window_height_bottom,
-                            window_height_top=window_height_top,
-                            room_boundaries=all_room_boundaries,
-                            randomize_type=True,
-                            randomize_material=True,
-                            randomize_colour=False,
-                            colour=(0.8, 0.9, 1.0, 1.0),
-                        )
-
-                        if window_result:
-                            logger.debug(
-                                f"Successfully created window object: {window_result.get('object')}"
-                            )
-
-        # Debug save: after window cutouts
-        if debug_save_steps and window_cutouts:
-            step_file = debug_output_path / f"step2_windows_applied_{room_id}.blend"
+        if debug_save_steps:
+            step_file = debug_output_path / f"step2_windows_processed_{room_id}.blend"
             save_scene(str(step_file), exclude_grid=True)
             logger.debug(f"Saved: {step_file}")
 

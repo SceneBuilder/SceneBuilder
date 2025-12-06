@@ -162,6 +162,61 @@ def _interpolate_point(start, end, t):
     )
 
 
+def _split_edge_by_window_segments(edge_start, edge_end, window_segments):
+    """Split an edge into window-touching and non-touching segments.
+    
+    Args:
+        edge_start: Start point of the edge (Vector2)
+        edge_end: End point of the edge (Vector2)
+        window_segments: List of window touching segments as [(start, end), ...]
+    
+    Returns:
+        List of tuples: [(segment_start, segment_end, is_window_opening), ...]
+        where is_window_opening=True means this segment touches a window
+    """
+    if not window_segments:
+        return [(edge_start, edge_end, False)]
+    
+    window_ranges = []
+    for seg_start, seg_end in window_segments:
+        _, t_start = _project_point_onto_line_segment(seg_start, edge_start, edge_end)
+        _, t_end = _project_point_onto_line_segment(seg_end, edge_start, edge_end)
+        if t_start > t_end:
+            t_start, t_end = t_end, t_start
+        window_ranges.append((t_start, t_end))
+    
+    window_ranges.sort()
+    merged_ranges = []
+    for t_start, t_end in window_ranges:
+        if merged_ranges and t_start <= merged_ranges[-1][1]:
+            merged_ranges[-1] = (merged_ranges[-1][0], max(merged_ranges[-1][1], t_end))
+        else:
+            merged_ranges.append((t_start, t_end))
+    
+    result_segments = []
+    current_t = 0.0
+    
+    for window_t_start, window_t_end in merged_ranges:
+        # Add solid segment before window (if any)
+        if current_t < window_t_start:
+            seg_start = _interpolate_point(edge_start, edge_end, current_t)
+            seg_end = _interpolate_point(edge_start, edge_end, window_t_start)
+            result_segments.append((seg_start, seg_end, False))
+        
+        seg_start = _interpolate_point(edge_start, edge_end, window_t_start)
+        seg_end = _interpolate_point(edge_start, edge_end, window_t_end)
+        result_segments.append((seg_start, seg_end, True))
+        
+        current_t = window_t_end
+    
+    if current_t < 1.0:
+        seg_start = _interpolate_point(edge_start, edge_end, current_t)
+        seg_end = edge_end
+        result_segments.append((seg_start, seg_end, False))
+    
+    return result_segments
+
+
 def _find_room_edges_touching_interior_doors(rooms: list[Room], threshold: float = 0.025):
     """Find room wall edges that are adjacent to interior door boundaries.
     
@@ -258,6 +313,89 @@ def _find_room_edges_touching_interior_doors(rooms: list[Room], threshold: float
                         door_touching_segments[edge_key].append((proj1, proj2))
     
     return door_touching_segments
+
+
+def _find_room_edges_touching_windows(rooms: list[Room], threshold: float = 0.025):
+    """Find room wall edges that are adjacent to window boundaries.
+    
+    Uses window-centric approach: iterates through each window edge and projects its endpoints
+    onto nearby room edges to ensure accurate segment lengths that match the window edge.
+    
+    Args:
+        rooms: List of Room objects with boundary and structure data
+        threshold: Distance threshold for considering edges touching windows (in meters)
+    
+    Returns:
+        Dictionary mapping (room_idx, edge_idx) to list of touching window segments [(start, end), ...]
+    """
+    windows = []
+    for room in rooms:
+        r_structure = room.get("structure") if isinstance(room, dict) else getattr(room, "structure", None)
+        if r_structure:
+            for struct in r_structure:
+                s_type = struct.get("type") if isinstance(struct, dict) else getattr(struct, "type", None)
+                s_boundary = struct.get("boundary") if isinstance(struct, dict) else getattr(struct, "boundary", None)
+                if s_type == "window" and s_boundary and len(s_boundary) >= 3:
+                    window_boundary = []
+                    for v in s_boundary:
+                        if isinstance(v, dict):
+                            window_boundary.append(Vector2(x=v["x"], y=v["y"]))
+                        else:
+                            window_boundary.append(v)
+                    
+                    try:
+                        boundary_xy = [(v.x, v.y) for v in window_boundary]
+                        window_polygon = Polygon(boundary_xy)
+                        if window_polygon.is_valid and not window_polygon.is_empty:
+                            windows.append(window_boundary)
+                    except Exception:
+                        continue
+    
+    if not windows:
+        return {}
+    
+    window_touching_segments = {}
+    
+    for window_boundary in windows:
+        for window_edge_idx in range(len(window_boundary)):
+            w1 = window_boundary[window_edge_idx]
+            w2 = window_boundary[(window_edge_idx + 1) % len(window_boundary)]
+            
+            window_edge_line = LineString([(w1.x, w1.y), (w2.x, w2.y)])
+            
+            for room_idx, room in enumerate(rooms):
+                r_boundary = room.get("boundary") if isinstance(room, dict) else getattr(room, "boundary", None)
+                if not r_boundary or len(r_boundary) < 3:
+                    continue
+                
+                for edge_idx in range(len(r_boundary)):
+                    p1 = r_boundary[edge_idx]
+                    p2 = r_boundary[(edge_idx + 1) % len(r_boundary)]
+                    
+                    if isinstance(p1, dict):
+                        p1 = Vector2(x=p1["x"], y=p1["y"])
+                    if isinstance(p2, dict):
+                        p2 = Vector2(x=p2["x"], y=p2["y"])
+                    
+                    room_edge_line = LineString([(p1.x, p1.y), (p2.x, p2.y)])
+                    
+                    if room_edge_line.distance(window_edge_line) > threshold:
+                        continue
+                    
+                    proj1, t1 = _project_point_onto_line_segment(w1, p1, p2)
+                    proj2, t2 = _project_point_onto_line_segment(w2, p1, p2)
+                    
+                    dist1 = math.sqrt((proj1.x - w1.x)**2 + (proj1.y - w1.y)**2)
+                    dist2 = math.sqrt((proj2.x - w2.x)**2 + (proj2.y - w2.y)**2)
+                    
+                    if dist1 <= threshold and dist2 <= threshold:
+                        edge_key = (room_idx, edge_idx)
+                        if edge_key not in window_touching_segments:
+                            window_touching_segments[edge_key] = []
+                        
+                        window_touching_segments[edge_key].append((proj1, proj2))
+    
+    return window_touching_segments
 
 
 # this is centers to edges, not edges to edges
