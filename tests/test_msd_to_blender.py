@@ -236,9 +236,9 @@ if __name__ == "__main__":
         align_rotation=True,
         render_links=False,
         enable_doors=False,
-        enable_windows=False,
+        enable_windows=True,
         render_doors=False,
-        render_windows=False,
+        render_windows=True,
         keep_cutters_visible=False,
     )
     # Uncomment to test other configurations:

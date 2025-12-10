@@ -38,6 +38,7 @@ from scene_builder.utils.blender import (
 from scene_builder.utils.conversions import pydantic_to_dict
 from scene_builder.utils.file import get_filename
 from scene_builder.utils.floorplan import (
+    _classify_overlapped_window_by_room_types,
     _find_adjacent_wall_segments_from_centers_to_edges,
     _find_room_edges_touching_interior_doors,
     _find_room_edges_touching_windows,
@@ -2605,6 +2606,7 @@ def create_room_walls(
 
     all_room_boundaries = []
     all_room_polygons = []
+    rooms_with_categories = []  
     for room in rooms:
         r_category = room.get("category")
         r_boundary = room.get("boundary")
@@ -2620,6 +2622,7 @@ def create_room_walls(
                 if room_polygon.is_valid and not room_polygon.is_empty:
                     all_room_polygons.append(room_polygon)
                     all_room_boundaries.append(boundary_points)
+                    rooms_with_categories.append((room, room_polygon))
             except Exception:
                 continue
 
@@ -2861,7 +2864,16 @@ def create_room_walls(
                             else:
                                 window_boundary_xy.append((p["x"], p["y"]))
                         
-                        try:
+                        window_polygon = Polygon(window_boundary_xy)
+                        if window_polygon.is_valid and not window_polygon.is_empty:
+                            window_type = _classify_overlapped_window_by_room_types(
+                                window_polygon,
+                                rooms_with_categories,
+                                proximity_threshold=0.05  
+                            )
+                            if window_type == "cross_type":
+                                continue
+
                             window_result = create_window_from_boundary(
                                 window_boundary=window_boundary_xy,
                                 window_id=str(s_id),
@@ -2872,14 +2884,7 @@ def create_room_walls(
                                 randomize_type=True,
                                 randomize_material=True,
                                 randomize_colour=False,
-                                colour=(0.8, 0.9, 1.0, 1.0),
                             )
-                            if window_result:
-                                logger.debug(
-                                    f"Successfully created window object: {window_result.get('object')}"
-                                )
-                        except Exception as e:
-                            logger.debug(f"Failed to create window object for {s_id}: {e}")
 
         if debug_save_steps:
             step_file = debug_output_path / f"step2_windows_processed_{room_id}.blend"

@@ -100,21 +100,25 @@ def _classify_overlapped_window_by_room_types(
         try:
             distance = window_polygon.distance(room_polygon)
             if distance <= proximity_threshold:
-                # Only add if room has a category
-                if room.category:
-                    nearby_room_categories.append(room.category)
-        except Exception:
-            # Skip if distance calculation fails
+                if isinstance(room, dict):
+                    room_cat = room.get('category')
+                elif hasattr(room, 'category'):
+                    room_cat = room.category
+                else:
+                    room_cat = None
+                    
+                if room_cat:
+                    nearby_room_categories.append(room_cat)
+        except Exception as e:
             continue
 
-    # Check if window is near 2+ rooms with different categories
     if len(nearby_room_categories) >= 2:
-        # Check if there are different categories
         unique_categories = set(nearby_room_categories)
         if len(unique_categories) >= 2:
             return "cross_type"
     
     return "regular"
+
 
 
 def _project_point_onto_line_segment(point, line_start, line_end):
