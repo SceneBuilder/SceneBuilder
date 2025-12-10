@@ -65,6 +65,58 @@ def classify_door_type(
     else:
         return "exterior"
 
+
+def _classify_overlapped_window_by_room_types(
+    window_polygon: Polygon,
+    rooms_with_categories: list[tuple[Room, Polygon]],
+    proximity_threshold: float = 0.01,
+) -> str:
+    """
+    Classify a window as cross-type or regular based on adjacent room types.
+
+    A window is cross-type if it's near 2+ rooms with different categories.
+
+    Args:
+        window_polygon: The window boundary as a shapely Polygon
+        rooms_with_categories: List of tuples (Room, room_polygon)
+        proximity_threshold: Distance threshold in meters (default: 0.01m = 1cm)
+
+    Returns:
+        "cross_type" if window touches 2+ rooms with different categories
+        "regular" otherwise
+    """
+    if not window_polygon or window_polygon.is_empty or not window_polygon.is_valid:
+        return "regular"
+
+    if not rooms_with_categories:
+        return "regular"
+
+    # Find nearby rooms and their categories
+    nearby_room_categories = []
+    for room, room_polygon in rooms_with_categories:
+        if not room_polygon or room_polygon.is_empty or not room_polygon.is_valid:
+            continue
+
+        try:
+            distance = window_polygon.distance(room_polygon)
+            if distance <= proximity_threshold:
+                # Only add if room has a category
+                if room.category:
+                    nearby_room_categories.append(room.category)
+        except Exception:
+            # Skip if distance calculation fails
+            continue
+
+    # Check if window is near 2+ rooms with different categories
+    if len(nearby_room_categories) >= 2:
+        # Check if there are different categories
+        unique_categories = set(nearby_room_categories)
+        if len(unique_categories) >= 2:
+            return "cross_type"
+    
+    return "regular"
+
+
 def _project_point_onto_line_segment(point, line_start, line_end):
     """Project a point onto a line segment and return the projection point and parameter t.
     
@@ -488,10 +540,11 @@ def _find_adjacent_wall_segments_from_centers_to_edges(rooms: list[Room], thresh
 def plot_floor_plan(
     rooms: list[Room],
     output_path: str = "floor_plan.png",
-    show_doors: bool = True,
-    show_windows: bool = False,
+    show_doors: bool = False,
+    show_windows: bool = True,
     show_adjacent_walls: bool = False,
-    show_door_touching_edges: bool = True,
+    show_door_touching_edges: bool = False,
+    show_cross_type_windows: bool = True,
     adjacency_threshold: float = 0.05
 ):
     """Plot floor plan showing room boundaries with adjacent wall segments in green.
@@ -505,6 +558,7 @@ def plot_floor_plan(
         show_windows: If True, show windows in yellow
         show_adjacent_walls: If True, show adjacent wall segments in green
         show_door_touching_edges: If True, show room edges touching interior doors in magenta
+        show_cross_type_windows: If True, highlight windows between different room types in orange
         adjacency_threshold: Distance threshold for considering walls adjacent (default: 0.05m)
     """
     fig, ax = plt.subplots(figsize=(12, 12))
@@ -566,6 +620,19 @@ def plot_floor_plan(
                     except Exception:
                         continue
 
+        # Build list of rooms with categories and polygons for window classification
+        rooms_with_categories = []
+        if show_windows and show_cross_type_windows:
+            for room in rooms:
+                if room.boundary and len(room.boundary) >= 3:
+                    try:
+                        boundary_xy = [(v.x, v.y) for v in room.boundary]
+                        room_polygon = Polygon(boundary_xy)
+                        if room_polygon.is_valid and not room_polygon.is_empty:
+                            rooms_with_categories.append((room, room_polygon))
+                    except Exception:
+                        continue
+
         # Plot interior doors and windows
         for room in rooms:
             if room.structure:
@@ -586,10 +653,30 @@ def plot_floor_plan(
                                         ax.fill(x, y, color='lightblue', alpha=0.3)
                             except Exception:
                                 continue
-                        # Plot all windows (yellow) if enabled
+                        # Plot all windows with color based on room type classification
                         elif show_windows and struct.type == "window":
-                            ax.plot(x, y, color='yellow', linewidth=1)
-                            ax.fill(x, y, color='yellow', alpha=0.7)
+                            # Determine window color based on room type classification
+                            window_color = 'yellow'
+                            window_alpha = 0.7
+                            
+                            if show_cross_type_windows and rooms_with_categories:
+                                try:
+                                    boundary_xy = [(v.x, v.y) for v in struct.boundary]
+                                    window_polygon = Polygon(boundary_xy)
+                                    if window_polygon.is_valid and not window_polygon.is_empty:
+                                        window_type = _classify_overlapped_window_by_room_types(
+                                            window_polygon, 
+                                            rooms_with_categories,
+                                            proximity_threshold=0.01
+                                        )
+                                        if window_type == "cross_type":
+                                            window_color = 'orange'
+                                            window_alpha = 0.9
+                                except Exception:
+                                    pass
+                            
+                            ax.plot(x, y, color=window_color, linewidth=1)
+                            ax.fill(x, y, color=window_color, alpha=window_alpha)
     
     ax.set_aspect('equal')
     plt.savefig(output_path, dpi=150)
